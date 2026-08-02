@@ -4,6 +4,23 @@
 
 It is intended for contributors who want to exercise the complete plugin development path before the individual changes are merged upstream. It is not a release branch and may be rebased, amended, or removed as the upstream pull requests progress.
 
+## What this branch contains
+
+This branch contains the Trilium-side package infrastructure: the native **Plugins**
+settings tab, the package manager host, lifecycle coordination, and their tests. It does
+not vendor or duplicate package payloads. Packages remain independently versioned in their
+own repositories:
+
+- [Wordcount](https://github.com/iansherr/trilium_wordcounter)
+- [LanguageTool](https://github.com/iansherr/trilium_languagetool_plugin)
+- [Web Server](https://github.com/iansherr/trilium_webserver_plugin)
+- [Gmail Ingest](https://github.com/iansherr/trilium_mail)
+
+The normal development flow is therefore: run this Trilium branch, discover a package from
+a registry or direct manifest source, and install the package into the running Trilium
+instance. Installing a package downloads its manifest and declared artifacts; it does not
+copy the package source into this Trilium checkout.
+
 ## Run the integrated branch
 
 ```bash
@@ -14,6 +31,11 @@ pnpm server:start
 ```
 
 For the desktop development app, use `pnpm desktop:start` instead. Run `pnpm typecheck` and the relevant test commands before treating a result as an issue with the integrated changes.
+
+For local end-to-end package testing, run the local registry server from the separate
+package workspace and set the Plugins source to
+`http://127.0.0.1:39125/registry.json`. Direct manifest URLs can also be entered through
+the Plugins advanced source controls.
 
 The individual changes remain the source of truth for review:
 
