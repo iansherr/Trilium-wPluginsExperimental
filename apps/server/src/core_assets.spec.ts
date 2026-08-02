@@ -10,7 +10,7 @@ const mockFs = {
 vi.mock("fs", () => ({ default: mockFs, ...mockFs }));
 vi.mock("./services/resource_dir.js", () => ({ RESOURCE_DIR: "/test/res" }));
 
-const { loadCoreSchema } = await import("./core_assets.js");
+const { loadCommunityPackagesManager, loadCoreSchema } = await import("./core_assets.js");
 
 afterEach(() => vi.clearAllMocks());
 
@@ -33,5 +33,17 @@ describe("loadCoreSchema", () => {
         const [resolvedPath] = mockFs.readFileSync.mock.calls[0];
         expect(String(resolvedPath)).toContain("schema.sql");
         expect(String(resolvedPath)).toContain("trilium-core");
+    });
+});
+
+describe("loadCommunityPackagesManager", () => {
+    it("reads the bundled manager source from the resource dir", () => {
+        mockFs.readFileSync.mockReturnValue("MANAGER SOURCE");
+
+        expect(loadCommunityPackagesManager()).toBe("MANAGER SOURCE");
+        expect(mockFs.readFileSync).toHaveBeenCalledWith(
+            path.join("/test/res", "community-packages", "community-packages.tsx"),
+            "utf-8"
+        );
     });
 });

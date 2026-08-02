@@ -1,7 +1,7 @@
 import { becca_loader, cls, entity_changes, getLog, initializeCore, options, sql_init, ws } from "@triliumnext/core";
 import ServerBackupService from "@triliumnext/server/src/backup_provider.js";
 import ClsHookedExecutionContext from "@triliumnext/server/src/cls_provider.js";
-import { loadCoreSchema } from "@triliumnext/server/src/core_assets.js";
+import { loadCommunityPackagesManager, loadCoreSchema } from "@triliumnext/server/src/core_assets.js";
 import NodejsCryptoProvider from "@triliumnext/server/src/crypto_provider.js";
 import NodejsInAppHelpProvider from "@triliumnext/server/src/in_app_help_provider.js";
 import ServerLogService from "@triliumnext/server/src/log_provider.js";
@@ -249,6 +249,7 @@ export async function main() {
         executionContext: new ClsHookedExecutionContext(),
         messaging,
         schema: loadCoreSchema(),
+        communityPackagesManagerSource: loadCommunityPackagesManager(),
         platform: new DesktopPlatformProvider(),
         translations: (await import("@triliumnext/server/src/services/i18n.js")).initializeTranslations,
         // demo.zip is a server-owned asset; src/assets is copied to dist/assets

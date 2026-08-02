@@ -31,6 +31,41 @@ export const LBTPL_CUSTOM_WIDGET = "_lbTplCustomWidget";
  */
 
 let hiddenSubtreeDefinition: HiddenSubtreeItem;
+let communityPackagesManagerSource = "";
+
+export const COMMUNITY_PACKAGES_MANAGER_RENDER_ID = "_sd_community-packages-manager_render";
+export const COMMUNITY_PACKAGES_MANAGER_CODE_ID = "_sd_community-packages-manager";
+
+/**
+ * Supplies the bundled Community Packages manager before the database is
+ * initialized. The host owns loading the asset because core is also used by
+ * runtimes that do not have access to the server's filesystem.
+ */
+export function setCommunityPackagesManagerSource(source?: string) {
+    communityPackagesManagerSource = source?.trim() ?? "";
+    hiddenSubtreeDefinition = undefined as unknown as HiddenSubtreeItem;
+}
+
+function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
+    if (!communityPackagesManagerSource) return [];
+
+    return [{
+        id: COMMUNITY_PACKAGES_MANAGER_RENDER_ID,
+        title: "Community Packages",
+        type: "render",
+        attributes: [
+            { type: "relation", name: "renderNote", value: COMMUNITY_PACKAGES_MANAGER_CODE_ID }
+        ],
+        children: [{
+            id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+            title: "Community Packages",
+            type: "code",
+            mime: "text/jsx",
+            content: communityPackagesManagerSource,
+            attributes: [{ type: "label", name: "readOnly" }]
+        }]
+    }];
+}
 
 function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenSubtreeItem {
     const launchbarConfig = buildLaunchBarConfig();
@@ -146,6 +181,7 @@ function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenS
                 type: "code",
                 icon: "bx-book"
             },
+            ...buildCommunityPackagesManagerDefinition(),
             {
                 // place for user scripts hidden stuff (scripts should not create notes directly under hidden root)
                 id: "_userHidden",
@@ -551,6 +587,12 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
+    // Create children before attributes so relations declared on a parent can
+    // safely target one of its deterministic child notes.
+    for (const child of item.children || []) {
+        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
+    }
+
     // Enforce attribute structure if needed.
     if (item.enforceAttributes) {
         for (const attribute of note.getAttributes()) {
@@ -598,11 +640,9 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
-    for (const child of item.children || []) {
-        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
-    }
 }
 
 export default {
-    checkHiddenSubtree
+    checkHiddenSubtree,
+    setCommunityPackagesManagerSource
 };

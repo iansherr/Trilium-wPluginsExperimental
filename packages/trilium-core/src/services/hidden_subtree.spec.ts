@@ -11,7 +11,9 @@ import hiddenSubtreeService, {
     LBTPL_ROOT,
     LBTPL_SCRIPT,
     LBTPL_SPACER,
-    LBTPL_WIDGET
+    LBTPL_WIDGET,
+    COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+    COMMUNITY_PACKAGES_MANAGER_RENDER_ID
 } from "./hidden_subtree.js";
 import noteService from "./notes.js";
 
@@ -82,6 +84,28 @@ describe("hidden_subtree (real DB)", () => {
             expect(iconClass).toBeTruthy();
             expect(iconClass!.startsWith("bx ")).toBe(true);
             expect(iconClass).toContain("bx-data");
+        });
+
+        it("seeds the bundled Community Packages manager as a protected render note", () => {
+            const managerSource = "/** @trilium-script */\nexport default function Manager() { return null; }";
+            getContext().init(() => hiddenSubtreeService.setCommunityPackagesManagerSource(managerSource));
+            checkHiddenSubtree(true);
+
+            const renderNote = becca.notes[COMMUNITY_PACKAGES_MANAGER_RENDER_ID];
+            const codeNote = becca.notes[COMMUNITY_PACKAGES_MANAGER_CODE_ID];
+            expect(renderNote).toBeDefined();
+            expect(renderNote.type).toBe("render");
+            expect(renderNote.getParentBranches().some((b) => b.parentNoteId === "_hidden")).toBe(true);
+            expect(codeNote).toBeDefined();
+            expect(codeNote.type).toBe("code");
+            expect(codeNote.mime).toBe("text/jsx");
+            expect(codeNote.getContent()).toBe(managerSource);
+            expect(codeNote.getOwnedLabelValue("readOnly")).toBe("");
+            expect(codeNote.getParentBranches().some((b) => b.parentNoteId === COMMUNITY_PACKAGES_MANAGER_RENDER_ID)).toBe(true);
+            expect(renderNote.getRelations().some((a) => a.name === "renderNote" && a.value === COMMUNITY_PACKAGES_MANAGER_CODE_ID)).toBe(true);
+
+            getContext().init(() => hiddenSubtreeService.setCommunityPackagesManagerSource());
+            checkHiddenSubtree(true);
         });
 
         it("applies declared labels and relations, materialising launcher templates", () => {

@@ -172,7 +172,10 @@ vi.mock("../../../packages/commons/src", async (importOriginal) => {
 
 vi.mock("@triliumnext/server/src/backup_provider.js", () => ({ default: class {} }));
 vi.mock("@triliumnext/server/src/cls_provider.js", () => ({ default: class {} }));
-vi.mock("@triliumnext/server/src/core_assets.js", () => ({ loadCoreSchema: vi.fn(() => ({})) }));
+vi.mock("@triliumnext/server/src/core_assets.js", () => ({
+    loadCoreSchema: vi.fn(() => ({})),
+    loadCommunityPackagesManager: vi.fn(() => "manager source")
+}));
 vi.mock("@triliumnext/server/src/crypto_provider.js", () => ({ default: class {} }));
 vi.mock("@triliumnext/server/src/in_app_help_provider.js", () => ({ default: class {} }));
 vi.mock("@triliumnext/server/src/log_provider.js", () => ({ default: class {} }));

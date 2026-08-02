@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-02T00:00:00Z",
+  "packages": [
+    {
+      "id": "example/hello",
+      "version": "1.0.0",
+      "name": "Example package",
+      "description": "Illustrative registry entry for Community Packages documentation.",
+      "author": "Example Maintainer",
+      "repository": "https://github.com/example/hello-plugin",
+      "homepage": "https://github.com/example/hello-plugin",
+      "license": "MIT",
+      "maintenance": "active",
+      "compatibility": {
+        "minTriliumVersion": "0.104.0"
+      },
+      "permissions": [
+        "read-notes"
+      ],
+      "artifacts": [
+        {
+          "id": "hello-widget",
+          "type": "widget",
+          "source": "src/hello-widget.js",
+          "integrity": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "title": "Hello widget",
+          "activation": "manual"
+        }
+      ]
+    }
+  ]
+}

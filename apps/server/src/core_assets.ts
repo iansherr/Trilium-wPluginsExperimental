@@ -22,3 +22,7 @@ export function loadCoreSchema(): string {
     }
     return fs.readFileSync(require.resolve("@triliumnext/core/src/assets/schema.sql"), "utf-8");
 }
+
+export function loadCommunityPackagesManager(): string {
+    return fs.readFileSync(path.join(RESOURCE_DIR, "community-packages", "community-packages.tsx"), "utf-8");
+}

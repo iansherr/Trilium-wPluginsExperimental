@@ -16,6 +16,11 @@ own repositories:
 - [Web Server](https://github.com/iansherr/trilium_webserver_plugin)
 - [Gmail Ingest](https://github.com/iansherr/trilium_mail)
 
+The follow-up `integration/community-packages` branch additionally bundles the
+Community Packages manager source and the registry/schema fixtures used to test it.
+It is the integration branch for reviewing the manager as a Trilium feature; it
+still does not vendor any plugin payloads.
+
 The normal development flow is therefore: run this Trilium branch, discover a package from
 a registry or direct manifest source, and install the package into the running Trilium
 instance. Installing a package downloads its manifest and declared artifacts; it does not
@@ -42,5 +47,8 @@ The individual changes remain the source of truth for review:
 - Plugin manager and Plugins settings: PR #10824
 - Docker/native SQLite build artifacts: PR #10825
 - Development and test harness: PR #10826
+
+The Community Packages manager is intentionally held for a separate follow-up
+review after the plugin settings/manager host has stabilized.
 
 This branch is for integration testing only. Production users should use an official Trilium release.

@@ -15,6 +15,7 @@ import { type ZipExportProviderFactory, initZipExportProviderFactory } from "./s
 import { InAppHelpProvider, initInAppHelp } from "./services/in_app_help";
 import { type ImageProvider, initImageProvider } from "./services/image_provider";
 import { type CoreConfig, initConfig } from "./services/config";
+import { setCommunityPackagesManagerSource } from "./services/hidden_subtree";
 
 export { default as LogService, getLog } from "./services/log";
 export { default as FileBasedLogService, type LogFileInfo } from "./services/file_based_log";
@@ -135,7 +136,7 @@ export { default as scriptService } from "./services/script";
 export { default as BackendScriptApi, type Api as BackendScriptApiInterface } from "./services/backend_script_api";
 export * as scheduler from "./services/scheduler";
 
-export async function initializeCore({ dbConfig, executionContext, crypto, zip, zipExportProviderFactory, translations, messaging, request, schema, extraAppInfo, platform, getDemoArchive, inAppHelp, log, backup, image, config }: {
+export async function initializeCore({ dbConfig, executionContext, crypto, zip, zipExportProviderFactory, translations, messaging, request, schema, extraAppInfo, platform, getDemoArchive, inAppHelp, log, backup, image, config, communityPackagesManagerSource }: {
     dbConfig: SqlServiceParams,
     executionContext: ExecutionContext,
     crypto: CryptoProvider,
@@ -156,6 +157,7 @@ export async function initializeCore({ dbConfig, executionContext, crypto, zip, 
     backup: BackupService;
     image: ImageProvider;
     config?: CoreConfig;
+    communityPackagesManagerSource?: string;
 }) {
     if (config) {
         initConfig(config);
@@ -168,6 +170,7 @@ export async function initializeCore({ dbConfig, executionContext, crypto, zip, 
     initZipProvider(zip);
     initZipExportProviderFactory(zipExportProviderFactory);
     initContext(executionContext);
+    setCommunityPackagesManagerSource(communityPackagesManagerSource);
     await initSql(new SqlService(dbConfig, getLog()));
     initSchema(schema);
     initImageProvider(image);
