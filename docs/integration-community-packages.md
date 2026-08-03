@@ -1,7 +1,10 @@
 # Community Packages integration branch
 
-`integration/community-packages` is an experimental Trilium fork branch for
-reviewing the Community Packages manager as a bundled Trilium feature.
+`integration/community-packages` is the current experimental rollup/integration branch
+of the Trilium fork. It is the latest combined development branch to build from while
+the plugin manager and Community Packages work are being tested together. It is based
+on `integration/plugins` and adds the Community Packages manager as a bundled Trilium
+feature. There is no separate `integration/rollup` branch at present.
 
 It is based on `integration/plugins` and contains:
 
