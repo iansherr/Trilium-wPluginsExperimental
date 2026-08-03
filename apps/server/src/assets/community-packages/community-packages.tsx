@@ -297,10 +297,22 @@ export default function CommunityPackages() {
     }
 
     async function setEnabled(packageId, enabled) {
+        let owned;
+        try {
+            owned = await packageNotes(packageId);
+        } catch (cause) {
+            setError(errorMessage(cause));
+            return;
+        }
+        if (!enabled && !window.confirm([
+            `Disable ${packageId}?`,
+            "This will turn off the package's scripts, styles, widgets, and launchers. Its package files and settings will remain installed so it can be enabled again.",
+            packageImpactSummary(owned),
+            "No user-authored notes will be changed."
+        ].join("\n\n"))) return;
         if (!(await beginPackageOperation(setError))) return;
         setBusyPackage(packageId);
         try {
-            const owned = await packageNotes(packageId);
             await applyEnabledState(owned, enabled);
             showMessage(`${packageId} ${enabled ? "enabled" : "disabled"}.`);
             await refresh(registryUrls, directManifestUrls);
@@ -398,12 +410,25 @@ export default function CommunityPackages() {
     }
 
     async function archivePackage(packageId) {
-        if (!window.confirm(`Archive ${packageId}? Its notes will remain recoverable under Archived notes.`)) return;
+        let owned;
+        try {
+            owned = await packageNotes(packageId);
+        } catch (cause) {
+            setError(errorMessage(cause));
+            return;
+        }
+        if (!window.confirm([
+            `Uninstall ${packageId}?`,
+            "This will disable the package and remove its managed files, settings, and launchers from the active plugin list.",
+            packageImpactSummary(owned),
+            "The package-managed notes will remain recoverable under Archived notes. No user-authored notes will be changed.",
+            "Permanent deletion is not part of this uninstall action."
+        ].join("\n\n"))) return;
         if (!(await beginPackageOperation(setError))) return;
         setBusyPackage(packageId);
         try {
-            await archivePackageNotes(packageId);
-            showMessage(`${packageId} archived.`);
+            await archiveNotes(owned);
+            showMessage(`${packageId} uninstalled. Its package notes remain recoverable under Archived notes.`);
             setConfiguredPackage("");
             await refresh(registryUrls, directManifestUrls);
         } catch (cause) {
@@ -526,6 +551,13 @@ export default function CommunityPackages() {
                                                     disabled={Boolean(busyPackage)}
                                                 />
                                             )}
+                                            <Button
+                                                text="Uninstall"
+                                                size="small"
+                                                kind="lowProfile"
+                                                onClick={() => archivePackage(entry.id)}
+                                                disabled={Boolean(busyPackage)}
+                                            />
                                         </> : (
                                             <Button
                                                 text={busyPackage === manifest.id ? "Installing…" : "Install"}
@@ -983,6 +1015,13 @@ async function packageNotes(packageId) {
     return notes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === packageId && !note.isArchived && !isTransactionNote(note));
 }
 
+function packageImpactSummary(notes) {
+    const titles = [...new Set(notes.map((note) => note.title).filter(Boolean))];
+    const preview = titles.slice(0, 8).join(", ");
+    const remainder = titles.length > 8 ? `, and ${titles.length - 8} more` : "";
+    return `${notes.length} package-managed note${notes.length === 1 ? "" : "s"} will be affected${preview ? `: ${preview}${remainder}` : "."}`;
+}
+
 function isTransactionNote(note) {
     return Boolean(note.getOwnedLabelValue(TRANSACTION_LABEL));
 }
@@ -1060,19 +1099,19 @@ function createTransactionId() {
 async function applyEnabledState(notes, enabled) {
     for (const note of notes) {
         for (const labelName of ACTIVATION_LABELS) {
-            const disabled = note.getOwnedLabels(`disabled:${labelName}`);
-            const active = note.getOwnedLabels(labelName);
-            if (enabled) {
-                for (const attribute of disabled) {
-                    await removeAttribute(note, attribute);
-                    await addAttribute(note, "label", labelName, attribute.value);
-                }
-            } else {
-                for (const attribute of active) {
-                    await removeAttribute(note, attribute);
-                    await addAttribute(note, "label", `disabled:${labelName}`, attribute.value);
-                }
-            }
+            const activeName = labelName;
+            const disabledName = `disabled:${labelName}`;
+            const active = note.getOwnedLabels(activeName);
+            const disabled = note.getOwnedLabels(disabledName);
+            const desired = enabled ? [...active, ...disabled] : [...disabled, ...active];
+            const values = [...new Set(desired.map((attribute) => attribute.value))];
+            if (!values.length) continue;
+
+            // Normalize both forms first. This makes retries safe and repairs
+            // packages left with both active and disabled copies of a label.
+            for (const attribute of [...active, ...disabled]) await removeAttribute(note, attribute);
+            const targetName = enabled ? activeName : disabledName;
+            for (const value of values) await addAttribute(note, "label", targetName, value);
         }
         if (note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest") {
             await replaceAttribute(note, "label", ENABLED_LABEL, enabled ? "true" : "false");

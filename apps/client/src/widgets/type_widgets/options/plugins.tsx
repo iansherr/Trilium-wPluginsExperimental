@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 
 import appContext from "../../../components/app_context";
 import type FNote from "../../../entities/fnote";
-import { setLabel } from "../../../services/attributes";
+import { removeOwnedAttributesByNameOrType, setLabel } from "../../../services/attributes";
+import branches from "../../../services/branches";
 import { closeActiveDialog } from "../../../services/dialog";
 import froca from "../../../services/froca";
 import { t } from "../../../services/i18n";
@@ -20,6 +21,7 @@ const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community-packages-manager_rende
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
 const PACKAGE_TRANSACTION_LABEL = "packageTransaction";
+const PACKAGE_ARTIFACT_LABEL = "packageArtifact";
 const PACKAGE_MANIFEST_LABEL = "packageManifest";
 const PACKAGE_REGISTRY_URL_LABEL = "packageRegistryUrl";
 const PACKAGE_REGISTRY_URLS_LABEL = "packageRegistryUrls";
@@ -33,6 +35,7 @@ const PACKAGE_ARTIFACT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const PACKAGE_SETTING_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9._-]{0,63}$/;
 const PACKAGE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const PACKAGE_VERSION_RANGE_PATTERN = /^(?:[<>=~^]*\s*)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const PACKAGE_ACTIVATION_LABELS = ["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"];
 const cachedManifestWrites = new Map<string, string>();
 
 export interface PackageSummary {
@@ -336,10 +339,18 @@ export default function PluginsSettings() {
     async function setPackageEnabled(pkg: PackageSummary, enabled: boolean) {
         setSavingPackage(pkg.id);
         try {
-            await setLabel(pkg.noteId, PACKAGE_ENABLED_LABEL, enabled ? "true" : "false");
-            await froca.reloadNotes([pkg.noteId]);
+            const packageNotes = (await search.searchForNotesIncludingHidden("#packageManaged"))
+                .filter((note) => note.getOwnedLabelValue("packageOwner") === pkg.id && !note.isArchived);
+            for (const note of packageNotes) {
+                await setPackageNoteEnabled(note, enabled);
+            }
+            await froca.reloadNotes(packageNotes.map((note) => note.noteId));
             toast.showMessage(t(enabled ? "plugins.plugin_enabled" : "plugins.plugin_disabled", { title: pkg.title }));
             await refresh();
+            // Startup scripts and stylesheets are discovered during bootstrap. Reloading here makes
+            // the settings toggle take effect immediately instead of leaving the package half-active
+            // until the next application restart.
+            window.location.reload();
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
         } finally {
@@ -537,6 +548,40 @@ export default function PluginsSettings() {
     );
 }
 
+export async function setPackageNoteEnabled(note: FNote, enabled: boolean) {
+    for (const labelName of PACKAGE_ACTIVATION_LABELS) {
+        const activeName = labelName;
+        const disabledName = `disabled:${labelName}`;
+        const activeLabels = note.getOwnedLabels(activeName);
+        const disabledLabels = note.getOwnedLabels(disabledName);
+        const desiredLabels = enabled ? [...activeLabels, ...disabledLabels] : [...disabledLabels, ...activeLabels];
+        const values = [...new Set(desiredLabels.map((label) => label.value))];
+        if (!values.length) continue;
+
+        // Remove both forms before restoring the desired form. This also repairs
+        // stale installs left with both an active and disabled copy of a label.
+        await removeOwnedAttributesByNameOrType(note, "label", activeName);
+        await removeOwnedAttributesByNameOrType(note, "label", disabledName);
+        const targetName = enabled ? activeName : disabledName;
+        for (const value of values) await setLabel(note.noteId, targetName, value);
+    }
+
+    if (note.getOwnedLabelValue(PACKAGE_ARTIFACT_LABEL) === "manifest") {
+        await setLabel(note.noteId, PACKAGE_ENABLED_LABEL, enabled ? "true" : "false");
+    }
+
+    if (note.type === "launcher") {
+        const targetParent = await froca.getNote(enabled ? "_lbVisibleLaunchers" : "_lbAvailableLaunchers", true);
+        const targetBranch = targetParent?.getParentBranches()[0];
+        const sourceBranchIds = note.getParentBranches()
+            .filter((branch) => ["_lbVisibleLaunchers", "_lbAvailableLaunchers"].includes(branch.parentNoteId))
+            .map((branch) => branch.branchId);
+        if (targetBranch && sourceBranchIds.length) {
+            await branches.moveToParentNote(sourceBranchIds, targetBranch.branchId);
+        }
+    }
+}
+
 async function findPackageManager() {
     const deployedManager = await froca.getNote(COMMUNITY_PACKAGES_MANAGER_NOTE_ID, true);
     if (deployedManager?.type === "render") {
@@ -706,14 +751,18 @@ export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: bo
     return !loading && checkForUpdates && Boolean(registryUrls.length || directManifestUrls.length);
 }
 
-function formatInstalledPackageDescription(pkg: PackageSummary) {
+export function formatInstalledPackageDescription(pkg: PackageSummary) {
     return t("plugins.installed_summary", {
         id: pkg.id,
         version: pkg.version,
         state: t(pkg.enabled ? "plugins.enabled" : "plugins.disabled"),
         pinned: pkg.pinned ? ` · ${t("plugins.pinned")}` : "",
         health: t(`plugins.health_${pkg.health}`),
-        healthMessage: pkg.healthMessage ? ` (${formatHealthMessage(pkg.healthMessage)})` : ""
+        healthMessage: pkg.healthMessage ? ` (${formatHealthMessage(pkg.healthMessage)})` : "",
+        // These values are rendered as React text, not inserted into HTML. Leaving i18next's
+        // HTML escaping enabled turns package IDs such as "author/name" into visible entities
+        // like "author&#x2F;name" in the installed-plugin cards.
+        interpolation: { escapeValue: false }
     });
 }
 

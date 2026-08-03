@@ -31,6 +31,12 @@ The bundled manager is seeded into the hidden system-note subtree during
 startup. Existing installations retain their package notes and settings; the
 manager source is refreshed when its bundled asset changes.
 
+The catalog distinguishes lifecycle actions: disabling preserves an installed package
+for later re-enablement, while uninstalling removes it from the active catalog and
+archives its managed notes. Archived package notes remain in the Trilium database for
+recovery; permanent deletion is a separate destructive action and is not part of normal
+uninstall.
+
 For local end-to-end tests, a registry can be run from the separate catalog
 workspace. Direct manifest URLs are also supported and are the preferred
 development path when no registry service is running.

@@ -1,10 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type FNote from "../../../entities/fnote";
+
+const setLabelMock = vi.hoisted(() => vi.fn(async () => {}));
+const removeOwnedAttributesMock = vi.hoisted(() => vi.fn(async () => {}));
+
+vi.mock("../../../services/attributes", () => ({
+    removeOwnedAttributesByNameOrType: removeOwnedAttributesMock,
+    setLabel: setLabelMock
+}));
+
+vi.mock("../../../services/i18n", () => ({
+    t: (key: string, options?: Record<string, unknown>) => options ? JSON.stringify({ key, ...options }) : key
+}));
+
 import {
     compareVersions,
     compatibilityStatus,
     formatCompatibility,
     formatDependency,
+    formatInstalledPackageDescription,
     isCatalogPackageEntry,
     isNewerVersion,
     isPackageArtifact,
@@ -21,6 +36,7 @@ import {
     parseRegistryUrls,
     parseSettingValue,
     serializeSetting,
+    setPackageNoteEnabled,
     settingLabelName,
     shouldScheduleUpdateChecks
 } from "./plugins";
@@ -112,6 +128,48 @@ describe("plugin manager state helpers", () => {
         expect(packageHealth(["manifest"], undefined)).toEqual({ health: "unknown", healthMessage: "not in registry" });
     });
 
+    it("activates package artifact labels when enabling an installed package", async () => {
+        const note = {
+            noteId: "css-note",
+            getOwnedLabels: (name: string) => name === "disabled:appCss" ? [{ value: "" }] : [],
+            getOwnedLabelValue: (name: string) => name === "packageArtifact" ? "notes-system-css" : undefined
+        } as unknown as FNote;
+
+        await setPackageNoteEnabled(note, true);
+
+        expect(removeOwnedAttributesMock).toHaveBeenCalledWith(note, "label", "disabled:appCss");
+        expect(setLabelMock).toHaveBeenCalledWith("css-note", "appCss", "");
+        expect(setLabelMock).not.toHaveBeenCalledWith("css-note", "packageEnabled", "true");
+    });
+
+    it("updates the package manifest state while disabling its artifacts", async () => {
+        const note = {
+            noteId: "manifest-note",
+            getOwnedLabels: (name: string) => name === "appCss" ? [{ value: "" }] : [],
+            getOwnedLabelValue: (name: string) => name === "packageArtifact" ? "manifest" : undefined
+        } as unknown as FNote;
+
+        await setPackageNoteEnabled(note, false);
+
+        expect(removeOwnedAttributesMock).toHaveBeenCalledWith(note, "label", "appCss");
+        expect(setLabelMock).toHaveBeenCalledWith("manifest-note", "disabled:appCss", "");
+        expect(setLabelMock).toHaveBeenCalledWith("manifest-note", "packageEnabled", "false");
+    });
+
+    it("repairs a package note that has both active and disabled copies", async () => {
+        const note = {
+            noteId: "stale-note",
+            getOwnedLabels: (name: string) => ["appCss", "disabled:appCss"].includes(name) ? [{ value: "" }] : [],
+            getOwnedLabelValue: () => "notes-system-css"
+        } as unknown as FNote;
+
+        await setPackageNoteEnabled(note, true);
+
+        expect(removeOwnedAttributesMock).toHaveBeenCalledWith(note, "label", "appCss");
+        expect(removeOwnedAttributesMock).toHaveBeenCalledWith(note, "label", "disabled:appCss");
+        expect(setLabelMock).toHaveBeenCalledWith("stale-note", "appCss", "");
+    });
+
     it("accepts a valid cached manifest for offline package details", () => {
         const cached = parseCachedPackageManifest(JSON.stringify(manifest));
         expect(cached?.id).toBe("example/plugin");
@@ -178,6 +236,25 @@ describe("plugin manager state helpers", () => {
         expect(formatCompatibility(manifest.compatibility)).toBe("0.100.0 – 0.110.0");
         expect(manifestStatus({ ...manifest, securityStatus: "warning", maintenance: "slow", deprecated: true, deprecationMessage: "Use the replacement." })).toContain("Deprecated: Use the replacement.");
         expect(manifestStatus({ ...manifest, securityStatus: "warning", maintenance: "slow" })).toContain("Security review warning");
+    });
+
+    it("keeps package IDs readable in installed-package descriptions", () => {
+        const description = formatInstalledPackageDescription({
+            id: "iansher/languagetool",
+            title: "LanguageTool",
+            version: "0.1.0",
+            enabled: false,
+            pinned: false,
+            noteId: "package-note",
+            artifactIds: ["manifest"],
+            artifactNotes: [],
+            health: "unknown",
+            healthMessage: "not in registry",
+            settings: {}
+        });
+
+        expect(description).toContain("iansher/languagetool");
+        expect(description).not.toContain("&#x2F;");
     });
 
     it("round-trips package settings using stable labels", () => {
