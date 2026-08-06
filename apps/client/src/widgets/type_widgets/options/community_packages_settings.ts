@@ -1,5 +1,5 @@
-import type { PackageCatalogEntry } from "./registry.js";
-import type { PackageInstallState, PackageManagerSettings } from "./settings.js";
+import type { CatalogEntry as PackageCatalogEntry } from "../../../../../server/src/services/packages/registry.js";
+import type { PackageInstallState, PackageManagerSettings } from "../../../../../server/src/services/packages/settings.js";
 
 export const PLUGINS_SETTINGS_TAB = {
     id: "plugins",
