@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 
+import "./plugins.css";
+
 import appContext from "../../../components/app_context";
 import type FNote from "../../../entities/fnote";
-import { setLabel } from "../../../services/attributes";
+import { removeOwnedAttributesByNameOrType, setLabel } from "../../../services/attributes";
 import { closeActiveDialog } from "../../../services/dialog";
 import froca from "../../../services/froca";
 import { t } from "../../../services/i18n";
 import search from "../../../services/search";
+import server from "../../../services/server";
 import toast from "../../../services/toast";
 import Button from "../../react/Button";
+import Dropdown from "../../react/Dropdown";
 import FormTextBox from "../../react/FormTextBox";
+import { FormListItem } from "../../react/FormList";
 import { useTriliumEvent } from "../../react/hooks";
 import NoItems from "../../react/NoItems";
 import OptionsPageHeader from "./components/OptionsPageHeader";
@@ -19,10 +24,9 @@ import OptionsSection from "./components/OptionsSection";
 const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community-packages-manager_render";
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
+const PACKAGE_ACTIVATION_LABELS = ["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"];
 const PACKAGE_TRANSACTION_LABEL = "packageTransaction";
-const PACKAGE_REGISTRY_URL_LABEL = "packageRegistryUrl";
-const PACKAGE_REGISTRY_URLS_LABEL = "packageRegistryUrls";
-const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
+const PACKAGE_SOURCES_LABEL = "packageSources";
 const PACKAGE_CHECK_UPDATES_LABEL = "packageCheckForUpdates";
 const PACKAGE_UPDATE_INTERVAL_LABEL = "packageUpdateIntervalHours";
 const PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL = "packageAllowedSourceHosts";
@@ -122,10 +126,9 @@ interface PluginsState {
     settings: FNote | null;
     packages: PackageSummary[];
     catalog: CatalogPackage[];
-    registryUrls: string[];
-    directManifestUrls: string[];
+    sources: string[];
     allowNetworkPackages: boolean;
-    allowedSourceHosts: string;
+    allowedSourceHosts: string[];
     checkForUpdates: boolean;
     updateCheckIntervalHours: number;
     includeDeprecatedPackages: boolean;
@@ -141,10 +144,9 @@ const EMPTY_STATE: PluginsState = {
     settings: null,
     packages: [],
     catalog: [],
-    registryUrls: [],
-    directManifestUrls: [],
+    sources: [],
     allowNetworkPackages: false,
-    allowedSourceHosts: "",
+    allowedSourceHosts: [],
     checkForUpdates: false,
     updateCheckIntervalHours: 24,
     includeDeprecatedPackages: false,
@@ -160,6 +162,10 @@ export default function PluginsSettings() {
     const [savingSettings, setSavingSettings] = useState(false);
     const [savingPackage, setSavingPackage] = useState("");
     const [configuredPackage, setConfiguredPackage] = useState("");
+    const [editingSourceIndex, setEditingSourceIndex] = useState<number | null>(null);
+    const [sourceDraft, setSourceDraft] = useState("");
+    const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
+    const [hostDraft, setHostDraft] = useState("");
 
     const refresh = useCallback(async () => {
         try {
@@ -169,11 +175,9 @@ export default function PluginsSettings() {
                 search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
             ]);
             const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
-            const legacyRegistryUrl = settings?.getOwnedLabelValue(PACKAGE_REGISTRY_URL_LABEL) || "";
-            const registryUrls = parseRegistryUrls(settings?.getOwnedLabelValue(PACKAGE_REGISTRY_URLS_LABEL) || legacyRegistryUrl);
-            const directManifestUrls = parseRegistryUrls(settings?.getOwnedLabelValue(PACKAGE_DIRECT_MANIFEST_URLS_LABEL) || "");
+            const sources = parseRegistryUrls(settings?.getOwnedLabelValue(PACKAGE_SOURCES_LABEL) || "");
             const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
-            const allowedSourceHosts = normalizeSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
+            const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
             const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
             const updateCheckIntervalHours = Math.max(1, Number(settings?.getOwnedLabelValue(PACKAGE_UPDATE_INTERVAL_LABEL)) || 24);
             const includeDeprecatedPackages = settings?.getOwnedLabelValue(PACKAGE_INCLUDE_DEPRECATED_LABEL) === "true";
@@ -205,7 +209,7 @@ export default function PluginsSettings() {
                 }))
                 .sort((left, right) => left.title.localeCompare(right.title));
 
-            const { catalog, updateCount, registryError } = await loadCatalog(registryUrls, directManifestUrls, packages, includeDeprecatedPackages);
+            const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
             const packagesWithSettings = packages.map((pkg) => {
                 const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
                 const manifest = catalog.find((candidate) => candidate.id === pkg.id);
@@ -215,7 +219,7 @@ export default function PluginsSettings() {
                 .filter((note) => !note.isArchived)
                 .map((note) => note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL))
                 .filter(Boolean)).size;
-            setState({ manager, settings, packages: packagesWithSettings, catalog, registryUrls, directManifestUrls, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
+            setState({ manager, settings, packages: packagesWithSettings, catalog, sources, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
         } catch (error) {
             setState({ ...EMPTY_STATE, loading: false, error: error instanceof Error ? error.message : String(error) });
         }
@@ -230,11 +234,11 @@ export default function PluginsSettings() {
     }, [refresh]));
 
     useEffect(() => {
-        if (!shouldScheduleUpdateChecks(state.loading, state.checkForUpdates, state.registryUrls, state.directManifestUrls)) return;
+        if (!shouldScheduleUpdateChecks(state.loading, state.checkForUpdates, state.sources)) return;
         const intervalHours = Math.max(1, state.updateCheckIntervalHours || 24);
         const timer = window.setInterval(() => void refresh(), intervalHours * 60 * 60 * 1000);
         return () => window.clearInterval(timer);
-    }, [refresh, state.checkForUpdates, state.directManifestUrls, state.loading, state.registryUrls, state.updateCheckIntervalHours]);
+    }, [refresh, state.checkForUpdates, state.loading, state.sources, state.updateCheckIntervalHours]);
 
     async function openCatalog() {
         if (state.manager) {
@@ -251,11 +255,10 @@ export default function PluginsSettings() {
 
         setSavingSettings(true);
         try {
-            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URLS_LABEL, JSON.stringify(state.registryUrls));
-            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URL_LABEL, state.registryUrls[0] || "");
-            await setLabel(state.settings.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, JSON.stringify(state.directManifestUrls));
+            const sources = normalizePluginSources(state.sources);
+            await setLabel(state.settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
             await setLabel(state.settings.noteId, "packageAllowNetwork", state.allowNetworkPackages ? "true" : "false");
-            await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts));
+            await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts.join("\n")));
             await setLabel(state.settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, state.checkForUpdates ? "true" : "false");
             await setLabel(state.settings.noteId, PACKAGE_UPDATE_INTERVAL_LABEL, String(Math.max(1, state.updateCheckIntervalHours || 24)));
             await setLabel(state.settings.noteId, PACKAGE_INCLUDE_DEPRECATED_LABEL, state.includeDeprecatedPackages ? "true" : "false");
@@ -279,7 +282,7 @@ export default function PluginsSettings() {
                 await setLabel(pkg.noteId, settingLabelName(setting.key), serializeSetting(pkg.settings[setting.key]));
             }
             await froca.reloadNotes([pkg.noteId]);
-            toast.showMessage(t("plugins.plugin_settings_saved", { title: pkg.title }));
+            toast.showMessage(translateText("plugins.plugin_settings_saved", { title: pkg.title }));
             await refresh();
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
@@ -305,8 +308,8 @@ export default function PluginsSettings() {
     async function setPackageEnabled(pkg: PackageSummary, enabled: boolean) {
         setSavingPackage(pkg.id);
         try {
+            await setPackageArtifactActivation(pkg.id, enabled);
             await setLabel(pkg.noteId, PACKAGE_ENABLED_LABEL, enabled ? "true" : "false");
-            await froca.reloadNotes([pkg.noteId]);
             toast.showMessage(t(enabled ? "plugins.plugin_enabled" : "plugins.plugin_disabled", { title: pkg.title }));
             await refresh();
         } catch (error) {
@@ -314,6 +317,40 @@ export default function PluginsSettings() {
         } finally {
             setSavingPackage("");
         }
+    }
+
+    async function setPackageArtifactActivation(packageId: string, enabled: boolean) {
+        const notes = await search.searchForNotesIncludingHidden(`#packageOwner="${packageId}"`);
+        for (const note of notes) {
+            for (const labelName of PACKAGE_ACTIVATION_LABELS) {
+                const disabledName = `disabled:${labelName}`;
+                const disabledValues = note.getOwnedLabels(disabledName).map((attribute) => attribute.value);
+                const activeValues = note.getOwnedLabels(labelName).map((attribute) => attribute.value);
+                if (enabled) {
+                    await removeOwnedAttributesByNameOrType(note, "label", disabledName);
+                    for (const value of disabledValues) await setLabel(note.noteId, labelName, value);
+                } else {
+                    await removeOwnedAttributesByNameOrType(note, "label", labelName);
+                    for (const value of activeValues) await setLabel(note.noteId, disabledName, value);
+                }
+            }
+
+            if (note.type === "launcher") await setLauncherVisibility(note, enabled);
+        }
+        await froca.reloadNotes(notes.map((note) => note.noteId));
+    }
+
+    async function setLauncherVisibility(note: FNote, enabled: boolean) {
+        const targetParentNoteId = enabled ? "_lbVisibleLaunchers" : "_lbAvailableLaunchers";
+        const sourceBranch = note.getParentBranches().find((branch) =>
+            branch.parentNoteId === "_lbVisibleLaunchers" || branch.parentNoteId === "_lbAvailableLaunchers"
+        );
+        if (!sourceBranch || sourceBranch.parentNoteId === targetParentNoteId) return;
+
+        const targetParent = await froca.getNote(targetParentNoteId, true);
+        const targetBranch = targetParent?.getParentBranches()[0];
+        if (!targetBranch) throw new Error(`Could not find the parent branch for ${targetParentNoteId}`);
+        await server.put(`branches/${sourceBranch.branchId}/move-to/${targetBranch.branchId}`);
     }
 
     function updatePackageSetting(packageId: string, key: string, value: unknown) {
@@ -339,7 +376,7 @@ export default function PluginsSettings() {
                 {!state.loading && state.interruptedTransactionCount > 0 && (
                     <OptionsRowWithButton
                         label={t("plugins.incomplete_operation_label")}
-                        description={t("plugins.incomplete_operation_description", { count: state.interruptedTransactionCount })}
+                        description={translateText("plugins.incomplete_operation_description", { count: state.interruptedTransactionCount })}
                         icon="bx-error"
                         buttonText={t("plugins.open_recovery")}
                         buttonClassName="btn-warning"
@@ -348,7 +385,7 @@ export default function PluginsSettings() {
                 )}
                 {!state.loading && state.manager && availablePackages.length > 0 && (
                     <OptionsRowWithButton
-                        label={t("plugins.available_count", { count: availablePackages.length })}
+                        label={translateText("plugins.available_count", { count: availablePackages.length })}
                         description={availablePackages.map((pkg) => pkg.name).join(", ")}
                         icon="bx-package"
                         buttonText={t("plugins.browse_available")}
@@ -374,7 +411,7 @@ export default function PluginsSettings() {
                 title={t("plugins.installed_title")}
                 description={t("plugins.installed_description")}
             >
-                {state.error && <p role="alert">{t("plugins.load_error", { error: state.error })}</p>}
+                {state.error && <p role="alert">{translateText("plugins.load_error", { error: state.error })}</p>}
                 {state.loading && <p>{t("plugins.loading")}</p>}
                 {!state.loading && !state.packages.length && <NoItems icon="bx bx-package" text={t("plugins.no_installed")} />}
                 {state.packages.map((pkg) => (
@@ -415,12 +452,12 @@ export default function PluginsSettings() {
                 title={t("plugins.updates_title")}
                 description={t("plugins.updates_description")}
             >
-                {state.registryError && <p role="alert">{t("plugins.update_error", { error: state.registryError })}</p>}
+                {state.registryError && <p role="alert">{formatPluginUpdateError(state.registryError)}</p>}
                 {!state.loading && state.updateCount === null && !state.registryError && <p>{t("plugins.configure_source")}</p>}
                 {!state.loading && state.updateCount === 0 && !state.registryError && <NoItems icon="bx bx-check" text={t("plugins.up_to_date")} />}
                 {!state.loading && state.updateCount !== null && state.updateCount > 0 && (
                     <OptionsRowWithButton
-                        label={t("plugins.updates_available", { count: state.updateCount })}
+                        label={translateText("plugins.updates_available", { count: state.updateCount })}
                         description={t("plugins.review_updates_description")}
                         buttonText={t("plugins.review_updates")}
                         onClick={() => void openCatalog()}
@@ -433,31 +470,106 @@ export default function PluginsSettings() {
                 description={t("plugins.advanced_description")}
             >
                 {!state.loading && state.settings ? <>
-                    <OptionsRow name="community-package-registries" label={t("plugins.registry_label")} description={t("plugins.registry_description")} stacked>
-                        <textarea
-                            rows={3}
-                            value={state.registryUrls.join("\n")}
-                            placeholder={t("plugins.registry_placeholder")}
-                            style={{ width: "100%", boxSizing: "border-box" }}
-                            onInput={(event) => setState((current) => ({ ...current, registryUrls: parseRegistryUrls(event.currentTarget.value) }))}
-                        />
-                    </OptionsRow>
-                    <OptionsRow name="community-package-direct-manifests" label={t("plugins.direct_manifest_label")} description={t("plugins.direct_manifest_description")} stacked>
-                        <textarea
-                            rows={3}
-                            value={state.directManifestUrls.join("\n")}
-                            placeholder={t("plugins.direct_manifest_placeholder")}
-                            style={{ width: "100%", boxSizing: "border-box" }}
-                            onInput={(event) => setState((current) => ({ ...current, directManifestUrls: parseRegistryUrls(event.currentTarget.value) }))}
+                    <OptionsRow name="community-package-sources" label={t("plugins.sources_label")} description={t("plugins.sources_description")} stacked>
+                        <EditablePluginList
+                            values={state.sources}
+                            editingIndex={editingSourceIndex}
+                            draftValue={sourceDraft}
+                            inputType="url"
+                            inputPlaceholder={t("plugins.sources_placeholder")}
+                            rowLabel={(index) => t("plugins.source_row_label", { number: index + 1 })}
+                            addLabel={t("plugins.add_source")}
+                            editLabel={t("plugins.edit_source")}
+                            deleteLabel={t("plugins.delete_source")}
+                            saveLabel={t("plugins.save_source")}
+                            cancelLabel={t("plugins.cancel_source")}
+                            menuLabel={t("plugins.source_actions")}
+                            onAdd={() => {
+                                if (editingSourceIndex !== null) return;
+                                setState((current) => ({ ...current, sources: [...current.sources, ""] }));
+                                setEditingSourceIndex(state.sources.length);
+                                setSourceDraft("");
+                            }}
+                            onEdit={(index) => {
+                                setEditingSourceIndex(index);
+                                setSourceDraft(state.sources[index] || "");
+                            }}
+                            onDelete={(index) => {
+                                setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
+                                setEditingSourceIndex(null);
+                                setSourceDraft("");
+                            }}
+                            onDraftChange={setSourceDraft}
+                            onSave={() => {
+                                if (editingSourceIndex === null) return;
+                                const index = editingSourceIndex;
+                                const value = sourceDraft.trim();
+                                if (!value) {
+                                    setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
+                                } else {
+                                    setState((current) => ({ ...current, sources: current.sources.map((source, currentIndex) => currentIndex === index ? value : source) }));
+                                }
+                                setEditingSourceIndex(null);
+                                setSourceDraft("");
+                            }}
+                            onCancel={() => {
+                                if (editingSourceIndex !== null && !state.sources[editingSourceIndex]) {
+                                    setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== editingSourceIndex) }));
+                                }
+                                setEditingSourceIndex(null);
+                                setSourceDraft("");
+                            }}
                         />
                     </OptionsRow>
                     <OptionsRow name="community-package-source-hosts" label={t("plugins.download_hosts_label")} description={t("plugins.download_hosts_description")} stacked>
-                        <textarea
-                            rows={3}
-                            value={state.allowedSourceHosts}
-                            placeholder={t("plugins.download_hosts_placeholder")}
-                            style={{ width: "100%", boxSizing: "border-box" }}
-                            onInput={(event) => setState((current) => ({ ...current, allowedSourceHosts: event.currentTarget.value }))}
+                        <EditablePluginList
+                            values={state.allowedSourceHosts}
+                            editingIndex={editingHostIndex}
+                            draftValue={hostDraft}
+                            inputType="text"
+                            inputPlaceholder={t("plugins.download_hosts_placeholder")}
+                            rowLabel={(index) => t("plugins.download_host_row_label", { number: index + 1 })}
+                            addLabel={t("plugins.add_download_host")}
+                            editLabel={t("plugins.edit_download_host")}
+                            deleteLabel={t("plugins.delete_download_host")}
+                            saveLabel={t("plugins.save_download_host")}
+                            cancelLabel={t("plugins.cancel_download_host")}
+                            menuLabel={t("plugins.download_host_actions")}
+                            onAdd={() => {
+                                if (editingHostIndex !== null) return;
+                                setState((current) => ({ ...current, allowedSourceHosts: [...current.allowedSourceHosts, ""] }));
+                                setEditingHostIndex(state.allowedSourceHosts.length);
+                                setHostDraft("");
+                            }}
+                            onEdit={(index) => {
+                                setEditingHostIndex(index);
+                                setHostDraft(state.allowedSourceHosts[index] || "");
+                            }}
+                            onDelete={(index) => {
+                                setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
+                                setEditingHostIndex(null);
+                                setHostDraft("");
+                            }}
+                            onDraftChange={setHostDraft}
+                            onSave={() => {
+                                if (editingHostIndex === null) return;
+                                const index = editingHostIndex;
+                                const value = hostDraft.trim();
+                                if (!value) {
+                                    setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
+                                } else {
+                                    setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.map((host, currentIndex) => currentIndex === index ? value : host) }));
+                                }
+                                setEditingHostIndex(null);
+                                setHostDraft("");
+                            }}
+                            onCancel={() => {
+                                if (editingHostIndex !== null && !state.allowedSourceHosts[editingHostIndex]) {
+                                    setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== editingHostIndex) }));
+                                }
+                                setEditingHostIndex(null);
+                                setHostDraft("");
+                            }}
                         />
                     </OptionsRow>
                     <OptionsRowWithToggle
@@ -492,12 +604,71 @@ export default function PluginsSettings() {
                         label={t("plugins.save_advanced_label")}
                         description={t("plugins.save_advanced_description")}
                         buttonText={t("plugins.save_settings")}
-                        disabled={savingSettings}
+                        disabled={savingSettings || editingSourceIndex !== null || editingHostIndex !== null}
                         onClick={() => void saveSettings()}
                     />
                 </> : !state.loading && <p>{t("plugins.initialize_advanced")}</p>}
             </OptionsSection>
         </>
+    );
+}
+
+interface EditablePluginListProps {
+    values: string[];
+    editingIndex: number | null;
+    draftValue: string;
+    inputType: "url" | "text";
+    inputPlaceholder: string;
+    rowLabel: (index: number) => string;
+    addLabel: string;
+    editLabel: string;
+    deleteLabel: string;
+    saveLabel: string;
+    cancelLabel: string;
+    menuLabel: string;
+    onAdd: () => void;
+    onEdit: (index: number) => void;
+    onDelete: (index: number) => void;
+    onDraftChange: (value: string) => void;
+    onSave: () => void;
+    onCancel: () => void;
+}
+
+function EditablePluginList({ values, editingIndex, draftValue, inputType, inputPlaceholder, rowLabel, addLabel, editLabel, deleteLabel, saveLabel, cancelLabel, menuLabel, onAdd, onEdit, onDelete, onDraftChange, onSave, onCancel }: EditablePluginListProps) {
+    return (
+        <div className="plugin-list-editor">
+            {values.map((value, index) => editingIndex === index ? (
+                <div key={index} className="plugin-list-editor-row is-editing">
+                    <FormTextBox
+                        type={inputType}
+                        currentValue={draftValue}
+                        placeholder={inputPlaceholder}
+                        aria-label={rowLabel(index)}
+                        style={{ flex: 1 }}
+                        onChange={onDraftChange}
+                        onBlur={(nextValue) => onDraftChange(nextValue.trim())}
+                    />
+                    <Button text={saveLabel} icon="bx-check" size="micro" onClick={onSave} />
+                    <Button text="" icon="bx-x" size="micro" title={cancelLabel} aria-label={cancelLabel} onClick={onCancel} />
+                </div>
+            ) : (
+                <div key={index} className="plugin-list-editor-row">
+                    <span aria-label={rowLabel(index)} className="plugin-list-editor-value">{value || "—"}</span>
+                    <Dropdown
+                        className="plugin-list-editor-actions"
+                        iconAction
+                        buttonClassName="bx bx-dots-vertical-rounded"
+                        hideToggleArrow
+                        title={menuLabel}
+                        buttonProps={{ "aria-label": menuLabel }}
+                    >
+                        <FormListItem icon="bx bx-edit" onClick={() => onEdit(index)}>{editLabel}</FormListItem>
+                        <FormListItem icon="bx bx-trash" onClick={() => onDelete(index)}>{deleteLabel}</FormListItem>
+                    </Dropdown>
+                </div>
+            ))}
+            <Button text={addLabel} icon="bx-plus" size="small" disabled={editingIndex !== null} onClick={onAdd} />
+        </div>
     );
 }
 
@@ -520,32 +691,23 @@ export function packageHealth(artifactIds: string[], manifest?: CatalogPackage) 
         : { health: "healthy" as const, healthMessage: "all artifacts present" };
 }
 
-async function loadCatalog(registryUrls: string[], directManifestUrls: string[], packages: PackageSummary[], includeDeprecatedPackages: boolean) {
-    const registrySources = registryUrls.filter(Boolean);
-    const directSources = directManifestUrls.filter(Boolean);
-    if (!registrySources.length && !directSources.length) {
+async function loadCatalog(sources: string[], packages: PackageSummary[], includeDeprecatedPackages: boolean) {
+    const configuredSources = normalizePluginSources(sources);
+    if (!configuredSources.length) {
         return { catalog: [], updateCount: null, registryError: null };
     }
 
-    const registryResults = registrySources.map(async (source): Promise<RawCatalogPackage[]> => {
+    const sourceResults = configuredSources.map(async (source): Promise<RawCatalogPackage[]> => {
         if (!isSecurePackageUrl(source)) throw new Error(`${source} is not a permitted plugin source URL`);
-        const response = await fetch(source);
+        const resolvedSource = normalizePluginSourceUrl(source);
+        const response = await fetch(resolvedSource);
         if (!response.ok) throw new Error(`${source} returned HTTP ${response.status}`);
-        const index = await response.json() as { packages?: RawCatalogPackage[] };
-        if (!Array.isArray(index.packages)) throw new Error(`${source} does not contain a packages array`);
-        return index.packages;
+        const payload = await response.json() as { packages?: RawCatalogPackage[] } | RawCatalogPackage;
+        if (Array.isArray(payload.packages)) return payload.packages;
+        if (isCatalogPackageEntry(payload)) return [payload];
+        throw new Error(`${source} is neither a plugin registry nor a valid plugin manifest`);
     });
-    const directResults = directSources.map(async (source): Promise<RawCatalogPackage[]> => {
-        if (!isSecurePackageUrl(source)) throw new Error(`${source} is not a permitted plugin source URL`);
-        const response = await fetch(source);
-        if (!response.ok) throw new Error(`${source} returned HTTP ${response.status}`);
-        const manifest = await response.json() as RawCatalogPackage;
-        if (!isCatalogPackageEntry(manifest)) {
-            throw new Error(`${source} is not a valid plugin manifest`);
-        }
-        return [manifest];
-    });
-    const results = await Promise.allSettled([...registryResults, ...directResults]);
+    const results = await Promise.allSettled(sourceResults);
     const indexes = results
         .filter((result): result is PromiseFulfilledResult<RawCatalogPackage[]> => result.status === "fulfilled")
         .map((result) => result.value);
@@ -608,16 +770,33 @@ export function parseRegistryUrls(value: string | null | undefined) {
     return value.split(/[\r\n]+/).map((url) => url.trim()).filter(Boolean);
 }
 
+export function normalizePluginSources(sources: string[]) {
+    return [...new Set(sources.map((source) => source.trim()).filter(Boolean))];
+}
+
+export function parseSourceHosts(value: string | null | undefined) {
+    return value
+        ? [...new Set(value.split(/[\s,]+/).map((host) => host.trim()).filter(Boolean))]
+        : [];
+}
+
 export function normalizeSourceHosts(value: string) {
-    return value.split(/[\s,]+/).map((host) => host.trim()).filter(Boolean).join("\n");
+    return parseSourceHosts(value).join("\n");
 }
 
-export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: boolean, registryUrls: string[], directManifestUrls: string[]) {
-    return !loading && checkForUpdates && Boolean(registryUrls.length || directManifestUrls.length);
+export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: boolean, sources: string[]) {
+    return !loading && checkForUpdates && Boolean(sources.length);
 }
 
-function formatInstalledPackageDescription(pkg: PackageSummary) {
-    return t("plugins.installed_summary", {
+function translateText(key: string, values: Record<string, unknown>) {
+    // Values are rendered as React text nodes, where React performs the escaping.
+    // i18next's default HTML escaping would otherwise leak entities such as
+    // "&#x2F;" into the visible UI for package IDs and URLs.
+    return t(key, { ...values, interpolation: { escapeValue: false } });
+}
+
+export function formatInstalledPackageDescription(pkg: PackageSummary) {
+    return translateText("plugins.installed_summary", {
         id: pkg.id,
         version: pkg.version,
         state: t(pkg.enabled ? "plugins.enabled" : "plugins.disabled"),
@@ -627,11 +806,15 @@ function formatInstalledPackageDescription(pkg: PackageSummary) {
     });
 }
 
+export function formatPluginUpdateError(error: string) {
+    return translateText("plugins.update_error", { error });
+}
+
 function formatHealthMessage(message: string) {
     if (message === "all artifacts present") return t("plugins.health_all_artifacts");
     if (message === "not checked") return t("plugins.health_not_checked");
     if (message === "not in registry") return t("plugins.health_not_in_registry");
-    if (message.startsWith("missing ")) return t("plugins.health_missing", { artifacts: message.slice("missing ".length) });
+    if (message.startsWith("missing ")) return translateText("plugins.health_missing", { artifacts: message.slice("missing ".length) });
     return message;
 }
 
@@ -653,7 +836,7 @@ function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange,
             />}
             {manifest ? <>
                 <OptionsRow name={`community-package-maintenance-${pkg.noteId}`} label={t("plugins.registry_status_label")} description={t("plugins.registry_status_description")}>
-                    <span>{[manifestStatus(manifest), manifest.maintainer && t("plugins.maintainer", { maintainer: manifest.maintainer }), manifest.license && t("plugins.license", { license: manifest.license })].filter(Boolean).join(" · ") || t("plugins.no_registry_metadata")}</span>
+                    <span>{[manifestStatus(manifest), manifest.maintainer && translateText("plugins.maintainer", { maintainer: manifest.maintainer }), manifest.license && translateText("plugins.license", { license: manifest.license })].filter(Boolean).join(" · ") || t("plugins.no_registry_metadata")}</span>
                 </OptionsRow>
                 <OptionsRow name={`community-package-permissions-${pkg.noteId}`} label={t("plugins.permissions_label")} description={t("plugins.permissions_description")}>
                     <span>{manifest.permissions.length ? manifest.permissions.join(", ") : t("plugins.none_declared")}</span>
@@ -743,7 +926,7 @@ export function isPackageArtifact(value: unknown): value is PackageArtifact {
     return typeof artifact.id === "string"
         && PACKAGE_ARTIFACT_ID_PATTERN.test(artifact.id)
         && typeof artifact.source === "string"
-        && isSecurePackageUrl(artifact.source)
+        && (isSecurePackageUrl(artifact.source) || isRelativePackageSource(artifact.source))
         && typeof artifact.integrity === "string"
         && /^sha256-[A-Za-z0-9+/]{43}=$/.test(artifact.integrity);
 }
@@ -773,6 +956,38 @@ export function isSecurePackageUrl(value: string) {
     } catch {
         return false;
     }
+}
+
+export function isRelativePackageSource(value: string) {
+    if (!value || value.startsWith("/") || value.startsWith("\\") || value.startsWith("//")) return false;
+    const segments = value.replaceAll("\\", "/").split("/");
+    if (segments.includes("..")) return false;
+    try {
+        const resolved = new URL(value, "https://plugin-source.invalid/");
+        return resolved.origin === "https://plugin-source.invalid";
+    } catch {
+        return false;
+    }
+}
+
+export function normalizePluginSourceUrl(source: string) {
+    const parsed = new URL(source);
+    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return source;
+    const owner = segments[0];
+    const repository = segments[1].replace(/\.git$/, "");
+    if (!owner || !repository) return source;
+
+    if (segments[2] === "blob" && segments[3] && segments.length > 4) {
+        return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;
+    }
+    if (segments[2] === "tree" && segments[3]) {
+        const path = segments.slice(4).join("/");
+        return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${path ? `${path}/` : ""}trilium-package.json`;
+    }
+    return `https://raw.githubusercontent.com/${owner}/${repository}/main/trilium-package.json`;
 }
 
 export function isPackageCompatibility(value: unknown): value is PackageCompatibility {
