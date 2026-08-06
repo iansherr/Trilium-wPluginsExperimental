@@ -703,8 +703,8 @@ async function loadCatalog(sources: string[], packages: PackageSummary[], includ
         const response = await fetch(resolvedSource);
         if (!response.ok) throw new Error(`${source} returned HTTP ${response.status}`);
         const payload = await response.json() as { packages?: RawCatalogPackage[] } | RawCatalogPackage;
-        if (Array.isArray(payload.packages)) return payload.packages;
-        if (isCatalogPackageEntry(payload)) return [payload];
+        if ("packages" in payload && Array.isArray(payload.packages)) return payload.packages;
+        if (isCatalogPackageEntry(payload as RawCatalogPackage)) return [payload as RawCatalogPackage];
         throw new Error(`${source} is neither a plugin registry nor a valid plugin manifest`);
     });
     const results = await Promise.allSettled(sourceResults);
@@ -784,8 +784,8 @@ export function normalizeSourceHosts(value: string) {
     return parseSourceHosts(value).join("\n");
 }
 
-export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: boolean, sources: string[]) {
-    return !loading && checkForUpdates && Boolean(sources.length);
+export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: boolean, sources: string[], directManifestUrls: string[] = []) {
+    return !loading && checkForUpdates && (Boolean(sources.length) || Boolean(directManifestUrls.length));
 }
 
 function translateText(key: string, values: Record<string, unknown>) {

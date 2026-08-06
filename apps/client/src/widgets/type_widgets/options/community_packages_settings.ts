@@ -1,5 +1,21 @@
-import type { CatalogEntry as PackageCatalogEntry } from "../../../../../server/src/services/packages/registry.js";
-import type { PackageInstallState, PackageManagerSettings } from "../../../../../server/src/services/packages/settings.js";
+export interface PackageCatalogEntry {
+    id: string;
+    version: string;
+    title?: string;
+    description?: string;
+}
+
+export interface PackageInstallState {
+    packageId: string;
+    version: string;
+    enabled: boolean;
+    pinned: boolean;
+}
+
+export interface PackageManagerSettings {
+    enabled: boolean;
+    installed: Record<string, PackageInstallState>;
+}
 
 export const PLUGINS_SETTINGS_TAB = {
     id: "plugins",

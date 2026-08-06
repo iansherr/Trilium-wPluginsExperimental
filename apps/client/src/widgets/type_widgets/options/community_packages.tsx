@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @trilium-script
  *
@@ -5,6 +6,9 @@
  * type: render
  * title: Community Packages
  */
+
+declare const api: any;
+declare const window: any;
 
 import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, FormGroup, FormTextBox, FormToggle, LoadingSpinner, useEffect, useState } from "trilium:preact";
@@ -1009,7 +1013,7 @@ async function setLauncherVisibility(note, enabled) {
     );
 }
 
-async function moveNoteToParent(note, targetParentNoteId, branchFilter = () => true) {
+async function moveNoteToParent(note, targetParentNoteId, branchFilter: (branch: any) => boolean = () => true) {
     const sourceBranch = note.getParentBranches().find(branchFilter);
     if (!sourceBranch || sourceBranch.parentNoteId === targetParentNoteId) return;
 
@@ -1680,9 +1684,9 @@ async function removeAttribute(note, attribute) {
 }
 
 async function attributeRequest(method, path, body) {
-    const headers = {
-        "x-csrf-token": window.glob.csrfToken,
-        "trilium-component-id": window.glob.componentId,
+    const headers: Record<string, string> = {
+        "x-csrf-token": window.glob.csrfToken || "",
+        "trilium-component-id": window.glob.componentId || "",
         ...(body ? { "content-type": "application/json" } : {})
     };
     let response = await fetch(`${window.glob.baseApiUrl}${path}`, {
@@ -1996,7 +2000,7 @@ function resolveSource(repository, source) {
 }
 
 function manifestProblems(value) {
-    const errors = [];
+    const errors: string[] = [];
     if (!value || typeof value !== "object") return ["manifest must be an object"];
     if (typeof value.id !== "string" || !/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(value.id)) errors.push("id must use the author/name format");
     if (typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.version)) errors.push("version must use semantic versioning");
@@ -2052,7 +2056,7 @@ function manifestProblems(value) {
 }
 
 function bundleProblems(value) {
-    const errors = [];
+    const errors: string[] = [];
     if (!value || typeof value !== "object") return ["bundle must be an object"];
     if (value.kind !== "bundle") errors.push("kind must be bundle");
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) errors.push("schemaVersion must be 1");

@@ -152,10 +152,10 @@ describe("plugin manager state helpers", () => {
     });
 
     it("schedules update checks for registry or direct-manifest sources only when enabled", () => {
-        expect(shouldScheduleUpdateChecks(true, true, ["https://example.com/registry.json"])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, false, ["https://example.com/registry.json"])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, true, [])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, true, ["https://example.com/registry.json"])).toBe(true);
+        expect(shouldScheduleUpdateChecks(true, true, ["https://example.com/registry.json"], [])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, false, ["https://example.com/registry.json"], [])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, true, [], [])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, true, ["https://example.com/registry.json"], [])).toBe(true);
     });
 
     it("reports healthy, broken, and unknown package states", () => {
