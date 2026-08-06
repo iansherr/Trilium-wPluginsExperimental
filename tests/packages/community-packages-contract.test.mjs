@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const managerSource = await readFile(new URL("../scripts/community-packages.tsx", import.meta.url), "utf8");
+const managerSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
+const pluginsSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/plugins.tsx", import.meta.url), "utf8");
 
 test("package branch moves use Trilium's move-to endpoint", () => {
     assert.match(
@@ -42,9 +43,22 @@ test("catalog exposes an explicit update action for installed newer versions", (
     assert.match(managerSource, /text="Manage in Plugins"/);
 });
 
+test("plugin settings enable and disable every managed artifact activation", () => {
+    assert.match(pluginsSource, /setPackageArtifactActivation\(pkg\.id, enabled\)/);
+    assert.match(pluginsSource, /search\.searchForNotesIncludingHidden\(`#packageOwner="\$\{packageId\}"`\)/);
+    assert.match(pluginsSource, /PACKAGE_ACTIVATION_LABELS = \["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"\]/);
+    assert.match(pluginsSource, /removeOwnedAttributesByNameOrType\(note, "label", disabledName\)/);
+    assert.match(pluginsSource, /removeOwnedAttributesByNameOrType\(note, "label", labelName\)/);
+    assert.match(pluginsSource, /setLauncherVisibility\(note, enabled\)/);
+});
+
+test("JSX launcher and render artifacts use the JSX MIME", () => {
+    assert.match(managerSource, /if \(type === "launcher" \|\| type === "render"\) return "text\/jsx"/);
+});
+
 test("catalog exposes repair for broken installed packages", () => {
     assert.match(managerSource, /entry\.health === "broken"/);
-    assert.match(managerSource, /status = !entry \? "Available"[\s\S]*?"Repair needed"/);
+    assert.match(managerSource, /const status = !entry[\s\S]*?"Repair needed"/);
     assert.match(managerSource, /text=\{busyPackage === manifest\.id \? "Repairing…" : "Repair"\}/);
     assert.match(managerSource, /onClick=\{\(\) => repair\(entry\)\}/);
 });
@@ -72,6 +86,26 @@ test("unfinished migration notes are excluded from ordinary package state", () =
     assert.match(managerSource, /!isTransactionNote\(note\) && !isMigrationNote\(note\)/);
     assert.match(managerSource, /function isMigrationNote\(note\)/);
     assert.match(managerSource, /searchPackageNotes\(`#\$\{MIGRATION_TRANSACTION_LABEL\}`\)/);
+});
+
+test("package updates persist versioned configuration backups and inherit them on reinstall", () => {
+    assert.match(managerSource, /const CONFIG_BACKUP_LABEL = "packageConfigBackup"/);
+    assert.match(managerSource, /schemaVersion: CONFIG_BACKUP_SCHEMA_VERSION/);
+    assert.match(managerSource, /async function backupPackageConfiguration\(manifest, previousManifest, settings, enabled, pinned\)/);
+    assert.match(managerSource, /type: "code",\s*mime: "application\/json"/);
+    assert.match(managerSource, /async function readLatestConfigBackup\(packageId\)/);
+    assert.match(managerSource, /await restorePackageSettings\(stagedPackageNotes, manifest, backup\.settings \|\| \{\}\)/);
+    assert.match(managerSource, /function packageSettingsSnapshot\(note, manifest\)/);
+    assert.match(managerSource, /candidate\.name\.startsWith\("packageSetting:"\)/);
+});
+
+test("package storage reports archived generations and bounds active configuration backups", () => {
+    assert.match(managerSource, /async function readPackageStorageSummary\(\)/);
+    assert.match(managerSource, /archivedGenerations:/);
+    assert.match(managerSource, /archivedManagedNotes:/);
+    assert.match(managerSource, /const CONFIG_BACKUP_RETENTION = 5/);
+    assert.match(managerSource, /const stale = notes\.slice\(CONFIG_BACKUP_RETENTION\)/);
+    assert.match(managerSource, /for \(const note of stale\) await addAttribute\(note, "label", "archived"\)/);
 });
 
 test("ownership migrations move managed child artifacts with their transferred parent", () => {

@@ -9,10 +9,7 @@
 import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, FormGroup, FormTextBox, FormToggle, LoadingSpinner, useEffect, useState } from "trilium:preact";
 
-const DEFAULT_REGISTRY_URL = "";
-const REGISTRY_URL_LABEL = "packageRegistryUrl";
-const REGISTRY_URLS_LABEL = "packageRegistryUrls";
-const DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
+const SOURCES_LABEL = "packageSources";
 const ROOT_LABEL = "communityPackagesRoot";
 const SETTINGS_LABEL = "packageManagerSettings";
 const MANAGED_LABEL = "packageManaged";
@@ -33,6 +30,11 @@ const MIGRATION_TO_ARTIFACT_LABEL = "packageMigrationToArtifact";
 const MIGRATION_TO_VERSION_LABEL = "packageMigrationToVersion";
 const MIGRATION_FROM_PARENT_LABEL = "packageMigrationFromParent";
 const MIGRATION_TO_PARENT_LABEL = "packageMigrationToParent";
+const CONFIG_BACKUP_LABEL = "packageConfigBackup";
+const CONFIG_BACKUP_VERSION_LABEL = "packageBackupVersion";
+const CONFIG_BACKUP_CREATED_AT_LABEL = "packageBackupCreatedAt";
+const CONFIG_BACKUP_RETENTION = 5;
+const CONFIG_BACKUP_SCHEMA_VERSION = 1;
 const MIGRATION_LABELS = [
     MIGRATION_TRANSACTION_LABEL,
     MIGRATION_FROM_OWNER_LABEL,
@@ -111,8 +113,7 @@ async function endPackageOperation() {
 }
 
 export default function CommunityPackages() {
-    const [registryUrls, setRegistryUrls] = useState([]);
-    const [directManifestUrls, setDirectManifestUrls] = useState([]);
+    const [sources, setSources] = useState([]);
     const [allowNetworkPackages, setAllowNetworkPackages] = useState(false);
     const [allowedSourceHosts, setAllowedSourceHosts] = useState("");
     const [checkForUpdates, setCheckForUpdates] = useState(false);
@@ -129,55 +130,45 @@ export default function CommunityPackages() {
     const [bundleSelections, setBundleSelections] = useState({});
     const [searchQuery, setSearchQuery] = useState("");
     const [interruptedTransactions, setInterruptedTransactions] = useState([]);
+    const [storageSummary, setStorageSummary] = useState(null);
 
     useEffect(() => {
         void initialize();
     }, []);
 
     useEffect(() => {
-        if (!checkForUpdates || (!registryUrls.length && !directManifestUrls.length)) return;
+        if (!checkForUpdates || !sources.length) return;
         const intervalHours = Math.max(1, Number(updateCheckIntervalHours) || 24);
-        const timer = window.setInterval(() => void refresh(registryUrls, directManifestUrls), intervalHours * 60 * 60 * 1000);
+        const timer = window.setInterval(() => void refresh(sources), intervalHours * 60 * 60 * 1000);
         return () => window.clearInterval(timer);
-    }, [checkForUpdates, updateCheckIntervalHours, registryUrls, directManifestUrls]);
+    }, [checkForUpdates, updateCheckIntervalHours, sources]);
 
     async function initialize() {
         const settings = await readSettings();
-        setRegistryUrls(settings.registryUrls);
-        setDirectManifestUrls(settings.directManifestUrls);
+        setSources(settings.sources);
         setAllowNetworkPackages(settings.allowNetworkPackages);
         setAllowedSourceHosts(normalizeSourceHosts(settings.allowedSourceHosts));
         setCheckForUpdates(settings.checkForUpdates);
         setUpdateCheckIntervalHours(settings.updateCheckIntervalHours);
         setIncludeDeprecatedPackages(settings.includeDeprecatedPackages);
-        await refresh(settings.registryUrls, settings.directManifestUrls);
+        await refresh(settings.sources);
     }
 
-    async function refresh(urls = registryUrls, directUrls = directManifestUrls) {
+    async function refresh(configuredSources = sources) {
         setLoading(true);
         setError("");
         try {
             const installedPackages = await readInstalledPackages();
             setInstalled(installedPackages);
             setInterruptedTransactions(await readInterruptedTransactions());
-            const registrySources = urls.filter(Boolean);
-            const directSources = directUrls.filter(Boolean);
-            if (!registrySources.length && !directSources.length) {
+            setStorageSummary(await readPackageStorageSummary());
+            const sourceUrls = [...new Set(configuredSources.filter(Boolean))];
+            if (!sourceUrls.length) {
                 setPackages([]);
                 return;
             }
 
-            const registryResults = registrySources.map(async (url) => {
-                const index = await fetchJsonSource(url);
-                if (!Array.isArray(index.packages)) throw new Error(`${url} does not contain a packages array`);
-                return index.packages.filter(isCatalogEntry);
-            });
-            const directResults = directSources.map(async (url) => {
-                const manifest = await fetchJsonSource(url);
-                if (!isCatalogEntry(manifest)) throw new Error(`${url} is not a valid plugin manifest or bundle`);
-                return [manifest];
-            });
-            const results = await Promise.allSettled([...registryResults, ...directResults]);
+            const results = await Promise.allSettled(sourceUrls.map((url) => loadCatalogSource(url)));
             const responses = results
                 .filter((result) => result.status === "fulfilled")
                 .map((result) => result.value);
@@ -238,7 +229,7 @@ export default function CommunityPackages() {
         try {
             await installPackageSafely([...dependencyResolution.packages, manifest], allowedSourceHosts, packages);
             showMessage(`${manifest.name} installed disabled. Enable it here when ready.`);
-            await refresh(registryUrls, directManifestUrls);
+            await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
@@ -301,7 +292,7 @@ export default function CommunityPackages() {
         try {
             await installPackageSafely(manifests, allowedSourceHosts, packages);
             showMessage(`${bundle.name} components installed disabled. Enable them in Settings → Plugins when ready.`);
-            await refresh(registryUrls, directManifestUrls);
+            await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
@@ -338,7 +329,7 @@ export default function CommunityPackages() {
         try {
             await replacePackage(manifest, false, allowedSourceHosts, dependencyResolution.packages, packages);
             showMessage(`${manifest.name} updated disabled. Enable it here when ready.`);
-            await refresh(registryUrls, directManifestUrls);
+            await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
@@ -378,23 +369,7 @@ export default function CommunityPackages() {
         try {
             await replacePackage(manifest, true, allowedSourceHosts, dependencyResolution.packages, packages);
             showMessage(`${manifest.name} repaired.`);
-            await refresh(registryUrls, directManifestUrls);
-        } catch (cause) {
-            setError(errorMessage(cause));
-        } finally {
-            await endPackageOperation();
-            setBusyPackage("");
-        }
-    }
-
-    async function setEnabled(packageId, enabled) {
-        if (!(await beginPackageOperation(setError))) return;
-        setBusyPackage(packageId);
-        try {
-            const owned = await packageNotes(packageId);
-            await applyEnabledState(owned, enabled);
-            showMessage(`${packageId} ${enabled ? "enabled" : "disabled"}.`);
-            await refresh(registryUrls, directManifestUrls);
+            await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
@@ -433,21 +408,12 @@ export default function CommunityPackages() {
                 discarded++;
             }
             showMessage(`Recovered ${promoted} staged package operation${promoted === 1 ? "" : "s"}; discarded ${discarded} incomplete operation${discarded === 1 ? "" : "s"}.`);
-            await refresh(registryUrls, directManifestUrls);
+            await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
             await endPackageOperation();
             setBusyPackage("");
-        }
-    }
-
-    async function configurePackage(entry, manifest) {
-        try {
-            setConfiguredPackage(entry.id);
-            setPackageValues(await readPackageSettings(entry.noteId, manifest));
-        } catch (cause) {
-            setError(errorMessage(cause));
         }
     }
 
@@ -472,29 +438,12 @@ export default function CommunityPackages() {
         }
     }
 
-    async function archivePackage(packageId) {
-        if (!window.confirm(`Archive ${packageId}? Its notes will remain recoverable under Archived notes.`)) return;
-        if (!(await beginPackageOperation(setError))) return;
-        setBusyPackage(packageId);
-        try {
-            await archivePackageNotes(packageId);
-            showMessage(`${packageId} archived.`);
-            setConfiguredPackage("");
-            await refresh(registryUrls, directManifestUrls);
-        } catch (cause) {
-            setError(errorMessage(cause));
-        } finally {
-            await endPackageOperation();
-            setBusyPackage("");
-        }
-    }
-
     const search = searchQuery.trim().toLowerCase();
     const matchesPackage = (manifest) => !search || [manifest.name, manifest.id, manifest.description, manifest.author, manifest.maintainer].filter(Boolean).join(" ").toLowerCase().includes(search);
     const catalog = packages
         .filter((manifest) => !manifest.deprecated || includeDeprecatedPackages)
         .filter(matchesPackage);
-    const hasConfiguredSources = registryUrls.length > 0 || directManifestUrls.length > 0;
+    const hasConfiguredSources = sources.length > 0;
 
     function openPluginSettings() {
         triggerCommand("closePopupEditor");
@@ -603,6 +552,36 @@ export default function CommunityPackages() {
                         <Button text={busyPackage === "recovery" ? "Recovering…" : "Recover package operations"} kind="primary" size="small" onClick={recoverInterruptedTransactions} disabled={Boolean(busyPackage)} />
                     </div>
                 </Admonition>
+            )}
+
+            {storageSummary && (storageSummary.archivedGenerations > 0 || storageSummary.configBackups > 0) && (
+                <section className="options-section">
+                    <div className="options-section-header">
+                        <h4>Package storage</h4>
+                        <Button text="Refresh" icon="bx-refresh" size="small" onClick={() => refresh()} disabled={loading || Boolean(busyPackage)} />
+                    </div>
+                    <div className="options-section-card">
+                        <p style={{ marginTop: 0 }}>
+                            Active plugins live under the hidden Community Packages root. Updates keep old generations archived for recovery;
+                            configuration backups are JSON notes and are inherited by later installs when the active package is unavailable.
+                        </p>
+                        <div className="option-row">
+                            <div className="option-row-label"><label>Active generations</label></div>
+                            <div className="option-row-input">{storageSummary.activeGenerations}</div>
+                        </div>
+                        <div className="option-row">
+                            <div className="option-row-label"><label>Archived generations</label></div>
+                            <div className="option-row-input">{storageSummary.archivedGenerations} ({storageSummary.archivedManagedNotes} notes)</div>
+                        </div>
+                        <div className="option-row">
+                            <div className="option-row-label"><label>Configuration backups</label></div>
+                            <div className="option-row-input">{storageSummary.configBackups} current · {storageSummary.archivedConfigBackups} archived</div>
+                        </div>
+                        <small>
+                            Cleanup is intentionally recoverable: old package generations are archived, and only backups beyond the last {CONFIG_BACKUP_RETENTION} per package are archived automatically.
+                        </small>
+                    </div>
+                </section>
             )}
 
             <section className="options-section">
@@ -866,10 +845,8 @@ async function readSettings() {
         await api.reloadNotes([note.noteId]);
         note = await api.getNote(note.noteId);
     }
-    const legacyUrl = note?.getOwnedLabelValue(REGISTRY_URL_LABEL) || DEFAULT_REGISTRY_URL;
     return {
-        registryUrls: parseRegistryUrls(note?.getOwnedLabelValue(REGISTRY_URLS_LABEL) || legacyUrl),
-        directManifestUrls: parseRegistryUrls(note?.getOwnedLabelValue(DIRECT_MANIFEST_URLS_LABEL) || ""),
+        sources: parseRegistryUrls(note?.getOwnedLabelValue(SOURCES_LABEL) || ""),
         allowNetworkPackages: note?.getOwnedLabelValue("packageAllowNetwork") === "true",
         checkForUpdates: note?.getOwnedLabelValue(CHECK_UPDATES_LABEL) === "true",
         updateCheckIntervalHours: Math.max(1, Number(note?.getOwnedLabelValue(UPDATE_INTERVAL_LABEL)) || 24),
@@ -924,6 +901,24 @@ async function readInstalledPackages() {
         result[id] = entry;
     }
     return result;
+}
+
+async function readPackageStorageSummary() {
+    const [managedNotes, activeBackups, archivedBackups] = await Promise.all([
+        searchPackageNotes(`#${MANAGED_LABEL}`),
+        searchPackageNotes(`#${CONFIG_BACKUP_LABEL}`),
+        searchPackageNotes(`#${CONFIG_BACKUP_LABEL} #archived`)
+    ]);
+    const activeManifests = managedNotes.filter((note) => !note.isArchived && !isTransactionNote(note) && note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest");
+    const archivedManaged = managedNotes.filter((note) => note.isArchived && note.getOwnedLabelValue(ARTIFACT_LABEL));
+    const generations = (notes) => new Set(notes.map((note) => `${note.getOwnedLabelValue(OWNER_LABEL)}@${note.getOwnedLabelValue(VERSION_LABEL)}`));
+    return {
+        activeGenerations: generations(activeManifests).size,
+        archivedGenerations: generations(archivedManaged.filter((note) => note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest")).size,
+        archivedManagedNotes: archivedManaged.length,
+        configBackups: activeBackups.filter((note) => !note.isArchived).length,
+        archivedConfigBackups: archivedBackups.filter((note) => note.isArchived).length
+    };
 }
 
 function withCatalogManifests(installedPackages, catalog) {
@@ -1039,7 +1034,12 @@ async function replacePackage(manifest, preserveEnabled, allowedSourceHosts, dep
         const previousManifest = previousNotes.find((note) => note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest");
         previousEnabled = previousManifest?.getOwnedLabelValue(ENABLED_LABEL) === "true";
         previousPinned = previousManifest?.getOwnedLabelValue(PINNED_LABEL) === "true";
-        previousSettings = previousManifest ? packageSettingsFromNote(previousManifest, manifest) : {};
+        previousSettings = previousManifest
+            ? packageSettingsSnapshot(previousManifest, manifest)
+            : (await readLatestConfigBackup(manifest.id))?.settings || {};
+        if (previousManifest) {
+            await backupPackageConfiguration(manifest, previousManifest, previousSettings, previousEnabled, previousPinned);
+        }
 
         const migrationTargets = await migrationTargetManifests([manifest, ...dependencies], catalog);
         const manifests = [...new Map([...dependencies, manifest, ...migrationTargets].map((entry) => [entry.id, entry])).values()];
@@ -1054,6 +1054,11 @@ async function replacePackage(manifest, preserveEnabled, allowedSourceHosts, dep
         if (preserveEnabled && previousEnabled) await applyEnabledState(stagedPackageNotes, true);
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
+        try {
+            await pruneConfigBackups(manifest.id);
+        } catch {
+            // Backup retention is housekeeping; never turn a completed package replacement into a failed update.
+        }
     } catch (cause) {
         const rollbackErrors = [];
         try {
@@ -1085,6 +1090,13 @@ async function installPackageSafely(manifests, allowedSourceHosts, catalog = [])
         const stagedNotes = await transactionNotes(transactionId);
         for (const manifest of manifests) verifyStagedPackage(stagedNotes, manifest);
         transferredNotes = await applyPackageMigrations(manifests, stagedNotes, catalog, transactionId);
+        for (const manifest of manifests) {
+            const backup = await readLatestConfigBackup(manifest.id);
+            if (!backup) continue;
+            const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
+            await restorePackageSettings(stagedPackageNotes, manifest, backup.settings || {});
+            await restorePackagePinned(stagedPackageNotes, Boolean(backup.pinned));
+        }
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
     } catch (cause) {
@@ -1230,6 +1242,42 @@ async function fetchJsonSource(url) {
     } finally {
         window.clearTimeout(timeout);
     }
+}
+
+async function loadCatalogSource(sourceUrl) {
+    const sourceProblem = downloadUrlProblem(sourceUrl, "");
+    if (sourceProblem) throw new Error(`${sourceUrl}: ${sourceProblem}`);
+    const resolvedUrl = normalizePluginSourceUrl(sourceUrl);
+    try {
+        const payload = await fetchJsonSource(resolvedUrl);
+        if (Array.isArray(payload?.packages)) return payload.packages.filter(isCatalogEntry);
+        if (isCatalogEntry(payload)) return [payload];
+        throw new Error("source is neither a plugin registry nor a valid plugin manifest");
+    } catch (cause) {
+        const message = errorMessage(cause);
+        if (message.startsWith(`${sourceUrl}:`)) throw cause;
+        throw new Error(`${sourceUrl}: ${message}`);
+    }
+}
+
+function normalizePluginSourceUrl(source) {
+    const parsed = new URL(source);
+    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return source;
+    const owner = segments[0];
+    const repository = segments[1].replace(/\.git$/, "");
+    if (!owner || !repository) return source;
+
+    if (segments[2] === "blob" && segments[3] && segments.length > 4) {
+        return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;
+    }
+    if (segments[2] === "tree" && segments[3]) {
+        const path = segments.slice(4).join("/");
+        return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${path ? `${path}/` : ""}trilium-package.json`;
+    }
+    return `https://raw.githubusercontent.com/${owner}/${repository}/main/trilium-package.json`;
 }
 
 function arrayBufferToBase64(buffer) {
@@ -1399,11 +1447,6 @@ function isMigrationNote(note) {
     return Boolean(note.getOwnedLabelValue(MIGRATION_TRANSACTION_LABEL));
 }
 
-async function archivePackageNotes(packageId) {
-    const owned = await packageNotes(packageId);
-    await archiveNotes(owned);
-}
-
 async function archiveNotes(notes) {
     if (!notes.length) return;
     await applyEnabledState(notes, false);
@@ -1457,7 +1500,8 @@ async function restorePackageSettings(notes, manifest, values) {
     if (!manifestNote) throw new Error(`Staged package manifest not found: ${manifest.id}`);
     for (const setting of manifest.settings || []) {
         if (Object.prototype.hasOwnProperty.call(values, setting.key)) {
-            await replaceAttribute(manifestNote, "label", settingLabelName(setting.key), serializeSetting(values[setting.key]));
+            const value = normalizeSettingValue(values[setting.key], setting);
+            await replaceAttribute(manifestNote, "label", settingLabelName(setting.key), serializeSetting(value));
         }
     }
 }
@@ -1497,17 +1541,78 @@ async function applyEnabledState(notes, enabled) {
     await api.reloadNotes(notes.map((note) => note.noteId));
 }
 
-async function readPackageSettings(noteId, manifest) {
-    const note = await api.getNote(noteId);
-    if (!note) throw new Error(`Installed package note not found: ${manifest.id}`);
-    return packageSettingsFromNote(note, manifest);
-}
-
 function packageSettingsFromNote(note, manifest) {
     return Object.fromEntries((manifest.settings || []).map((setting) => {
         const stored = note.getOwnedLabelValue(settingLabelName(setting.key));
-        return [setting.key, stored === null ? setting.default : parseSettingValue(stored, setting)];
+        return [setting.key, stored === null ? setting.default : normalizeSettingValue(parseSettingValue(stored, setting), setting)];
     }));
+}
+
+function packageSettingsSnapshot(note, manifest) {
+    const values = packageSettingsFromNote(note, manifest);
+    for (const attribute of note.getOwnedLabels().filter((candidate) => candidate.name.startsWith("packageSetting:"))) {
+        const key = attribute.name.slice("packageSetting:".length);
+        if (!Object.prototype.hasOwnProperty.call(values, key)) {
+            values[key] = parseSettingValue(attribute.value, { type: "string" });
+        }
+    }
+    return values;
+}
+
+function normalizeSettingValue(value, setting) {
+    if (setting.type === "boolean") return typeof value === "boolean" ? value : value === "true";
+    if (setting.type === "number") return typeof value === "number" && Number.isFinite(value) ? value : Number.isFinite(Number(value)) ? Number(value) : setting.default;
+    if (setting.type === "select") return typeof value === "string" && (!setting.options?.length || setting.options.includes(value)) ? value : setting.default;
+    return typeof value === "string" ? value : value === undefined || value === null ? setting.default : String(value);
+}
+
+async function backupPackageConfiguration(manifest, previousManifest, settings, enabled, pinned) {
+    const root = await ensureRootNote();
+    const createdAt = new Date().toISOString();
+    await createNote(root.noteId, {
+        title: `${manifest.name} configuration backup ${createdAt}`,
+        type: "code",
+        mime: "application/json",
+        content: JSON.stringify({
+            schemaVersion: CONFIG_BACKUP_SCHEMA_VERSION,
+            packageId: manifest.id,
+            packageVersion: previousManifest.getOwnedLabelValue(VERSION_LABEL) || "unknown",
+            capturedAt: createdAt,
+            settings,
+            enabled: Boolean(enabled),
+            pinned: Boolean(pinned)
+        }, null, 2),
+        attributes: [
+            { type: "label", name: CONFIG_BACKUP_LABEL },
+            { type: "label", name: OWNER_LABEL, value: manifest.id },
+            { type: "label", name: CONFIG_BACKUP_VERSION_LABEL, value: previousManifest.getOwnedLabelValue(VERSION_LABEL) || "unknown" },
+            { type: "label", name: CONFIG_BACKUP_CREATED_AT_LABEL, value: createdAt }
+        ]
+    });
+}
+
+async function readLatestConfigBackup(packageId) {
+    const notes = (await searchPackageNotes(`#${CONFIG_BACKUP_LABEL}`))
+        .filter((note) => !note.isArchived && note.getOwnedLabelValue(OWNER_LABEL) === packageId)
+        .sort((left, right) => String(right.getOwnedLabelValue(CONFIG_BACKUP_CREATED_AT_LABEL) || "").localeCompare(String(left.getOwnedLabelValue(CONFIG_BACKUP_CREATED_AT_LABEL) || "")));
+    for (const note of notes) {
+        try {
+            const value = JSON.parse(await note.getContent());
+            if (value?.schemaVersion === CONFIG_BACKUP_SCHEMA_VERSION && value.packageId === packageId && value.settings && typeof value.settings === "object") return value;
+        } catch {
+            // Ignore a damaged backup and try the next retained snapshot.
+        }
+    }
+    return null;
+}
+
+async function pruneConfigBackups(packageId) {
+    const notes = (await searchPackageNotes(`#${CONFIG_BACKUP_LABEL}`))
+        .filter((note) => !note.isArchived && note.getOwnedLabelValue(OWNER_LABEL) === packageId)
+        .sort((left, right) => String(right.getOwnedLabelValue(CONFIG_BACKUP_CREATED_AT_LABEL) || "").localeCompare(String(left.getOwnedLabelValue(CONFIG_BACKUP_CREATED_AT_LABEL) || "")));
+    const stale = notes.slice(CONFIG_BACKUP_RETENTION);
+    for (const note of stale) await addAttribute(note, "label", "archived");
+    if (stale.length) await api.reloadNotes(stale.map((note) => note.noteId));
 }
 
 async function installArtifact(parentNoteId, manifest, artifact, source, transactionId = "") {
@@ -1877,6 +1982,7 @@ function activationAttributes(artifact) {
 
 function artifactMime(type) {
     if (type === "css" || type === "theme") return "text/css";
+    if (type === "launcher" || type === "render") return "text/jsx";
     if (["backend", "endpoint", "resource"].includes(type)) return "application/javascript;env=backend";
     return "application/javascript;env=frontend";
 }

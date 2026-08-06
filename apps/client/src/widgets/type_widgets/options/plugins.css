@@ -1,0 +1,60 @@
+.plugin-list-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+    width: 100%;
+}
+
+.plugin-list-editor-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 2.35em;
+    padding: 0.25em 0.35em 0.25em 0.5em;
+    border-bottom: 1px solid color-mix(in srgb, var(--main-border-color) 60%, transparent);
+    border-radius: 4px;
+    transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+    animation: plugin-list-row-in 160ms ease both;
+}
+
+.plugin-list-editor-row:hover {
+    background: color-mix(in srgb, var(--hover-item-background-color) 55%, transparent);
+    transform: translateX(1px);
+}
+
+.plugin-list-editor-row.is-editing {
+    background: color-mix(in srgb, var(--input-background-color) 75%, transparent);
+    box-shadow: inset 0 0 0 1px var(--main-border-color);
+}
+
+.plugin-list-editor-row.is-editing:hover {
+    transform: none;
+}
+
+.plugin-list-editor-value {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.plugin-list-editor-actions {
+    flex-shrink: 0;
+}
+
+@keyframes plugin-list-row-in {
+    from {
+        opacity: 0.65;
+        transform: translateY(-2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plugin-list-editor-row {
+        animation: none;
+        transition: none;
+    }
+}

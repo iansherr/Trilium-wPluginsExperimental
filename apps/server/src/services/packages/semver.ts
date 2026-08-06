@@ -1,4 +1,4 @@
-import { SEMVER } from "./package-manifest.js";
+import { SEMVER } from "./package_manifest.js";
 
 export interface Semver {
     major: number;

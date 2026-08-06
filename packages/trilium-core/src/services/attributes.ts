@@ -13,6 +13,10 @@ function getNotesWithLabel(name: string, value?: string): BNote[] {
     const query = attribute_formatter.formatAttrForSearch({ type: "label", name, value }, value !== undefined);
     return searchService.searchNotes(query, {
         includeArchivedNotes: true,
+        // Community packages are stored below the hidden system subtree, but
+        // their activation labels (#appCss, #run, #widget, ...) still need to
+        // participate in the normal runtime activation paths.
+        includeHiddenNotes: true,
         ignoreHoistedNote: true
     });
 }

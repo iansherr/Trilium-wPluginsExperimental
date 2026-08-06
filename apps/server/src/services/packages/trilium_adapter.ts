@@ -1,4 +1,4 @@
-import type { ArtifactType, PackageArtifact, PackageManifest } from "./package-manifest.js";
+import type { ArtifactType, PackageArtifact, PackageManifest } from "./package_manifest.js";
 
 export const PACKAGE_ROOT_NOTE_ID = "_community_packages";
 export const PACKAGE_MANAGED_LABEL = "packageManaged";
@@ -180,8 +180,9 @@ function activationAttributes(artifact: PackageArtifact, enabled: boolean): Note
 
 function mimeForArtifact(type: ArtifactType): string {
     if (type === "css" || type === "theme") return "text/css";
+    if (type === "launcher" || type === "render") return "text/jsx";
     if (["backend", "endpoint", "resource"].includes(type)) return "application/javascript;env=backend";
-    if (type === "render" || type === "widget" || type === "launcher" || type === "frontend") return "application/javascript;env=frontend";
+    if (type === "widget" || type === "frontend") return "application/javascript;env=frontend";
     return "text/plain";
 }
 

@@ -1,4 +1,4 @@
-import { validateCatalogEntry, type BundleManifest, type CatalogEntry, type PackageManifest } from "./package-manifest.js";
+import { validateCatalogEntry, type BundleManifest, type CatalogEntry, type PackageManifest } from "./package_manifest.js";
 import { resolveDependencies } from "./dependencies.js";
 
 export interface RegistryIndex {

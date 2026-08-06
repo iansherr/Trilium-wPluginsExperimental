@@ -1,4 +1,4 @@
-import type { PackageDependency, PackageManifest } from "./package-manifest.js";
+import type { PackageDependency, PackageManifest } from "./package_manifest.js";
 import { compareSemver } from "./semver.js";
 
 export interface DependencyResolution {

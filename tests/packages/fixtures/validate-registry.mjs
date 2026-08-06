@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { validateRegistryIndex } from "../dist/registry.js";
+import { loadPackageServices } from "../load-package-services.mjs";
 
-const filename = process.argv[2] === "--" ? process.argv[3] || "fixtures/registry.json" : process.argv[2] || "fixtures/registry.json";
+const { validateRegistryIndex } = loadPackageServices();
+
+const filename = process.argv[2] === "--" ? process.argv[3] || "tests/packages/fixtures/registry.json" : process.argv[2] || "tests/packages/fixtures/registry.json";
 const path = resolve(filename);
 let value;
 

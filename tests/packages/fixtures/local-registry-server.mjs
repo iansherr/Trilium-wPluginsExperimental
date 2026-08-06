@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const projectsRoot = process.env.TRILIUM_PACKAGE_PROJECTS_DIR || path.resolve(projectRoot, "packages");
+const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(fixtureRoot, "../../..");
+const projectsRoot = process.env.TRILIUM_PACKAGE_PROJECTS_DIR || path.resolve(projectRoot, "tests/packages/fixtures/packages");
+const registryFile = process.env.TRILIUM_PACKAGE_REGISTRY_FILE || path.join(fixtureRoot, "registry.json");
 const host = process.env.TRILIUM_REGISTRY_HOST || "127.0.0.1";
 const port = Number(process.env.TRILIUM_REGISTRY_PORT || 39125);
 const packageDirectories = {
@@ -16,7 +18,7 @@ const packageDirectories = {
 };
 
 function loadRegistry() {
-    const registry = JSON.parse(fs.readFileSync(path.join(projectRoot, "registry.json"), "utf8"));
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
     for (const manifest of registry.packages) {
         const packageName = manifest.id.split("/")[1];
         manifest.repository = `http://${host}:${port}/packages/${packageName}`;

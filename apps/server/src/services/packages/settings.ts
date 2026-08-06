@@ -1,4 +1,4 @@
-import type { PackageManifest } from "./package-manifest.js";
+import type { PackageManifest } from "./package_manifest.js";
 
 export interface PackageInstallState {
     packageId: string;

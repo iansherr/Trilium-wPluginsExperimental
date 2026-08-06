@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { validateBundleManifest, validateManifest } from "../dist/package-manifest.js";
-import { validateRegistryIndex } from "../dist/registry.js";
+import { loadPackageServices } from "./load-package-services.mjs";
 
-const fixtureRegistry = JSON.parse(await readFile(new URL("../fixtures/registry.json", import.meta.url), "utf8"));
+const { validateBundleManifest, validateManifest, validateRegistryIndex } = loadPackageServices();
+
+const fixtureRegistry = JSON.parse(await readFile(new URL("./fixtures/registry.json", import.meta.url), "utf8"));
 const fixtureManifest = fixtureRegistry.packages[0];
 
 test("accepts a manifest with HTTPS/local development sources and SRI", () => {

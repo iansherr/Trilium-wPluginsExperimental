@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
+import i18next from "i18next";
 
 import {
     compareVersions,
     compatibilityStatus,
     formatCompatibility,
     formatDependency,
+    formatInstalledPackageDescription,
+    formatPluginUpdateError,
     isCatalogPackageEntry,
     isNewerVersion,
     isPackageArtifact,
     isPackageCompatibility,
     isPackageDependency,
     isPackageSettingDefinition,
+    isRelativePackageSource,
     isSecurePackageUrl,
     manifestStatus,
+    normalizePluginSourceUrl,
+    normalizePluginSources,
+    parseSourceHosts,
     normalizeSourceHosts,
     packageHealth,
     parseRegistryUrls,
@@ -54,6 +61,10 @@ describe("plugin manager validation helpers", () => {
         expect(normalizeSourceHosts(" github.com, raw.githubusercontent.com\ngitlab.com ")).toBe(
             "github.com\nraw.githubusercontent.com\ngitlab.com"
         );
+        expect(parseSourceHosts("github.com, raw.githubusercontent.com\ngithub.com")).toEqual([
+            "github.com",
+            "raw.githubusercontent.com"
+        ]);
     });
 
     it("only accepts HTTPS sources, except for local development hosts", () => {
@@ -62,6 +73,19 @@ describe("plugin manager validation helpers", () => {
         expect(isSecurePackageUrl("http://127.0.0.1:39125/plugin.json")).toBe(true);
         expect(isSecurePackageUrl("http://example.com/plugin.json")).toBe(false);
         expect(isSecurePackageUrl("javascript:alert(1)")).toBe(false);
+    });
+
+    it("accepts safe relative artifact paths and normalizes GitHub repositories", () => {
+        expect(isRelativePackageSource("src/index.js")).toBe(true);
+        expect(isRelativePackageSource("../outside.js")).toBe(false);
+        expect(isRelativePackageSource("/absolute.js")).toBe(false);
+        expect(normalizePluginSourceUrl("https://github.com/timeworthy/ikmal_tools_trilium")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
+        expect(normalizePluginSourceUrl("https://github.com/timeworthy/ikmal_tools_trilium/blob/main/trilium-package.json")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
+        expect(normalizePluginSources([" https://example.com/a.json ", "https://example.com/a.json", ""])).toEqual(["https://example.com/a.json"]);
     });
 
     it("validates package settings, dependencies, artifacts, and compatibility", () => {
@@ -90,12 +114,48 @@ describe("plugin manager validation helpers", () => {
 });
 
 describe("plugin manager state helpers", () => {
+    it("keeps package IDs and update URLs readable in translated text", async () => {
+        await i18next.init({
+            lng: "en",
+            resources: {
+                en: {
+                    translation: {
+                        plugins: {
+                            installed_summary: "{{id}} · v{{version}} · {{state}}{{pinned}} · {{health}}{{healthMessage}}",
+                            enabled: "enabled",
+                            health_unknown: "unknown",
+                            health_not_in_registry: "not in registry",
+                            update_error: "Could not check for updates: {{error}}"
+                        }
+                    }
+                }
+            }
+        });
+        const pkg = {
+            id: "iansherr/ikmal_tools_trilium",
+            title: "Ikmal Tools for Trilium",
+            version: "1.0.29",
+            enabled: true,
+            pinned: false,
+            noteId: "package-note",
+            artifactIds: ["manifest"],
+            health: "unknown" as const,
+            healthMessage: "not in registry",
+            settings: {}
+        };
+        expect(formatInstalledPackageDescription(pkg)).toContain("iansherr/ikmal_tools_trilium");
+        expect(formatInstalledPackageDescription(pkg)).not.toContain("&#x2F;");
+
+        const updateError = formatPluginUpdateError("https://raw.githubusercontent.com/iansherr/ikmal_tools_trilium/main/trilium-package.json is not a valid plugin manifest");
+        expect(updateError).toContain("https://raw.githubusercontent.com/iansherr/ikmal_tools_trilium/main/trilium-package.json");
+        expect(updateError).not.toContain("&#x2F;");
+    });
+
     it("schedules update checks for registry or direct-manifest sources only when enabled", () => {
-        expect(shouldScheduleUpdateChecks(true, true, ["https://example.com/registry.json"], [])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, false, ["https://example.com/registry.json"], [])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, true, [], [])).toBe(false);
-        expect(shouldScheduleUpdateChecks(false, true, ["https://example.com/registry.json"], [])).toBe(true);
-        expect(shouldScheduleUpdateChecks(false, true, [], ["https://example.com/plugin.json"])).toBe(true);
+        expect(shouldScheduleUpdateChecks(true, true, ["https://example.com/registry.json"])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, false, ["https://example.com/registry.json"])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, true, [])).toBe(false);
+        expect(shouldScheduleUpdateChecks(false, true, ["https://example.com/registry.json"])).toBe(true);
     });
 
     it("reports healthy, broken, and unknown package states", () => {
