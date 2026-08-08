@@ -41,6 +41,7 @@ const manifest = {
     repository: "https://example.com/example/plugin",
     permissions: ["network"],
     settings: [{ key: "enabled", type: "boolean" as const, title: "Enabled", default: false }],
+    surfaces: [],
     artifacts: [{ id: "manifest", source: "https://example.com/plugin.json", integrity }],
     dependencies: [{ id: "example/dependency", version: ">=1.0.0" }],
     compatibility: { minTriliumVersion: "0.100.0", maxTriliumVersion: "0.110.0" }
