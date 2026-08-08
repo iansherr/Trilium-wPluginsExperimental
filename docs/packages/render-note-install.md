@@ -23,6 +23,17 @@ Package manifests may also publish `deprecated` and an optional `deprecationMess
 
 The catalog displays bundle components with independent checkboxes. Installing a selection resolves dependencies and stages the selected package manifests in one transaction; the resulting packages remain separately manageable in **Settings → Plugins**. A bundle does not create a shared package owner for those components.
 
+Package authors can add an optional `surfaces` array to a package manifest to describe where their installed UI belongs. Supported entries are `page` (opens a package-owned render artifact), `settings` (groups declared `settingKeys` in the installed package panel), `modal` (one of the safe host commands `showInfoDialog`, `showConfirmDialog`, `showPromptDialog`, `showImportDialog`, or `showExportDialog`, with JSON `options`), and `deeplink` (an HTTPS, localhost HTTP, or `trilium:`/`trilium-next:` URL). These entry points are rendered in **Settings → Plugins**; they are not catalog actions.
+
+```json
+"surfaces": [
+  { "id": "dashboard", "type": "page", "title": "Dashboard", "artifact": "dashboard" },
+  { "id": "preferences", "type": "settings", "title": "Preferences", "settingKeys": ["refreshInterval"] },
+  { "id": "about", "type": "modal", "title": "About", "command": "showInfoDialog", "options": { "title": "My plugin" } },
+  { "id": "docs", "type": "deeplink", "title": "Documentation", "url": "https://example.com/docs" }
+]
+```
+
 Installation creates a managed package subtree under Trilium's hidden system area. Package artifacts are tagged with `packageManaged`, `packageOwner`, `packageVersion`, and `packageArtifact`. Activation labels are created in their `disabled:*` form, so installing a package does not execute it. Launchers remain under **Available Launchers** until the package is enabled, and are moved to **Visible Launchers** only while enabled. The manager only enables the other activation labels when the user presses **Enable**. Package-defined settings appear under **Configure** and are stored as labels on the package manifest note.
 
 Explicit ownership-transfer migrations require a staged source replacement and destination package, verify both declared SRI values, preserve user branches, and retain rollback markers until the whole transaction completes. The staged Ikmal split remains unpublished until its cloned-vault rehearsal passes.

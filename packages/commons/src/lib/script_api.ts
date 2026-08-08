@@ -453,6 +453,14 @@ export interface FrontendApi {
      * "#dateModified =* MONTH AND #log". See full documentation for all options at: https://triliumnext.github.io/Docs/Wiki/search.html
      */
     searchForNotes(searchString: string): Promise<ScriptFNote[]>;
+
+    /**
+     * Search notes including hidden notes such as Community Packages
+     * manifests. This is intended for installed plugins that need to read
+     * their package-managed settings without exposing those notes in the
+     * normal note tree.
+     */
+    searchForNotesIncludingHidden(searchString: string): Promise<ScriptFNote[]>;
     /**
      * This is a powerful search method - you can search by attributes and their values, e.g.:
      * "#dateModified =* MONTH AND #log". See full documentation for all options at: https://triliumnext.github.io/Docs/Wiki/search.html

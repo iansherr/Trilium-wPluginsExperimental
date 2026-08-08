@@ -11,7 +11,7 @@ declare const api: any;
 declare const window: any;
 
 import { showMessage, triggerCommand } from "trilium:api";
-import { Admonition, Button, FormGroup, FormTextBox, FormToggle, LoadingSpinner, useEffect, useState } from "trilium:preact";
+import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
 
 const SOURCES_LABEL = "packageSources";
 const ROOT_LABEL = "communityPackagesRoot";
@@ -128,9 +128,7 @@ export default function CommunityPackages() {
     const [loading, setLoading] = useState(true);
     const [busyPackage, setBusyPackage] = useState("");
     const [error, setError] = useState("");
-    const [configuredPackage, setConfiguredPackage] = useState("");
     const [detailsPackage, setDetailsPackage] = useState("");
-    const [packageValues, setPackageValues] = useState({});
     const [bundleSelections, setBundleSelections] = useState({});
     const [searchQuery, setSearchQuery] = useState("");
     const [interruptedTransactions, setInterruptedTransactions] = useState([]);
@@ -421,27 +419,6 @@ export default function CommunityPackages() {
         }
     }
 
-    async function savePackageSettings(packageId, manifest) {
-        if (!(await beginPackageOperation(setError))) return;
-        setBusyPackage(packageId);
-        try {
-            const note = await api.getNote(installed[packageId].noteId);
-            if (!note) throw new Error(`Installed package note not found: ${packageId}`);
-            for (const setting of manifest.settings || []) {
-                const labelName = settingLabelName(setting.key);
-                await replaceAttribute(note, "label", labelName, serializeSetting(packageValues[setting.key]));
-            }
-            await api.reloadNotes([note.noteId]);
-            showMessage(`${manifest.name} settings saved.`);
-            setConfiguredPackage("");
-        } catch (cause) {
-            setError(errorMessage(cause));
-        } finally {
-            await endPackageOperation();
-            setBusyPackage("");
-        }
-    }
-
     const search = searchQuery.trim().toLowerCase();
     const matchesPackage = (manifest) => !search || [manifest.name, manifest.id, manifest.description, manifest.author, manifest.maintainer].filter(Boolean).join(" ").toLowerCase().includes(search);
     const catalog = packages
@@ -548,46 +525,6 @@ export default function CommunityPackages() {
             <p>Search and install community extensions. Already-installed plugins are marked here; manage their settings and lifecycle from Settings → Plugins.</p>
 
             {error && <Admonition type="warning">{error}</Admonition>}
-            {interruptedTransactions.length > 0 && (
-                <Admonition type="warning">
-                    <div>
-                        <strong>Interrupted package operation detected.</strong>
-                        <p>{interruptedTransactions.length} staged operation{interruptedTransactions.length === 1 ? "" : "s"} remain from an interrupted install or update. Recovery keeps only complete stages and discards incomplete ones; recovered packages stay disabled.</p>
-                        <Button text={busyPackage === "recovery" ? "Recovering…" : "Recover package operations"} kind="primary" size="small" onClick={recoverInterruptedTransactions} disabled={Boolean(busyPackage)} />
-                    </div>
-                </Admonition>
-            )}
-
-            {storageSummary && (storageSummary.archivedGenerations > 0 || storageSummary.configBackups > 0) && (
-                <section className="options-section">
-                    <div className="options-section-header">
-                        <h4>Package storage</h4>
-                        <Button text="Refresh" icon="bx-refresh" size="small" onClick={() => refresh()} disabled={loading || Boolean(busyPackage)} />
-                    </div>
-                    <div className="options-section-card">
-                        <p style={{ marginTop: 0 }}>
-                            Active plugins live under the hidden Community Packages root. Updates keep old generations archived for recovery;
-                            configuration backups are JSON notes and are inherited by later installs when the active package is unavailable.
-                        </p>
-                        <div className="option-row">
-                            <div className="option-row-label"><label>Active generations</label></div>
-                            <div className="option-row-input">{storageSummary.activeGenerations}</div>
-                        </div>
-                        <div className="option-row">
-                            <div className="option-row-label"><label>Archived generations</label></div>
-                            <div className="option-row-input">{storageSummary.archivedGenerations} ({storageSummary.archivedManagedNotes} notes)</div>
-                        </div>
-                        <div className="option-row">
-                            <div className="option-row-label"><label>Configuration backups</label></div>
-                            <div className="option-row-input">{storageSummary.configBackups} current · {storageSummary.archivedConfigBackups} archived</div>
-                        </div>
-                        <small>
-                            Cleanup is intentionally recoverable: old package generations are archived, and only backups beyond the last {CONFIG_BACKUP_RETENTION} per package are archived automatically.
-                        </small>
-                    </div>
-                </section>
-            )}
-
             <section className="options-section">
                 <div className="options-section-header">
                     <h4>Search plugins</h4>
@@ -659,23 +596,7 @@ export default function CommunityPackages() {
                                             onClick={() => setDetailsPackage((current) => current === manifest.id ? "" : manifest.id)}
                                             disabled={Boolean(busyPackage)}
                                         />
-                                        {entry ? entry.health === "broken" ? (
-                                            <Button
-                                                text={busyPackage === manifest.id ? "Repairing…" : "Repair"}
-                                                size="small"
-                                                kind="primary"
-                                                onClick={() => repair(entry)}
-                                                disabled={Boolean(busyPackage)}
-                                            />
-                                        ) : updateAvailable ? (
-                                            <Button
-                                                text={busyPackage === manifest.id ? "Updating…" : "Update"}
-                                                size="small"
-                                                kind="primary"
-                                                onClick={() => update(manifest)}
-                                                disabled={Boolean(busyPackage)}
-                                            />
-                                        ) : (
+                                        {entry ? (
                                             <Button text="Manage in Plugins" size="small" onClick={openPluginSettings} disabled={Boolean(busyPackage)} />
                                         ) : (
                                             <Button
@@ -690,15 +611,6 @@ export default function CommunityPackages() {
                                 }
                             />
                             {detailsPackage === manifest.id && <PackageDetails manifest={manifest} />}
-                            {configuredPackage === manifest.id && entry && manifest.settings?.length > 0 && (
-                                <PackageSettings
-                                    manifest={manifest}
-                                    values={packageValues}
-                                    onChange={(key, value) => setPackageValues({ ...packageValues, [key]: value })}
-                                    onSave={() => savePackageSettings(entry.id, manifest)}
-                                    disabled={busyPackage === manifest.id}
-                                />
-                            )}
                         </div>;
                     })}
                 </div>
@@ -1936,41 +1848,6 @@ function compareVersionParts(left, right) {
     return 0;
 }
 
-function PackageSettings({ manifest, values, onChange, onSave, disabled }) {
-    return (
-        <div style={{ padding: "0.8em 1em", marginBottom: "0.8em", background: "var(--main-background-color)", border: "1px solid var(--main-border-color)" }}>
-            <h3>{manifest.name} settings</h3>
-            {(manifest.settings || []).map((setting) => (
-                <FormGroup key={setting.key} name={`${manifest.id}-${setting.key}`} label={setting.title} description={setting.description}>
-                    <SettingEditor setting={setting} value={values[setting.key]} onChange={(value) => onChange(setting.key, value)} disabled={disabled} />
-                </FormGroup>
-            ))}
-            <Button text="Save package settings" kind="primary" size="small" onClick={onSave} disabled={disabled} />
-        </div>
-    );
-}
-
-function SettingEditor({ setting, value, onChange, disabled }) {
-    if (setting.type === "boolean") {
-        return <FormToggle currentValue={Boolean(value)} onChange={onChange} disabled={disabled} switchOnName="Enabled" switchOffName="Disabled" />;
-    }
-    if (setting.type === "select") {
-        return (
-            <select value={value ?? ""} onChange={(event) => onChange(event.currentTarget.value)} disabled={disabled}>
-                {(setting.options || []).map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-        );
-    }
-    return (
-        <FormTextBox
-            type={setting.type === "secret" ? "password" : setting.type === "number" ? "number" : "text"}
-            currentValue={value === undefined || value === null ? "" : String(value)}
-            onChange={(newValue) => onChange(setting.type === "number" ? Number(newValue) : newValue)}
-            disabled={disabled}
-        />
-    );
-}
-
 function activationAttributes(artifact) {
     const attributes = [];
     const disabled = (name, value) => attributes.push({ type: "label", name: `disabled:${name}`, value });
@@ -2032,6 +1909,25 @@ function manifestProblems(value) {
             if (problem) errors.push(`artifacts[${index}].source: ${problem}`);
         }
     }
+    const artifactIdsForSurfaces = new Set((value.artifacts || []).map((artifact) => artifact?.id));
+    const settingKeysForSurfaces = new Set((value.settings || []).map((setting) => setting?.key));
+    const surfaceIds = new Set();
+    const modalCommands = new Set(["showInfoDialog", "showConfirmDialog", "showPromptDialog", "showImportDialog", "showExportDialog"]);
+    for (const [index, surface] of (value.surfaces || []).entries()) {
+        if (!surface || typeof surface !== "object") {
+            errors.push(`surfaces[${index}] must be an object`);
+            continue;
+        }
+        if (typeof surface.id !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(surface.id)) errors.push(`surfaces[${index}].id is invalid`);
+        if (surfaceIds.has(surface.id)) errors.push(`surfaces[${index}].id is duplicated: ${surface.id}`);
+        surfaceIds.add(surface.id);
+        if (!["page", "settings", "modal", "deeplink"].includes(surface.type)) errors.push(`surfaces[${index}].type is invalid`);
+        if (typeof surface.title !== "string" || !surface.title.trim()) errors.push(`surfaces[${index}].title is required`);
+        if (surface.type === "page" && (!artifactIdsForSurfaces.has(surface.artifact))) errors.push(`surfaces[${index}].artifact must reference a declared artifact`);
+        if (surface.type === "settings" && (!Array.isArray(surface.settingKeys) || !surface.settingKeys.length || surface.settingKeys.some((key) => !settingKeysForSurfaces.has(key)))) errors.push(`surfaces[${index}].settingKeys must reference declared settings`);
+        if (surface.type === "modal" && (!modalCommands.has(surface.command) || (surface.options !== undefined && (!surface.options || typeof surface.options !== "object" || Array.isArray(surface.options))))) errors.push(`surfaces[${index}] has an invalid modal command or options object`);
+        if (surface.type === "deeplink" && (typeof surface.url !== "string" || !isSafePackageSurfaceUrl(surface.url))) errors.push(`surfaces[${index}].url is not a permitted deep link`);
+    }
     const migrationKeys = new Set();
     for (const [index, migration] of (value.migrations || []).entries()) {
         if (!migration || typeof migration !== "object") {
@@ -2053,6 +1949,15 @@ function manifestProblems(value) {
         migrationKeys.add(key);
     }
     return [...new Set(errors)];
+}
+
+function isSafePackageSurfaceUrl(value) {
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname)) || url.protocol === "trilium:" || url.protocol === "trilium-next:";
+    } catch {
+        return false;
+    }
 }
 
 function bundleProblems(value) {

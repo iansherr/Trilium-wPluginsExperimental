@@ -36,11 +36,10 @@ test("catalog bundles keep component selection separate from package lifecycle",
     assert.match(managerSource, /function bundleComponents\(bundle, catalog\)/);
 });
 
-test("catalog exposes an explicit update action for installed newer versions", () => {
+test("catalog keeps installed packages as discovery entries", () => {
     assert.match(managerSource, /const updateAvailable = entry && isNewerVersion\(manifest\.version, entry\.version\)/);
-    assert.match(managerSource, /text=\{busyPackage === manifest\.id \? "Updating…" : "Update"\}/);
-    assert.match(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
     assert.match(managerSource, /text="Manage in Plugins"/);
+    assert.doesNotMatch(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
 });
 
 test("plugin settings enable and disable every managed artifact activation", () => {
@@ -52,25 +51,34 @@ test("plugin settings enable and disable every managed artifact activation", () 
     assert.match(pluginsSource, /setLauncherVisibility\(note, enabled\)/);
 });
 
+test("plugin settings owns installed lifecycle and manifest entry points", () => {
+    assert.match(pluginsSource, /async function setPackageArchived\(pkg: PackageSummary, archived: boolean\)/);
+    assert.match(pluginsSource, /async function deletePackage\(pkg: PackageSummary\)/);
+    assert.match(pluginsSource, /archivedPackages/);
+    assert.match(pluginsSource, /onArchive=\{\(\) => void setPackageArchived\(pkg, true\)\}/);
+    assert.match(pluginsSource, /onClick=\{\(\) => void deletePackage\(pkg\)\}/);
+    assert.match(pluginsSource, /type PackageSurfaceType = "page" \| "settings" \| "modal" \| "deeplink"/);
+    assert.match(pluginsSource, /PACKAGE_MODAL_COMMANDS/);
+    assert.match(pluginsSource, /openPackageSurface\(pkg, surface\)/);
+});
+
 test("JSX launcher and render artifacts use the JSX MIME", () => {
     assert.match(managerSource, /if \(type === "launcher" \|\| type === "render"\) return "text\/jsx"/);
 });
 
-test("catalog exposes repair for broken installed packages", () => {
+test("catalog reports broken installations without owning repair", () => {
     assert.match(managerSource, /entry\.health === "broken"/);
     assert.match(managerSource, /const status = !entry[\s\S]*?"Repair needed"/);
-    assert.match(managerSource, /text=\{busyPackage === manifest\.id \? "Repairing…" : "Repair"\}/);
-    assert.match(managerSource, /onClick=\{\(\) => repair\(entry\)\}/);
+    assert.match(managerSource, /text="Manage in Plugins"/);
+    assert.doesNotMatch(managerSource, /onClick=\{\(\) => repair\(entry\)\}/);
 });
 
-test("interrupted stages surface recovery and keep incomplete notes recoverable", () => {
+test("interrupted stages retain recoverable manager internals", () => {
     assert.match(managerSource, /const \[interruptedTransactions, setInterruptedTransactions\]/);
-    assert.match(managerSource, /Interrupted package operation detected\./);
-    assert.match(managerSource, /Recovery keeps only complete stages and discards incomplete ones/);
     assert.match(managerSource, /async function recoverInterruptedTransactions\(\)/);
     assert.match(managerSource, /await archiveTransactionNotes\(transactionId\)/);
     assert.match(managerSource, /await clearTransaction\(transactionId, notes\)/);
-    assert.match(managerSource, /recovered packages stay disabled/);
+    assert.doesNotMatch(managerSource, /Interrupted package operation detected\./);
 });
 
 test("ownership migrations require a staged source replacement and rollback markers", () => {

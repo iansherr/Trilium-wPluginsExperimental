@@ -101,6 +101,26 @@
         "additionalProperties": false
       }
     },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "title"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "type": { "enum": ["page", "settings", "modal", "deeplink"] },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "icon": { "type": "string" },
+          "artifact": { "type": "string" },
+          "settingKeys": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "command": { "type": "string", "enum": ["showInfoDialog", "showConfirmDialog", "showPromptDialog", "showImportDialog", "showExportDialog"] },
+          "options": { "type": "object" },
+          "url": { "type": "string", "format": "uri" }
+        },
+        "additionalProperties": false
+      }
+    },
     "artifacts": {
       "type": "array",
       "minItems": 1,

@@ -667,6 +667,10 @@ function FrontendScriptApi(this: Api, startNote: FNote, currentNote: FNote, orig
         return await searchService.searchForNotes(searchString);
     };
 
+    this.searchForNotesIncludingHidden = async (searchString) => {
+        return await searchService.searchForNotesIncludingHidden(searchString);
+    };
+
     this.searchForNote = async (searchString) => {
         const notes = await this.searchForNotes(searchString);
 

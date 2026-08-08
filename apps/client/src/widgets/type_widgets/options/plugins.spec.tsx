@@ -14,6 +14,7 @@ import {
     isPackageCompatibility,
     isPackageDependency,
     isPackageSettingDefinition,
+    isPackageSurface,
     isRelativePackageSource,
     isSecurePackageUrl,
     manifestStatus,
@@ -22,6 +23,7 @@ import {
     parseSourceHosts,
     normalizeSourceHosts,
     packageHealth,
+    parseCachedPackageManifest,
     parseRegistryUrls,
     parseSettingValue,
     serializeSetting,
@@ -102,6 +104,10 @@ describe("plugin manager validation helpers", () => {
         expect(isPackageCompatibility(manifest.compatibility)).toBe(true);
         expect(isPackageCompatibility({ minTriliumVersion: 1 })).toBe(false);
         expect(isPackageCompatibility({ minTriliumVersion: "0.110.0", maxTriliumVersion: "0.100.0" })).toBe(false);
+        expect(isPackageSurface({ id: "dashboard", type: "page", title: "Dashboard", artifact: "manifest" })).toBe(true);
+        expect(isPackageSurface({ id: "preferences", type: "settings", title: "Preferences", settingKeys: ["enabled"] })).toBe(true);
+        expect(isPackageSurface({ id: "about", type: "modal", title: "About", command: "showInfoDialog", options: {} })).toBe(true);
+        expect(isPackageSurface({ id: "unsafe", type: "deeplink", title: "Unsafe", url: "javascript:alert(1)" })).toBe(false);
     });
 
     it("rejects incomplete or unsafe catalog entries", () => {
@@ -110,6 +116,12 @@ describe("plugin manager validation helpers", () => {
         expect(isCatalogPackageEntry({ ...manifest, repository: "http://example.com/plugin" })).toBe(false);
         expect(isCatalogPackageEntry({ ...manifest, artifacts: [] })).toBe(false);
         expect(isCatalogPackageEntry({ ...manifest, compatibility: null })).toBe(false);
+    });
+
+    it("uses an embedded manifest when no registry source is configured", () => {
+        const cached = parseCachedPackageManifest(JSON.stringify(manifest));
+        expect(cached?.id).toBe("example/plugin");
+        expect(cached?.settings).toEqual(manifest.settings);
     });
 });
 
@@ -139,6 +151,7 @@ describe("plugin manager state helpers", () => {
             pinned: false,
             noteId: "package-note",
             artifactIds: ["manifest"],
+            artifactNotes: [],
             health: "unknown" as const,
             healthMessage: "not in registry",
             settings: {}

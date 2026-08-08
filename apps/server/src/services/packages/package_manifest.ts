@@ -12,6 +12,7 @@ export type PackagePermission =
 export type PackageSettingType = "boolean" | "number" | "string" | "secret" | "select";
 export type PackageMaintenance = "active" | "slow" | "unmaintained";
 export type PackageSecurityStatus = "unreviewed" | "reviewed" | "warning";
+export type PackageSurfaceType = "page" | "settings" | "modal" | "deeplink";
 export type ArtifactType =
     | "frontend"
     | "backend"
@@ -31,6 +32,20 @@ export interface PackageSettingDefinition {
     description?: string;
     default?: unknown;
     options?: string[];
+}
+
+/** A host-owned entry point exposed by an installed package in Settings → Plugins. */
+export interface PackageSurface {
+    id: string;
+    type: PackageSurfaceType;
+    title: string;
+    description?: string;
+    icon?: string;
+    artifact?: string;
+    settingKeys?: string[];
+    command?: string;
+    options?: Record<string, unknown>;
+    url?: string;
 }
 
 export interface PackageArtifact {
@@ -87,6 +102,7 @@ export interface PackageManifest {
     migrations?: PackageMigration[];
     permissions?: PackagePermission[];
     settings?: PackageSettingDefinition[];
+    surfaces?: PackageSurface[];
     artifacts: PackageArtifact[];
 }
 
@@ -212,6 +228,36 @@ export function validateManifest(manifest: unknown, options: ManifestValidationO
         if (!dependency.version?.trim()) errors.push(`dependencies[${index}].version is required`);
     }
 
+    const artifactIdSet = new Set((value.artifacts ?? []).map((artifact) => artifact?.id).filter((id): id is string => typeof id === "string"));
+    const settingKeySet = new Set((value.settings ?? []).map((setting) => setting?.key).filter((key): key is string => typeof key === "string"));
+    const surfaceIds = new Set<string>();
+    const safeModalCommands = new Set(["showInfoDialog", "showConfirmDialog", "showPromptDialog", "showImportDialog", "showExportDialog"]);
+    for (const [index, surface] of (value.surfaces ?? []).entries()) {
+        if (!surface || typeof surface !== "object") {
+            errors.push(`surfaces[${index}] must be an object`);
+            continue;
+        }
+        if (typeof surface.id !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(surface.id)) errors.push(`surfaces[${index}].id is invalid`);
+        if (surface.id && surfaceIds.has(surface.id)) errors.push(`surfaces[${index}].id is duplicated: ${surface.id}`);
+        if (surface.id) surfaceIds.add(surface.id);
+        if (! ["page", "settings", "modal", "deeplink"].includes(surface.type as string)) errors.push(`surfaces[${index}].type is invalid`);
+        if (typeof surface.title !== "string" || !surface.title.trim()) errors.push(`surfaces[${index}].title is required`);
+        if (surface.icon !== undefined && typeof surface.icon !== "string") errors.push(`surfaces[${index}].icon must be a string`);
+        if (surface.type === "page") {
+            if (typeof surface.artifact !== "string" || !artifactIdSet.has(surface.artifact)) errors.push(`surfaces[${index}].artifact must reference a declared artifact`);
+        } else if (surface.type === "settings") {
+            if (!Array.isArray(surface.settingKeys) || surface.settingKeys.length === 0) errors.push(`surfaces[${index}].settingKeys must contain at least one setting key`);
+            for (const key of surface.settingKeys ?? []) {
+                if (typeof key !== "string" || !settingKeySet.has(key)) errors.push(`surfaces[${index}].settingKeys references an undeclared setting`);
+            }
+        } else if (surface.type === "modal") {
+            if (typeof surface.command !== "string" || !safeModalCommands.has(surface.command)) errors.push(`surfaces[${index}].command is not an allowed modal command`);
+            if (surface.options !== undefined && (!surface.options || typeof surface.options !== "object" || Array.isArray(surface.options))) errors.push(`surfaces[${index}].options must be an object`);
+        } else if (surface.type === "deeplink") {
+            if (typeof surface.url !== "string" || !isSafeSurfaceUrl(surface.url)) errors.push(`surfaces[${index}].url must be an HTTPS, localhost HTTP, or Trilium deep link`);
+        }
+    }
+
     const migrationKeys = new Set<string>();
     for (const [index, migration] of (value.migrations ?? []).entries()) {
         if (!migration || typeof migration !== "object") {
@@ -234,6 +280,16 @@ export function validateManifest(manifest: unknown, options: ManifestValidationO
     }
 
     return { valid: errors.length === 0, errors };
+}
+
+function isSafeSurfaceUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+        return url.protocol === "https:" || localHttp || url.protocol === "trilium:" || url.protocol === "trilium-next:";
+    } catch {
+        return false;
+    }
 }
 
 export function validateBundleManifest(bundle: unknown): ManifestValidationResult {

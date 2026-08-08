@@ -14,6 +14,29 @@ test("accepts a manifest with HTTPS/local development sources and SRI", () => {
     assert.deepEqual(result, { valid: true, errors: [] });
 });
 
+test("accepts safe plugin settings entry points", () => {
+    const manifest = structuredClone(fixtureManifest);
+    manifest.surfaces = [
+        { id: "dashboard", type: "page", title: "Dashboard", artifact: "widget" },
+        { id: "preferences", type: "settings", title: "Preferences", settingKeys: ["greeting"] },
+        { id: "about", type: "modal", title: "About", command: "showInfoDialog", options: { title: "Hello" } },
+        { id: "docs", type: "deeplink", title: "Documentation", url: "https://example.com/docs" }
+    ];
+    assert.deepEqual(validateManifest(manifest, { requireIntegrity: true }), { valid: true, errors: [] });
+});
+
+test("rejects unsafe or unmapped plugin settings entry points", () => {
+    const manifest = structuredClone(fixtureManifest);
+    manifest.surfaces = [
+        { id: "bad-page", type: "page", title: "Missing", artifact: "unknown" },
+        { id: "bad-modal", type: "modal", title: "Unsafe", command: "runArbitraryCode" },
+        { id: "bad-link", type: "deeplink", title: "Unsafe", url: "javascript:alert(1)" }
+    ];
+    const result = validateManifest(manifest, { requireIntegrity: true });
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join("; "), /declared artifact|allowed modal command|permitted/);
+});
+
 test("rejects an artifact without integrity when integrity is required", () => {
     const manifest = structuredClone(fixtureManifest);
     delete manifest.artifacts[0].integrity;
