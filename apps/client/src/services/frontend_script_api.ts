@@ -210,6 +210,12 @@ export interface Api {
     searchForNotes(searchString: string): Promise<FNote[]>;
 
     /**
+     * Search notes including hidden system notes such as managed plugin
+     * manifests and artifacts.
+     */
+    searchForNotesIncludingHidden(searchString: string): Promise<FNote[]>;
+
+    /**
      * This is a powerful search method - you can search by attributes and their values, e.g.:
      * "#dateModified =* MONTH AND #log". See full documentation for all options at: https://triliumnext.github.io/Docs/Wiki/search.html
      */
