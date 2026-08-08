@@ -50,7 +50,7 @@ function quickSearch(req: Request<{ searchString: string }>) {
 
     const searchContext = new SearchContext({
         fastSearch: false,
-        includeArchivedNotes: false,
+        includeArchivedNotes: req.query.includeArchived === "true",
         includeHiddenNotes: true,
         fuzzyAttributeSearch: true,
         ignoreInternalAttributes: true,

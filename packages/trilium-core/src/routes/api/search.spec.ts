@@ -30,6 +30,23 @@ describe("Search API (core)", () => {
         expect(Array.isArray(res.body.searchResults)).toBe(true);
     });
 
+    it("includes archived notes only when requested", async () => {
+        const { noteId } = await createTextNote(api, { title: "Archived search fixture" });
+        await api.post(`/api/notes/${noteId}/attributes`, {
+            body: { type: "label", name: "archived", value: "" }
+        });
+
+        const excluded = await api.get<{ searchResultNoteIds: string[] }>(
+            `/api/quick-search/${encodeURIComponent("Archived search fixture")}`
+        );
+        expect(excluded.body.searchResultNoteIds).not.toContain(noteId);
+
+        const included = await api.get<{ searchResultNoteIds: string[] }>(
+            `/api/quick-search/${encodeURIComponent("Archived search fixture")}?includeArchived=true`
+        );
+        expect(included.body.searchResultNoteIds).toContain(noteId);
+    });
+
     it("lists template note ids including a freshly-labelled template", async () => {
         const { noteId } = await createTextNote(api, { title: "A template note" });
         await api.post(`/api/notes/${noteId}/attributes`, {

@@ -197,7 +197,7 @@ export default function PluginsSettings() {
             const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
                 findPackageManager(),
                 search.searchForNotesIncludingHidden("#packageManaged"),
-                search.searchForNotesIncludingHidden("#packageManaged #archived"),
+                search.searchForNotesIncludingHidden("#packageManaged #archived", true),
                 search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
             ]);
             const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
@@ -354,7 +354,7 @@ export default function PluginsSettings() {
         if (!window.confirm(translateText("plugins.lifecycle_confirm", { action, title: pkg.title }))) return;
         setSavingPackage(pkg.id);
         try {
-            const notes = await search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"${archived ? "" : " #archived"}`);
+            const notes = await search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"${archived ? "" : " #archived"}`, !archived);
             const packageNotes = notes.filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
             if (!packageNotes.length) throw new Error(`No package-owned notes found for ${pkg.id}`);
             await setPackageArtifactActivation(pkg.id, false, packageNotes);
@@ -379,10 +379,14 @@ export default function PluginsSettings() {
         try {
             const [active, archived] = await Promise.all([
                 search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"`),
-                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`)
+                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`, true)
             ]);
-            const notes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
+            const packageNotes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
                 .filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
+            const packageNoteIds = new Set(packageNotes.map((note) => note.noteId));
+            const notes = packageNotes.filter((note) =>
+                !note.getParentBranches().some((branch) => packageNoteIds.has(branch.parentNoteId))
+            );
             const taskId = randomString(12);
             for (const [index, note] of notes.entries()) {
                 await server.remove(`notes/${note.noteId}?taskId=${taskId}&eraseNotes=false&last=${index === notes.length - 1 ? "true" : "false"}`);

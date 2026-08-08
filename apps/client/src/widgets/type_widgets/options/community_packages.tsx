@@ -860,12 +860,16 @@ async function ensureRootNote() {
         await moveNoteToParent(existing, "_hidden", (branch) => branch.parentNoteId === "root");
         return existing;
     }
-    return createNote("_hidden", {
+    const root = await createNote("root", {
         title: "Community Packages",
         type: "book",
         content: "Packages installed by the Community Packages manager.",
         attributes: [{ type: "label", name: ROOT_LABEL }]
     });
+    await api.reloadNotes([root.noteId]);
+    const created = await api.getNote(root.noteId);
+    await moveNoteToParent(created, "_hidden", (branch) => branch.parentNoteId === "root");
+    return created;
 }
 
 async function createNote(parentNoteId, options) {
