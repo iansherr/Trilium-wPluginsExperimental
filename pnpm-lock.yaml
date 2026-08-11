@@ -207,6 +207,9 @@ importers:
       '@mermaid-js/layout-elk':
         specifier: 0.2.2
         version: 0.2.2(mermaid@11.16.1)
+      '@noble/hashes':
+        specifier: ^2.2.0
+        version: 2.3.0
       '@popperjs/core':
         specifier: 2.11.8
         version: 2.11.8

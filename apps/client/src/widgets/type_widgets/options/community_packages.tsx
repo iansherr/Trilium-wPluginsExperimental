@@ -12,6 +12,7 @@ declare const window: any;
 
 import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
+import { sha256 } from "@noble/hashes/sha2.js";
 
 const SOURCES_LABEL = "packageSources";
 const LEGACY_REGISTRY_URL_LABEL = "packageRegistryUrl";
@@ -1091,7 +1092,12 @@ async function installPackage(manifest, transactionId = "", allowedSourceHosts =
 
 async function verifyArtifactIntegrity(manifest, artifact, payload) {
     if (!artifact.integrity) throw new Error(`${manifest.name} artifact ${artifact.id} has no integrity hash`);
-    const digest = await crypto.subtle.digest("SHA-256", payload);
+    // WebCrypto is unavailable when Trilium is served over plain HTTP. Keep the
+    // integrity check active there by using the bundled implementation instead
+    // of treating an insecure development context as an exception.
+    const digest = globalThis.crypto?.subtle
+        ? await globalThis.crypto.subtle.digest("SHA-256", payload)
+        : sha256(payload);
     const actual = `sha256-${arrayBufferToBase64(digest)}`;
     if (actual !== artifact.integrity) {
         throw new Error(`${manifest.name} artifact ${artifact.id} failed integrity verification (expected ${artifact.integrity}, received ${actual})`);
