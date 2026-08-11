@@ -792,7 +792,13 @@ function parseConfiguredSources(note) {
         note?.getOwnedLabelValue(LEGACY_REGISTRY_URLS_LABEL),
         note?.getOwnedLabelValue(LEGACY_DIRECT_MANIFEST_URLS_LABEL)
     ].flatMap(parseRegistryUrls);
-    return [...new Set(values)];
+    return [...new Set(values.map((value) => {
+        try {
+            return normalizePluginSourceUrl(value);
+        } catch {
+            return value;
+        }
+    }))];
 }
 
 function normalizeSourceHosts(value) {
@@ -1252,9 +1258,14 @@ async function fetchJsonSource(url) {
 }
 
 async function loadCatalogSource(sourceUrl) {
-    const sourceProblem = downloadUrlProblem(sourceUrl, "");
+    let resolvedUrl;
+    try {
+        resolvedUrl = normalizePluginSourceUrl(sourceUrl);
+    } catch {
+        throw new Error(`${sourceUrl} is not a permitted plugin source URL (use HTTPS or a localhost HTTP URL)`);
+    }
+    const sourceProblem = downloadUrlProblem(resolvedUrl, "");
     if (sourceProblem) throw new Error(`${sourceUrl}: ${sourceProblem}`);
-    const resolvedUrl = normalizePluginSourceUrl(sourceUrl);
     try {
         const payload = await fetchJsonSource(resolvedUrl);
         if (Array.isArray(payload?.packages)) return payload.packages.filter(isCatalogEntry);
@@ -1268,14 +1279,20 @@ async function loadCatalogSource(sourceUrl) {
 }
 
 function normalizePluginSourceUrl(source) {
-    const parsed = new URL(source);
-    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+    const trimmedSource = String(source || "").trim();
+    const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
+        ? `https://${trimmedSource}`
+        : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)
+            ? `https://${trimmedSource}`
+            : trimmedSource;
+    const parsed = new URL(normalizedInput);
+    if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "github.com") return normalizedInput;
 
     const segments = parsed.pathname.split("/").filter(Boolean);
-    if (segments.length < 2) return source;
+    if (segments.length < 2) return normalizedInput;
     const owner = segments[0];
     const repository = segments[1].replace(/\.git$/, "");
-    if (!owner || !repository) return source;
+    if (!owner || !repository) return normalizedInput;
 
     if (segments[2] === "blob" && segments[3] && segments.length > 4) {
         return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;

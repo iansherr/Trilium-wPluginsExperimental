@@ -49,12 +49,13 @@ test("catalog surfaces legacy source labels instead of hiding them", () => {
     assert.match(managerSource, /note\?\.getOwnedLabelValue\(LEGACY_DIRECT_MANIFEST_URLS_LABEL\)/);
 });
 
-test("plugin settings canonicalize and clear legacy source labels on save", () => {
+test("plugin settings canonicalize and mirror legacy source labels on save", () => {
     assert.match(pluginsSource, /const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
     assert.match(pluginsSource, /parseConfiguredPluginSources\(\(labelName\) => settings\?\.getOwnedLabelValue\(labelName\)\)/);
     assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_SOURCES_LABEL, JSON\.stringify\(sources\)\)/);
-    assert.match(pluginsSource, /for \(const labelName of LEGACY_PACKAGE_SOURCE_LABELS\)/);
-    assert.match(pluginsSource, /removeOwnedAttributesByNameOrType\(state\.settings, "label", labelName\)/);
+    assert.match(pluginsSource, /buildLegacyPluginSourceLabels\(sources\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources\.packageRegistryUrl\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources\.packageDirectManifestUrls\)/);
 });
 
 test("plugin settings enable and disable every managed artifact activation", () => {

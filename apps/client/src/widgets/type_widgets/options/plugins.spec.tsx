@@ -4,6 +4,7 @@ import i18next from "i18next";
 import {
     compareVersions,
     compatibilityStatus,
+    buildLegacyPluginSourceLabels,
     formatCompatibility,
     formatDependency,
     formatInstalledPackageDescription,
@@ -102,7 +103,34 @@ describe("plugin manager validation helpers", () => {
         expect(normalizePluginSourceUrl("https://github.com/timeworthy/ikmal_tools_trilium/blob/main/trilium-package.json")).toBe(
             "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
         );
+        expect(normalizePluginSourceUrl("github.com/timeworthy/ikmal_tools_trilium")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
+        expect(normalizePluginSourceUrl("raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
         expect(normalizePluginSources([" https://example.com/a.json ", "https://example.com/a.json", ""])).toEqual(["https://example.com/a.json"]);
+        expect(normalizePluginSources([
+            "https://github.com/timeworthy/ikmal_tools_trilium",
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        ])).toEqual(["https://github.com/timeworthy/ikmal_tools_trilium"]);
+    });
+
+    it("writes compatible aliases for older package managers", () => {
+        expect(buildLegacyPluginSourceLabels([
+            "github.com/timeworthy/ikmal_tools_trilium",
+            "http://127.0.0.1:39125/registry.json"
+        ])).toEqual({
+            packageRegistryUrl: "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+            packageRegistryUrls: JSON.stringify([
+                "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+                "http://127.0.0.1:39125/registry.json"
+            ]),
+            packageDirectManifestUrls: JSON.stringify([
+                "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+                "http://127.0.0.1:39125/registry.json"
+            ])
+        });
     });
 
     it("validates package settings, dependencies, artifacts, and compatibility", () => {

@@ -295,9 +295,14 @@ export default function PluginsSettings() {
         try {
             const sources = normalizePluginSources(state.sources);
             await setLabel(state.settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
-            for (const labelName of LEGACY_PACKAGE_SOURCE_LABELS) {
-                await removeOwnedAttributesByNameOrType(state.settings, "label", labelName);
-            }
+            // Keep the legacy labels as a compatibility mirror. Older embedded
+            // package managers do not understand packageSources, and deleting
+            // these labels makes a newer Plugins screen silently disconnect an
+            // older manager after the user saves settings.
+            const legacySources = buildLegacyPluginSourceLabels(sources);
+            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources.packageRegistryUrl);
+            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URLS_LABEL, legacySources.packageRegistryUrls);
+            await setLabel(state.settings.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources.packageDirectManifestUrls);
             await setLabel(state.settings.noteId, "packageAllowNetwork", state.allowNetworkPackages ? "true" : "false");
             await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts.join("\n")));
             await setLabel(state.settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, state.checkForUpdates ? "true" : "false");
@@ -870,10 +875,16 @@ async function loadCatalog(sources: string[], packages: PackageSummary[], includ
     }
 
     const sourceResults = configuredSources.map(async (source): Promise<RawCatalogPackage[]> => {
-        if (!isSecurePackageUrl(source)) throw new Error(`${source} is not a permitted plugin source URL`);
-        const resolvedSource = normalizePluginSourceUrl(source);
+        let resolvedSource: string;
+        try {
+            resolvedSource = normalizePluginSourceUrl(source);
+        } catch {
+            throw new Error(`${source} is not a permitted plugin source URL (use HTTPS or a localhost HTTP URL)`);
+        }
+        if (!isSecurePackageUrl(resolvedSource)) throw new Error(`${source} is not a permitted plugin source URL`);
         const response = await fetch(resolvedSource);
         if (!response.ok) throw new Error(`${source} returned HTTP ${response.status}`);
+        if (!isSecurePackageUrl(response.url || resolvedSource)) throw new Error(`${source} redirected to a non-permitted URL`);
         const payload = await response.json() as { packages?: RawCatalogPackage[] } | RawCatalogPackage;
         if ("packages" in payload && Array.isArray(payload.packages)) return payload.packages;
         if (isCatalogPackageEntry(payload as RawCatalogPackage)) return [payload as RawCatalogPackage];
@@ -965,7 +976,39 @@ export function parseRegistryUrls(value: string | null | undefined) {
 }
 
 export function normalizePluginSources(sources: string[]) {
-    return [...new Set(sources.map((source) => source.trim()).filter(Boolean))];
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const source of sources) {
+        const trimmedSource = source.trim();
+        if (!trimmedSource) continue;
+        let identity = trimmedSource;
+        try {
+            identity = normalizePluginSourceUrl(trimmedSource);
+        } catch {
+            // Preserve invalid values so the UI can report the exact entry.
+        }
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        result.push(trimmedSource);
+    }
+    return result;
+}
+
+export function buildLegacyPluginSourceLabels(sources: string[]) {
+    const normalizedSources = normalizePluginSources(sources).map((source) => {
+        try {
+            return normalizePluginSourceUrl(source);
+        } catch {
+            return source;
+        }
+    });
+    const serializedSources = JSON.stringify(normalizedSources);
+    return {
+        // The singular label is still used by the oldest package manager.
+        packageRegistryUrl: normalizedSources[0] || "",
+        packageRegistryUrls: serializedSources,
+        packageDirectManifestUrls: serializedSources
+    };
 }
 
 export function parseConfiguredPluginSources(getLabelValue: (labelName: string) => string | null | undefined) {
@@ -1235,14 +1278,20 @@ export function isRelativePackageSource(value: string) {
 }
 
 export function normalizePluginSourceUrl(source: string) {
-    const parsed = new URL(source);
-    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+    const trimmedSource = source.trim();
+    const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
+        ? `https://${trimmedSource}`
+        : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)
+            ? `https://${trimmedSource}`
+            : trimmedSource;
+    const parsed = new URL(normalizedInput);
+    if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "github.com") return normalizedInput;
 
     const segments = parsed.pathname.split("/").filter(Boolean);
-    if (segments.length < 2) return source;
+    if (segments.length < 2) return normalizedInput;
     const owner = segments[0];
     const repository = segments[1].replace(/\.git$/, "");
-    if (!owner || !repository) return source;
+    if (!owner || !repository) return normalizedInput;
 
     if (segments[2] === "blob" && segments[3] && segments.length > 4) {
         return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;
