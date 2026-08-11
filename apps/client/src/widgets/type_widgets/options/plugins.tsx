@@ -467,6 +467,23 @@ export default function PluginsSettings() {
             <OptionsPageHeader />
 
             <OptionsSection
+                title={t("plugins.updates_title")}
+                description={t("plugins.updates_description")}
+            >
+                {state.registryError && <p role="alert">{formatPluginUpdateError(state.registryError)}</p>}
+                {!state.loading && state.updateCount === null && !state.registryError && <p>{t("plugins.configure_source")}</p>}
+                {!state.loading && state.updateCount === 0 && !state.registryError && <NoItems icon="bx bx-check" text={t("plugins.up_to_date")} />}
+                {!state.loading && state.updateCount !== null && state.updateCount > 0 && (
+                    <OptionsRowWithButton
+                        label={translateText("plugins.updates_available", { count: state.updateCount })}
+                        description={t("plugins.review_updates_description")}
+                        buttonText={t("plugins.review_updates")}
+                        onClick={() => void openCatalog()}
+                    />
+                )}
+            </OptionsSection>
+
+            <OptionsSection
                 title={t("plugins.available_title")}
                 description={t("plugins.available_description")}
             >
@@ -549,11 +566,10 @@ export default function PluginsSettings() {
                 ))}
             </OptionsSection>
 
-            <OptionsSection
+            {state.archivedPackages.length > 0 && <OptionsSection
                 title={t("plugins.archived_title")}
                 description={t("plugins.archived_description")}
             >
-                {!state.loading && !state.archivedPackages.length && <NoItems icon="bx bx-archive" text={t("plugins.no_archived")} />}
                 {state.archivedPackages.map((pkg) => (
                     <OptionsRow
                         key={pkg.noteId}
@@ -579,23 +595,7 @@ export default function PluginsSettings() {
                     </OptionsRow>
                 ))}
             </OptionsSection>
-
-            <OptionsSection
-                title={t("plugins.updates_title")}
-                description={t("plugins.updates_description")}
-            >
-                {state.registryError && <p role="alert">{formatPluginUpdateError(state.registryError)}</p>}
-                {!state.loading && state.updateCount === null && !state.registryError && <p>{t("plugins.configure_source")}</p>}
-                {!state.loading && state.updateCount === 0 && !state.registryError && <NoItems icon="bx bx-check" text={t("plugins.up_to_date")} />}
-                {!state.loading && state.updateCount !== null && state.updateCount > 0 && (
-                    <OptionsRowWithButton
-                        label={translateText("plugins.updates_available", { count: state.updateCount })}
-                        description={t("plugins.review_updates_description")}
-                        buttonText={t("plugins.review_updates")}
-                        onClick={() => void openCatalog()}
-                    />
-                )}
-            </OptionsSection>
+            }
 
             <OptionsSection
                 title={t("plugins.advanced_title")}

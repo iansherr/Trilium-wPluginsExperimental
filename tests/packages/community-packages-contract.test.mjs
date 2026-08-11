@@ -39,7 +39,8 @@ test("catalog bundles keep component selection separate from package lifecycle",
 test("catalog keeps installed packages as discovery entries", () => {
     assert.match(managerSource, /const updateAvailable = entry && isNewerVersion\(manifest\.version, entry\.version\)/);
     assert.match(managerSource, /text="Manage in Plugins"/);
-    assert.doesNotMatch(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
+    assert.match(managerSource, /text=\{busyPackage === manifest\.id \? "Updating…" : "Update"\}/);
+    assert.match(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
 });
 
 test("catalog surfaces legacy source labels instead of hiding them", () => {
@@ -76,6 +77,16 @@ test("plugin settings owns installed lifecycle and manifest entry points", () =>
     assert.match(pluginsSource, /type PackageSurfaceType = "page" \| "settings" \| "modal" \| "deeplink"/);
     assert.match(pluginsSource, /PACKAGE_MODAL_COMMANDS/);
     assert.match(pluginsSource, /openPackageSurface\(pkg, surface\)/);
+});
+
+test("plugin settings puts updates first and hides an empty archive section", () => {
+    const updatesIndex = pluginsSource.indexOf('title={t("plugins.updates_title")}');
+    const availableIndex = pluginsSource.indexOf('title={t("plugins.available_title")}');
+    assert.notEqual(updatesIndex, -1);
+    assert.notEqual(availableIndex, -1);
+    assert.ok(updatesIndex < availableIndex, "updates should be the first plugin section");
+    assert.match(pluginsSource, /state\.archivedPackages\.length > 0 && <OptionsSection/);
+    assert.doesNotMatch(pluginsSource, /!state\.loading && !state\.archivedPackages\.length && <NoItems icon="bx bx-archive"/);
 });
 
 test("JSX launcher and render artifacts use the JSX MIME", () => {

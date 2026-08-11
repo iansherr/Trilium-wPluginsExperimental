@@ -597,7 +597,17 @@ export default function CommunityPackages() {
                                             disabled={Boolean(busyPackage)}
                                         />
                                         {entry ? (
-                                            <Button text="Manage in Plugins" size="small" onClick={openPluginSettings} disabled={Boolean(busyPackage)} />
+                                            updateAvailable ? (
+                                                <Button
+                                                    text={busyPackage === manifest.id ? "Updating…" : "Update"}
+                                                    size="small"
+                                                    kind="primary"
+                                                    onClick={() => update(manifest)}
+                                                    disabled={Boolean(busyPackage)}
+                                                />
+                                            ) : (
+                                                <Button text="Manage in Plugins" size="small" onClick={openPluginSettings} disabled={Boolean(busyPackage)} />
+                                            )
                                         ) : (
                                             <Button
                                                 text={busyPackage === manifest.id ? "Installing…" : "Install"}
