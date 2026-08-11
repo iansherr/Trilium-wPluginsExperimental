@@ -10,7 +10,7 @@ import path from "path";
 
 import ServerBackupService from "./backup_provider.js";
 import ClsHookedExecutionContext from "./cls_provider.js";
-import { loadCoreSchema } from "./core_assets.js";
+import { loadCommunityPackagesManager, loadCoreSchema } from "./core_assets.js";
 import NodejsCryptoProvider from "./crypto_provider.js";
 import NodejsInAppHelpProvider from "./in_app_help_provider.js";
 import ServerLogService from "./log_provider.js";
@@ -78,6 +78,7 @@ async function startApplication() {
         executionContext: new ClsHookedExecutionContext(),
         messaging: new WebSocketMessagingProvider(),
         schema: loadCoreSchema(),
+        communityPackagesManagerSource: loadCommunityPackagesManager(),
         platform: new ServerPlatformProvider(),
         log: logService,
         translations: (await import("./services/i18n.js")).initializeTranslationsWithParams,

@@ -20,7 +20,6 @@
     "@excalidraw/excalidraw": "0.18.1",
     "@fullcalendar/rrule": "7.0.2",
     "@mermaid-js/layout-elk": "0.2.2",
-    "@noble/hashes": "^2.2.0",
     "@popperjs/core": "2.11.8",
     "@preact/signals": "2.11.0",
     "@triliumnext/ckeditor5": "workspace:*",

@@ -31,6 +31,33 @@ export const LBTPL_CUSTOM_WIDGET = "_lbTplCustomWidget";
  */
 
 let hiddenSubtreeDefinition: HiddenSubtreeItem;
+let communityPackagesManagerSource = "";
+
+export const COMMUNITY_PACKAGES_MANAGER_RENDER_ID = "_sd_community-packages-manager_render";
+export const COMMUNITY_PACKAGES_MANAGER_CODE_ID = "_sd_community-packages-manager";
+
+export function setCommunityPackagesManagerSource(source?: string) {
+    communityPackagesManagerSource = source?.trim() ?? "";
+    hiddenSubtreeDefinition = undefined as unknown as HiddenSubtreeItem;
+}
+
+function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
+    if (!communityPackagesManagerSource) return [];
+    return [{
+        id: COMMUNITY_PACKAGES_MANAGER_RENDER_ID,
+        title: "Community Packages",
+        type: "render",
+        attributes: [{ type: "relation", name: "renderNote", value: COMMUNITY_PACKAGES_MANAGER_CODE_ID }],
+        children: [{
+            id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+            title: "Community Packages",
+            type: "code",
+            mime: "text/jsx",
+            content: communityPackagesManagerSource,
+            attributes: [{ type: "label", name: "readOnly" }]
+        }]
+    }];
+}
 
 function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenSubtreeItem {
     const launchbarConfig = buildLaunchBarConfig();
@@ -146,6 +173,7 @@ function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenS
                 type: "code",
                 icon: "bx-book"
             },
+            ...buildCommunityPackagesManagerDefinition(),
             {
                 // place for user scripts hidden stuff (scripts should not create notes directly under hidden root)
                 id: "_userHidden",

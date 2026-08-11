@@ -10,6 +10,7 @@ async function main() {
 
     // Copy assets
     build.copy("src/assets", "assets/");
+    build.copy("/apps/client/src/widgets/type_widgets/options/community_packages.tsx", "assets/community-packages/community-packages.tsx");
     // schema.sql lives in trilium-core but is loaded at server startup. The
     // bundled main.cjs can't `require.resolve("@triliumnext/core/...")` in
     // Docker (no workspace symlinks in the image), so we copy the file

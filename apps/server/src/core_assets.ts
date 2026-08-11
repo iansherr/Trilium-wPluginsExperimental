@@ -24,6 +24,19 @@ export function loadCoreSchema(): string {
 }
 
 /**
+ * Reads the Community Packages manager source. It is kept with the client
+ * render-note source, then copied into server/desktop assets at build time so
+ * the server can seed or refresh the hidden manager note on startup.
+ */
+export function loadCommunityPackagesManager(): string {
+    const productionPath = path.join(RESOURCE_DIR, "community-packages", "community-packages.tsx");
+    if (fs.existsSync(productionPath)) {
+        return fs.readFileSync(productionPath, "utf-8");
+    }
+    return fs.readFileSync(path.resolve(__dirname, "../../client/src/widgets/type_widgets/options/community_packages.tsx"), "utf-8");
+}
+
+/**
  * Reads one of the LLM skill sheets, by the file name core's catalog gives, on
  * the same two paths as {@link loadCoreSchema}: copied under RESOURCE_DIR by the
  * build, resolved through the workspace symlink when running from source.
