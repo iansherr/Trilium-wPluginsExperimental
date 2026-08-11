@@ -10,6 +10,7 @@ import BNote from "../becca/entities/bnote.js";
 import { ValidationError } from "../errors.js";
 import { getLog } from "../services/log.js";
 import protectedSessionService from "../services/protected_session.js";
+import blobService from "./blob.js";
 import * as cls from "./context.js";
 import entityChangesService from "./entity_changes.js";
 import eventService from "./events.js";
@@ -108,14 +109,17 @@ function deriveMime(type: string, mime?: string) {
 }
 
 function copyChildAttributes(parentNote: BNote, childNote: BNote, isTypeDefaulted = false) {
+    // A template *owned* at this point was chosen by the user explicitly in the menu, and suppresses
+    // the `child:template` defaults (#3628). Deliberately read once, before the loop, and owned-only
+    // so an inherited `~template` on the parent doesn't count as a choice.
+    const hasUserChosenTemplate = childNote.hasOwnedRelation("template");
+
     for (const attr of parentNote.getAttributes()) {
         if (attr.name.startsWith("child:")) {
             const name = attr.name.substring(6);
 
             if (attr.type === "relation" && name === "template") {
-                if (childNote.hasRelation("template")) {
-                    // if the note already has a template, it means the template was chosen by the user explicitly
-                    // in the menu. In that case, we should override the default templates defined in the child: attrs
+                if (hasUserChosenTemplate) {
                     continue;
                 }
 
@@ -411,9 +415,12 @@ function protectNote(note: BNote, protect: boolean) {
     try {
         if (protect !== note.isProtected) {
             const content = note.getContent();
+            const extractedText = readExtractedText(note.blobId, note.isProtected);
 
             note.isProtected = protect;
             note.setContent(content, { forceSave: true });
+
+            writeExtractedText(note.blobId, extractedText, protect);
         }
 
         revisionService.protectRevisions(note);
@@ -422,9 +429,12 @@ function protectNote(note: BNote, protect: boolean) {
             if (protect !== attachment.isProtected) {
                 try {
                     const content = attachment.getContent();
+                    const extractedText = readExtractedText(attachment.blobId, attachment.isProtected);
 
                     attachment.isProtected = protect;
                     attachment.setContent(content, { forceSave: true });
+
+                    writeExtractedText(attachment.blobId, extractedText, protect);
                 } catch (e) {
                     log.error(`Could not un/protect attachment '${attachment.attachmentId}'`);
 
@@ -437,6 +447,41 @@ function protectNote(note: BNote, protect: boolean) {
 
         throw e;
     }
+}
+
+/**
+ * The text OCR pulled out of a file, read off the blob holding it.
+ *
+ * (Un)protecting re-saves content that has not changed a byte, but a blob's identity takes its
+ * protection into account, so the re-save lands on a different row — one with no extracted text on it.
+ * The text describes the same file either way, so it is read here while the old state still says how
+ * it is stored, and put back by {@link writeExtractedText} once the new state does.
+ */
+function readExtractedText(blobId: string | undefined, isProtected: boolean | undefined): string {
+    if (!blobId) {
+        return "";
+    }
+
+    const row = getSql().getRowOrNull<{ textRepresentation: string | null }>(
+        /*sql*/`SELECT textRepresentation FROM blobs WHERE blobId = ?`,
+        [blobId]
+    );
+
+    return blobService.decryptTextRepresentation(row?.textRepresentation, !!isProtected);
+}
+
+/** Puts {@link readExtractedText}'s text back, on the blob the re-save produced and in its terms. */
+function writeExtractedText(blobId: string | undefined, extractedText: string, isProtected: boolean) {
+    if (!blobId || !extractedText) {
+        return;
+    }
+
+    getSql().execute(
+        /*sql*/`UPDATE blobs SET textRepresentation = ? WHERE blobId = ?`,
+        [blobService.encryptTextRepresentation(extractedText, isProtected), blobId]
+    );
+
+    entityChangesService.putBlobEntityChange(blobId);
 }
 
 export function checkImageAttachments(note: BNote, content: string) {

@@ -1,5 +1,6 @@
 import type { Locale } from "./i18n.js";
 import { AttachmentRow, AttributeRow, BranchRow, NoteRow, NoteType, OptionRow, RevisionSource } from "./rows.js";
+import type { SetupTargetScreen } from "./setup_marker.js";
 
 type Response = {
     success: true,
@@ -185,6 +186,14 @@ export interface DatabaseBackup {
      * for a plain copy, where the file size already says it.
      */
     plaintextSize?: number;
+    /**
+     * Why the file cannot be restored from, where its own header says as much. Absent for a plain
+     * copy and for a container this build can open.
+     *
+     * Worth a listing telling the user about: a file that has been sitting in the backup directory
+     * for months, being counted as a backup, is one they are relying on.
+     */
+    unreadable?: "invalid" | "unsupported-version";
 }
 
 export interface ExistingBackupsResponse {
@@ -844,6 +853,19 @@ export type BootstrapDefinition = {
      */
     syncInProgress?: boolean;
     /**
+     * Whether this is the instance's first run, with no database behind the setup screen.
+     *
+     * Only meaningful while `dbInitialized` is `false`. It is `false` when setup was asked for by a
+     * running instance through a `setup.json` marker, which means there is a database to go back to
+     * and the wizard may offer to leave without doing anything.
+     */
+    initialSetup?: boolean;
+    /**
+     * The screen the wizard should open on, from the marker that asked for setup. Only meaningful
+     * while `dbInitialized` is `false`, and absent for a first run, which starts at the language step.
+     */
+    setupTargetScreen?: SetupTargetScreen;
+    /**
      * Whether a password has been set yet. `false` only in the pre-auth window
      * after the database is initialized but before the user has set a password,
      * which the client uses to render the set-password screen. Omitted (treated
@@ -936,11 +958,26 @@ export type BootstrapDefinition = {
 };
 
 /**
+ * What the setup screen may be busy with. Each of these builds the database from nothing, so only
+ * one of them may run at a time.
+ */
+export type SetupOperation = "new-document" | "sync-from-server" | "sync-seed" | "restore-backup";
+
+/**
  * Response for /api/setup/status.
+ *
+ * Also parsed from a remote sync server, which may be running an older version than this one, so
+ * anything added after the two original fields is optional.
  */
 export interface SetupStatusResponse {
     syncVersion: number;
     schemaExists: boolean;
+    isInitialized?: boolean;
+    /** The operation setup is busy with, or `null` when it is free. */
+    setupOperation?: SetupOperation | null;
+    /** Kept from a failed sync attempt so the wizard can prefill the form; pre-initialization only. */
+    syncServerHost?: string;
+    syncProxy?: string;
 }
 
 /**

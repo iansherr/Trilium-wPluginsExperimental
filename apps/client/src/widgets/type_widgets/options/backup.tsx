@@ -1,16 +1,25 @@
 import "./backup.css";
 
-import { BackupDatabaseNowResponse, BackupPassphraseStatus, DatabaseBackup, ExistingBackupsResponse } from "@triliumnext/commons";
+import {
+    BackupDatabaseNowResponse,
+    BackupPassphraseStatus,
+    DatabaseBackup,
+    dayjs,
+    ExistingBackupsResponse
+} from "@triliumnext/commons";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
+import { isBackupDownloadSupported } from "../../../services/backup_download";
+import { describeDatabaseFormat } from "../../../services/database_files";
 import dialogService from "../../../services/dialog";
 import { t } from "../../../services/i18n";
 import options from "../../../services/options";
 import server from "../../../services/server";
+import { bootToSetup, canBootToSetup } from "../../../services/setup_mode";
 import toast from "../../../services/toast";
 import { isElectron } from "../../../services/utils";
 import Button from "../../react/Button";
-import { Card, CardSection } from "../../react/Card";
+import { Card, CardOption, CardSection } from "../../react/Card";
 import DirectoryLink from "../../react/DirectoryLink";
 import FormPasswordWithConfirmation from "../../react/FormPasswordWithConfirmation";
 import FormText from "../../react/FormText";
@@ -18,12 +27,18 @@ import FormToggle from "../../react/FormToggle";
 import { useTriliumOption, useTriliumOptionBool } from "../../react/hooks";
 import Icon from "../../react/Icon";
 import Modal from "../../react/Modal";
+import SetupForm from "../helpers/SetupForm";
 import DatabaseFileList from "./components/DatabaseFileList";
 import OptionsPageHeader from "./components/OptionsPageHeader";
-import OptionsRow, { OptionsRowWithToggle } from "./components/OptionsRow";
-import OptionsSection from "./components/OptionsSection";
 
 export default function BackupSettings() {
+    // Standalone keeps no backups anywhere: its one backup is a manual download, streamed straight
+    // off the live database, so the page reduces to that action and the way back in.
+    return isBackupDownloadSupported() ? <StandaloneBackupSettings /> : <StoredBackupSettings />;
+}
+
+/** The page everywhere backups are kept as files: the server, the desktop. */
+function StoredBackupSettings() {
     const [backups, setBackups] = useState<DatabaseBackup[]>([]);
     const [backupFolderPath, setBackupFolderPath] = useState<string | null>(null);
 
@@ -38,15 +53,172 @@ export default function BackupSettings() {
 
     return (
         <>
-            <OptionsPageHeader />
-            <BackupConfiguration />
+            <OptionsPageHeader
+                below={<BackupStatus backups={backups} refreshCallback={refreshBackups} />}
+            />
+            <BackupList backups={backups} backupFolderPath={backupFolderPath} />
             {/* Absent where there is no user-accessible location at all, e.g. backups kept in OPFS. */}
             {backupFolderPath && <BackupLocation backupFolderPath={backupFolderPath} refreshCallback={refreshBackups} />}
+            <BackupConfiguration />
             {/* Desktop only: the passphrase needs an OS keyring to live in, which only the desktop has. */}
             {isElectron() && <BackupOptions />}
-            <BackupList backups={backups} backupFolderPath={backupFolderPath} refreshCallback={refreshBackups} />
         </>
     );
+}
+
+/**
+ * The whole backup page on the standalone platform: the summary says how backups work there, the
+ * same "Backup now" button as everywhere else hands one to the browser as a download, and restore
+ * boots to the setup screen the way it does on the other platforms. There is no list, location,
+ * schedule or format to configure, because nothing is ever stored.
+ */
+function StandaloneBackupSettings() {
+    return (
+        <>
+            <OptionsPageHeader />
+            <StandaloneBackupSection />
+        </>
+    );
+}
+
+/**
+ * The whole of what the standalone platform offers: back up, and restore.
+ *
+ * A page rather than a row of buttons, because there is nothing else on it: no list of backups, no
+ * location and no schedule, since nothing is ever stored. Both actions leave for the setup screen,
+ * which is where the database can be held still long enough to be copied or replaced.
+ */
+export function StandaloneBackupSection() {
+    return (
+        <div className="options-section standalone-backup">
+            <SetupForm icon="bx bx-data">
+                <h3>{t("backup.standalone_heading")}</h3>
+                <p>{t("backup.standalone_description")}</p>
+
+                {canBootToSetup() && (
+                    <div className="standalone-backup-actions">
+                        <Button
+                            name="backup-database-now-button"
+                            text={t("backup.create_and_download")}
+                            kind="primary"
+                            onClick={() => void backUpInSetup()}
+                        />
+
+                        <Button
+                            name="restore-backup-button"
+                            text={t("backup.upload_and_restore")}
+                            onClick={() => void restoreInSetup()}
+                        />
+                    </div>
+                )}
+            </SetupForm>
+        </div>
+    );
+}
+
+/**
+ * Restarts into the setup screen, where the backup is actually taken.
+ *
+ * A backup is streamed off the live database over minutes, and a page of it read after a write
+ * would not match the pages read before: the copy has to come from a database nothing is touching.
+ * Only setup mode gives that — the database is open, but becca, sync and migrations are all held
+ * back — so the backup is taken there and the instance comes straight back here.
+ */
+async function backUpInSetup() {
+    if (!await dialogService.confirm(t("backup.restart_for_backup"))) {
+        return;
+    }
+
+    await bootToSetup({ targetScreen: "backup-database" });
+}
+
+/**
+ * Restarts into the setup screen, which is where a backup can replace the database.
+ *
+ * Asked about on every platform that can restart itself, because the restart is the surprising part
+ * and because what follows it reads as destructive until the user knows they will be offered a copy
+ * of what is about to be replaced.
+ */
+async function restoreInSetup() {
+    if (!await dialogService.confirm(t("backup.restart_for_restore"))) {
+        return;
+    }
+
+    await bootToSetup({ targetScreen: "restore-backup" });
+}
+
+interface BackupStatusProps {
+    backups: DatabaseBackup[];
+    refreshCallback: () => void;
+}
+
+/**
+ * How the backups stand, and the one action that makes one now rather than on a schedule. Part
+ * of the page's own header rather than of the list below it: the list card answers for what it
+ * holds, which is not the same as what the page is for.
+ */
+export function BackupStatus({ backups, refreshCallback }: BackupStatusProps) {
+    const [backupInProgress, setBackupInProgress] = useState(false);
+
+    return (
+        <div className="backup-status">
+            <span className="backup-status-summary">{summarizeBackups(backups)}</span>
+
+            {/* Offered only where the app can start itself again, which is what a restore needs:
+                it happens in the setup screen, with this database closed. */}
+            {canBootToSetup() && (
+                <Button
+                    name="restore-backup-button"
+                    text={t("backup.restore_backup")}
+                    size="micro"
+                    onClick={() => void restoreInSetup()}
+                />
+            )}
+
+            <Button
+                name="backup-database-now-button"
+                text={t("backup.backup_now")}
+                size="micro"
+                disabled={backupInProgress}
+                onClick={async () => {
+                    setBackupInProgress(true);
+                    try {
+                        const { backupFile } = await server.post<BackupDatabaseNowResponse>(
+                            "database/backup-database"
+                        );
+
+                        toast.showMessage(
+                            t("backup.database_backed_up_to", { backupFilePath: backupFile }),
+                            10000
+                        );
+                        refreshCallback();
+                    } finally {
+                        setBackupInProgress(false);
+                    }
+                }}
+            />
+        </div>
+    );
+}
+
+/**
+ * How many backups there are and how long ago the last one was made — the two things the list
+ * itself only answers by being read through. Nothing is said while there are none: the list
+ * stands empty right below, which states it more plainly than a sentence could.
+ */
+function summarizeBackups(backups: DatabaseBackup[]) {
+    if (!backups.length) {
+        return null;
+    }
+
+    const mostRecent = backups.reduce((latest, backup) => (
+        backup.mtime > latest.mtime ? backup : latest
+    ));
+
+    return t("backup.backups_summary", {
+        count: backups.length,
+        age: dayjs(mostRecent.mtime).fromNow(true)
+    });
 }
 
 export function BackupConfiguration() {
@@ -55,31 +227,33 @@ export function BackupConfiguration() {
     const [monthlyBackupEnabled, setMonthlyBackupEnabled] = useTriliumOptionBool("monthlyBackupEnabled");
 
     return (
-        <OptionsSection
-            title={t("backup.automatic_backups_title")}
-            description={t("backup.automatic_backups_description")}
-        >
-            <OptionsRowWithToggle
-                name="daily-backup-enabled"
-                label={t("backup.enable_daily_backup")}
-                currentValue={dailyBackupEnabled}
-                onChange={setDailyBackupEnabled}
-            />
+        <div className="options-section backup-configuration">
+            <Card
+                heading={t("backup.automatic_backups_title")}
+                description={t("backup.automatic_backups_description")}
+            >
+                <CardOption name="daily-backup-enabled" label={t("backup.enable_daily_backup")}>
+                    <FormToggle
+                        currentValue={dailyBackupEnabled}
+                        onChange={setDailyBackupEnabled}
+                    />
+                </CardOption>
 
-            <OptionsRowWithToggle
-                name="weekly-backup-enabled"
-                label={t("backup.enable_weekly_backup")}
-                currentValue={weeklyBackupEnabled}
-                onChange={setWeeklyBackupEnabled}
-            />
+                <CardOption name="weekly-backup-enabled" label={t("backup.enable_weekly_backup")}>
+                    <FormToggle
+                        currentValue={weeklyBackupEnabled}
+                        onChange={setWeeklyBackupEnabled}
+                    />
+                </CardOption>
 
-            <OptionsRowWithToggle
-                name="monthly-backup-enabled"
-                label={t("backup.enable_monthly_backup")}
-                currentValue={monthlyBackupEnabled}
-                onChange={setMonthlyBackupEnabled}
-            />
-        </OptionsSection>
+                <CardOption name="monthly-backup-enabled" label={t("backup.enable_monthly_backup")}>
+                    <FormToggle
+                        currentValue={monthlyBackupEnabled}
+                        onChange={setMonthlyBackupEnabled}
+                    />
+                </CardOption>
+            </Card>
+        </div>
     );
 }
 
@@ -218,23 +392,12 @@ export function BackupOptions() {
     return (
         <div className="options-section backup-options">
             <Card heading={t("backup.options_title")}>
-                <CardSection className="backup-options-row">
-                    <span className="backup-options-label">
-                        {t("backup.enable_compression")}
-                        <small className="backup-options-description">{t("backup.enable_compression_description")}</small>
-                    </span>
-
-                    <FormToggle currentValue={compressionEnabled} onChange={setCompressionEnabled} />
-                </CardSection>
-
-                <CardSection className="backup-options-row">
-                    <span className="backup-options-label">
-                        {t("backup.enable_encryption")}
-                        <small className="backup-options-description">
-                            {passphrase.available ? t("backup.enable_encryption_description") : t("backup.no_keyring")}
-                        </small>
-                    </span>
-
+                <CardOption
+                    label={t("backup.enable_encryption")}
+                    description={passphrase.available
+                        ? t("backup.enable_encryption_description")
+                        : t("backup.no_keyring")}
+                >
                     {passphrase.set ? (
                         <>
                             <Button
@@ -257,7 +420,18 @@ export function BackupOptions() {
                             onClick={() => setPasswordModalShown(true)}
                         />
                     )}
-                </CardSection>
+                </CardOption>
+
+                <CardOption
+                    name="backup-compression-enabled"
+                    label={t("backup.enable_compression")}
+                    description={t("backup.enable_compression_description")}
+                >
+                    <FormToggle
+                        currentValue={compressionEnabled}
+                        onChange={setCompressionEnabled}
+                    />
+                </CardOption>
             </Card>
 
             <BackupPasswordModal
@@ -294,8 +468,12 @@ function BackupPasswordModal({ show, onHidden, onSave }: { show: boolean; onHidd
     );
 }
 
-export function BackupList({ backups, backupFolderPath, refreshCallback }: { backups: DatabaseBackup[]; backupFolderPath: string | null; refreshCallback: () => void }) {
-    const [backupInProgress, setBackupInProgress] = useState(false);
+interface BackupListProps {
+    backups: DatabaseBackup[];
+    backupFolderPath: string | null;
+}
+
+export function BackupList({ backups, backupFolderPath }: BackupListProps) {
     const [customDir] = useTriliumOption("customDbBackupDir");
 
     // What a row cannot say for itself: the format it was written in, and — with a custom location in
@@ -307,14 +485,10 @@ export function BackupList({ backups, backupFolderPath, refreshCallback }: { bac
         if (customDir && backupFolderPath && !isInsideDirectory(backupFolderPath, file.filePath)) {
             badges.push(t("backup.default_location"));
         }
-        if (file.compressed) {
-            badges.push(t("backup.compressed"));
-        }
-        if (file.encrypted) {
-            badges.push(t("backup.encrypted"));
-        }
 
-        return badges;
+        // What the file is comes from the shared description, so it reads the same here as it does
+        // on the setup screen that offers to restore from it.
+        return [ ...badges, ...describeDatabaseFormat(file) ];
     }, [customDir, backupFolderPath]);
 
     return (
@@ -324,30 +498,10 @@ export function BackupList({ backups, backupFolderPath, refreshCallback }: { bac
             files={backups}
             fileBadges={fileBadges}
             downloadEndpoint="api/database/backup/download"
-            rowName="existing-backup"
             downloadText={t("backup.download")}
             emptyIcon="bx bx-archive"
             emptyText={t("backup.no_backup_yet")}
-        >
-            <OptionsRow name="backup-now" centered>
-                <Button
-                    name="backup-database-now-button"
-                    text={t("backup.backup_database_now")}
-                    size="micro"
-                    disabled={backupInProgress}
-                    onClick={async () => {
-                        setBackupInProgress(true);
-                        try {
-                            const { backupFile } = await server.post<BackupDatabaseNowResponse>("database/backup-database");
-                            toast.showMessage(t("backup.database_backed_up_to", { backupFilePath: backupFile }), 10000);
-                            refreshCallback();
-                        } finally {
-                            setBackupInProgress(false);
-                        }
-                    }}
-                />
-            </OptionsRow>
-        </DatabaseFileList>
+        />
     );
 }
 
