@@ -89,6 +89,15 @@ test("plugin settings puts updates first and hides an empty archive section", ()
     assert.doesNotMatch(pluginsSource, /!state\.loading && !state\.archivedPackages\.length && <NoItems icon="bx bx-archive"/);
 });
 
+test("archived plugins are collapsed by default and support bulk cleanup", () => {
+    assert.match(pluginsSource, /const \[archivedExpanded, setArchivedExpanded\] = useState\(false\)/);
+    assert.match(pluginsSource, /async function deleteArchivedPackages\(\)/);
+    assert.match(pluginsSource, /delete_archived_confirm/);
+    assert.match(pluginsSource, /cleanup_archived_label/);
+    assert.match(pluginsSource, /aria-expanded=\{archivedExpanded\}/);
+    assert.match(pluginsSource, /disabled=\{Boolean\(savingPackage\)\}/);
+});
+
 test("JSX launcher and render artifacts use the JSX MIME", () => {
     assert.match(managerSource, /if \(type === "launcher" \|\| type === "render"\) return "text\/jsx"/);
 });

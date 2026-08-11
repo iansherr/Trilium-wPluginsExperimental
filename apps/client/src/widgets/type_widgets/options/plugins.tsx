@@ -195,6 +195,7 @@ export default function PluginsSettings() {
     const [savingSettings, setSavingSettings] = useState(false);
     const [savingPackage, setSavingPackage] = useState("");
     const [configuredPackage, setConfiguredPackage] = useState("");
+    const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [editingSourceIndex, setEditingSourceIndex] = useState<number | null>(null);
     const [sourceDraft, setSourceDraft] = useState("");
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
@@ -389,25 +390,44 @@ export default function PluginsSettings() {
         }
     }
 
+    async function deletePackageNotes(pkg: PackageSummary) {
+        const [active, archived] = await Promise.all([
+            search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"`),
+            search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`, true)
+        ]);
+        const packageNotes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
+            .filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
+        const packageNoteIds = new Set(packageNotes.map((note) => note.noteId));
+        const notes = packageNotes.filter((note) =>
+            !note.getParentBranches().some((branch) => packageNoteIds.has(branch.parentNoteId))
+        );
+        const taskId = randomString(12);
+        for (const [index, note] of notes.entries()) {
+            await server.remove(`notes/${note.noteId}?taskId=${taskId}&eraseNotes=false&last=${index === notes.length - 1 ? "true" : "false"}`);
+        }
+    }
+
     async function deletePackage(pkg: PackageSummary) {
         if (!window.confirm(translateText("plugins.delete_plugin_confirm", { title: pkg.title }))) return;
         setSavingPackage(pkg.id);
         try {
-            const [active, archived] = await Promise.all([
-                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"`),
-                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`, true)
-            ]);
-            const packageNotes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
-                .filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
-            const packageNoteIds = new Set(packageNotes.map((note) => note.noteId));
-            const notes = packageNotes.filter((note) =>
-                !note.getParentBranches().some((branch) => packageNoteIds.has(branch.parentNoteId))
-            );
-            const taskId = randomString(12);
-            for (const [index, note] of notes.entries()) {
-                await server.remove(`notes/${note.noteId}?taskId=${taskId}&eraseNotes=false&last=${index === notes.length - 1 ? "true" : "false"}`);
-            }
+            await deletePackageNotes(pkg);
             toast.showMessage(translateText("plugins.plugin_deleted", { title: pkg.title }));
+            await refresh();
+        } catch (error) {
+            toast.showError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setSavingPackage("");
+        }
+    }
+
+    async function deleteArchivedPackages() {
+        if (!state.archivedPackages.length) return;
+        if (!window.confirm(translateText("plugins.delete_archived_confirm", { count: state.archivedPackages.length }))) return;
+        setSavingPackage("__archived_cleanup__");
+        try {
+            for (const pkg of state.archivedPackages) await deletePackageNotes(pkg);
+            toast.showMessage(translateText("plugins.archived_deleted", { count: state.archivedPackages.length }));
             await refresh();
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
@@ -569,31 +589,49 @@ export default function PluginsSettings() {
             {state.archivedPackages.length > 0 && <OptionsSection
                 title={t("plugins.archived_title")}
                 description={t("plugins.archived_description")}
+                actions={<Button
+                    text={archivedExpanded ? t("plugins.hide_archived") : translateText("plugins.show_archived", { count: state.archivedPackages.length })}
+                    icon={archivedExpanded ? "bx-chevron-up" : "bx-chevron-down"}
+                    size="small"
+                    aria-expanded={archivedExpanded}
+                    onClick={() => setArchivedExpanded((expanded) => !expanded)}
+                    disabled={Boolean(savingPackage)}
+                />}
             >
-                {state.archivedPackages.map((pkg) => (
-                    <OptionsRow
-                        key={pkg.noteId}
-                        name={`community-package-archived-${pkg.noteId}`}
-                        label={pkg.title}
-                        description={formatInstalledPackageDescription(pkg)}
-                    >
-                        <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
-                            <Button
-                                text={t("plugins.restore")}
-                                kind="primary"
-                                size="micro"
-                                disabled={savingPackage === pkg.id}
-                                onClick={() => void setPackageArchived(pkg, false)}
-                            />
-                            <Button
-                                text={t("plugins.delete_plugin")}
-                                size="micro"
-                                disabled={savingPackage === pkg.id}
-                                onClick={() => void deletePackage(pkg)}
-                            />
-                        </span>
-                    </OptionsRow>
-                ))}
+                {archivedExpanded && <>
+                    <OptionsRowWithButton
+                        label={t("plugins.cleanup_archived_label")}
+                        description={t("plugins.cleanup_archived_description")}
+                        buttonText={t("plugins.cleanup_archived")}
+                        buttonClassName="btn-warning"
+                        disabled={Boolean(savingPackage)}
+                        onClick={() => void deleteArchivedPackages()}
+                    />
+                    {state.archivedPackages.map((pkg) => (
+                        <OptionsRow
+                            key={pkg.noteId}
+                            name={`community-package-archived-${pkg.noteId}`}
+                            label={pkg.title}
+                            description={formatInstalledPackageDescription(pkg)}
+                        >
+                            <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                                <Button
+                                    text={t("plugins.restore")}
+                                    kind="primary"
+                                    size="micro"
+                                    disabled={Boolean(savingPackage)}
+                                    onClick={() => void setPackageArchived(pkg, false)}
+                                />
+                                <Button
+                                    text={t("plugins.delete_plugin")}
+                                    size="micro"
+                                    disabled={Boolean(savingPackage)}
+                                    onClick={() => void deletePackage(pkg)}
+                                />
+                            </span>
+                        </OptionsRow>
+                    ))}
+                </>}
             </OptionsSection>
             }
 
