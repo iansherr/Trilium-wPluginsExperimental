@@ -1,3 +1,0 @@
-spec/db/*
-!spec/db/config.ini
-profiles/

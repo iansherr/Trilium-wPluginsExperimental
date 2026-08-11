@@ -329,8 +329,8 @@ export default function CommunityPackages() {
         setBusyPackage(manifest.id);
         setError("");
         try {
-            await replacePackage(manifest, false, allowedSourceHosts, dependencyResolution.packages, packages);
-            showMessage(`${manifest.name} updated disabled. Enable it here when ready.`);
+            await replacePackage(manifest, true, allowedSourceHosts, dependencyResolution.packages, packages);
+            showMessage(`${manifest.name} updated; its previous enabled state was preserved.`);
             await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
