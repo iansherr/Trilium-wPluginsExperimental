@@ -42,6 +42,21 @@ test("catalog keeps installed packages as discovery entries", () => {
     assert.doesNotMatch(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
 });
 
+test("catalog surfaces legacy source labels instead of hiding them", () => {
+    assert.match(managerSource, /const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
+    assert.match(managerSource, /sources: parseConfiguredSources\(note\)/);
+    assert.match(managerSource, /function parseConfiguredSources\(note\)/);
+    assert.match(managerSource, /note\?\.getOwnedLabelValue\(LEGACY_DIRECT_MANIFEST_URLS_LABEL\)/);
+});
+
+test("plugin settings canonicalize and clear legacy source labels on save", () => {
+    assert.match(pluginsSource, /const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
+    assert.match(pluginsSource, /parseConfiguredPluginSources\(\(labelName\) => settings\?\.getOwnedLabelValue\(labelName\)\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_SOURCES_LABEL, JSON\.stringify\(sources\)\)/);
+    assert.match(pluginsSource, /for \(const labelName of LEGACY_PACKAGE_SOURCE_LABELS\)/);
+    assert.match(pluginsSource, /removeOwnedAttributesByNameOrType\(state\.settings, "label", labelName\)/);
+});
+
 test("plugin settings enable and disable every managed artifact activation", () => {
     assert.match(pluginsSource, /setPackageArtifactActivation\(pkg\.id, enabled\)/);
     assert.match(pluginsSource, /search\.searchForNotesIncludingHidden\(`#packageOwner="\$\{packageId\}"`\)/);

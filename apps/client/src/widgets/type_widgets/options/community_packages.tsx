@@ -14,6 +14,9 @@ import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
 
 const SOURCES_LABEL = "packageSources";
+const LEGACY_REGISTRY_URL_LABEL = "packageRegistryUrl";
+const LEGACY_REGISTRY_URLS_LABEL = "packageRegistryUrls";
+const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
 const ROOT_LABEL = "communityPackagesRoot";
 const SETTINGS_LABEL = "packageManagerSettings";
 const MANAGED_LABEL = "packageManaged";
@@ -762,7 +765,7 @@ async function readSettings() {
         note = await api.getNote(note.noteId);
     }
     return {
-        sources: parseRegistryUrls(note?.getOwnedLabelValue(SOURCES_LABEL) || ""),
+        sources: parseConfiguredSources(note),
         allowNetworkPackages: note?.getOwnedLabelValue("packageAllowNetwork") === "true",
         checkForUpdates: note?.getOwnedLabelValue(CHECK_UPDATES_LABEL) === "true",
         updateCheckIntervalHours: Math.max(1, Number(note?.getOwnedLabelValue(UPDATE_INTERVAL_LABEL)) || 24),
@@ -780,6 +783,16 @@ function parseRegistryUrls(value) {
         // Legacy and hand-edited values are accepted as newline-separated URLs.
     }
     return String(value).split(/[\r\n]+/).map((url) => url.trim()).filter(Boolean);
+}
+
+function parseConfiguredSources(note) {
+    const values = [
+        note?.getOwnedLabelValue(SOURCES_LABEL),
+        note?.getOwnedLabelValue(LEGACY_REGISTRY_URL_LABEL),
+        note?.getOwnedLabelValue(LEGACY_REGISTRY_URLS_LABEL),
+        note?.getOwnedLabelValue(LEGACY_DIRECT_MANIFEST_URLS_LABEL)
+    ].flatMap(parseRegistryUrls);
+    return [...new Set(values)];
 }
 
 function normalizeSourceHosts(value) {

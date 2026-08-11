@@ -29,6 +29,14 @@ const PACKAGE_MANIFEST_LABEL = "packageManifest";
 const PACKAGE_ACTIVATION_LABELS = ["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"];
 const PACKAGE_TRANSACTION_LABEL = "packageTransaction";
 const PACKAGE_SOURCES_LABEL = "packageSources";
+const PACKAGE_REGISTRY_URL_LABEL = "packageRegistryUrl";
+const PACKAGE_REGISTRY_URLS_LABEL = "packageRegistryUrls";
+const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
+const LEGACY_PACKAGE_SOURCE_LABELS = [
+    PACKAGE_REGISTRY_URL_LABEL,
+    PACKAGE_REGISTRY_URLS_LABEL,
+    PACKAGE_DIRECT_MANIFEST_URLS_LABEL
+];
 const PACKAGE_CHECK_UPDATES_LABEL = "packageCheckForUpdates";
 const PACKAGE_UPDATE_INTERVAL_LABEL = "packageUpdateIntervalHours";
 const PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL = "packageAllowedSourceHosts";
@@ -201,7 +209,7 @@ export default function PluginsSettings() {
                 search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
             ]);
             const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
-            const sources = parseRegistryUrls(settings?.getOwnedLabelValue(PACKAGE_SOURCES_LABEL) || "");
+            const sources = parseConfiguredPluginSources((labelName) => settings?.getOwnedLabelValue(labelName));
             const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
             const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
             const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
@@ -287,6 +295,9 @@ export default function PluginsSettings() {
         try {
             const sources = normalizePluginSources(state.sources);
             await setLabel(state.settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
+            for (const labelName of LEGACY_PACKAGE_SOURCE_LABELS) {
+                await removeOwnedAttributesByNameOrType(state.settings, "label", labelName);
+            }
             await setLabel(state.settings.noteId, "packageAllowNetwork", state.allowNetworkPackages ? "true" : "false");
             await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts.join("\n")));
             await setLabel(state.settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, state.checkForUpdates ? "true" : "false");
@@ -953,6 +964,13 @@ export function parseRegistryUrls(value: string | null | undefined) {
 
 export function normalizePluginSources(sources: string[]) {
     return [...new Set(sources.map((source) => source.trim()).filter(Boolean))];
+}
+
+export function parseConfiguredPluginSources(getLabelValue: (labelName: string) => string | null | undefined) {
+    return normalizePluginSources([
+        ...parseRegistryUrls(getLabelValue(PACKAGE_SOURCES_LABEL)),
+        ...LEGACY_PACKAGE_SOURCE_LABELS.flatMap((labelName) => parseRegistryUrls(getLabelValue(labelName)))
+    ]);
 }
 
 export function parseSourceHosts(value: string | null | undefined) {

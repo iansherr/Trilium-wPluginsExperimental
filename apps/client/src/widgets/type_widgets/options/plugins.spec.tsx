@@ -20,6 +20,7 @@ import {
     manifestStatus,
     normalizePluginSourceUrl,
     normalizePluginSources,
+    parseConfiguredPluginSources,
     parseSourceHosts,
     normalizeSourceHosts,
     packageHealth,
@@ -58,6 +59,19 @@ describe("plugin manager validation helpers", () => {
             "https://two.example/index.json"
         ]);
         expect(parseRegistryUrls(null)).toEqual([]);
+    });
+
+    it("surfaces legacy source labels alongside canonical sources", () => {
+        const labels: Record<string, string> = {
+            packageSources: '["https://catalog.example/registry.json"]',
+            packageDirectManifestUrls: "https://github.example/retired/trilium-package.json\nhttps://catalog.example/registry.json",
+            packageRegistryUrls: "[]",
+            packageRegistryUrl: ""
+        };
+        expect(parseConfiguredPluginSources((labelName) => labels[labelName])).toEqual([
+            "https://catalog.example/registry.json",
+            "https://github.example/retired/trilium-package.json"
+        ]);
     });
 
     it("normalizes source hosts to one host per line", () => {
