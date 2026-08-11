@@ -23,6 +23,31 @@
     max-width: 100%;
 }
 
+/* Package artifacts have human-readable titles, which can be wider than the
+   settings pane. Let this action group take the available row width and wrap
+   each button instead of forcing the row past the card edge. */
+.option-row-input:has(.community-package-page-links) {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+}
+
+.community-package-page-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4em;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.community-package-page-links > button {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: start;
+    white-space: normal;
+}
+
 .option-row-input > select,
 .option-row-input > .dropdown {
     width: auto;

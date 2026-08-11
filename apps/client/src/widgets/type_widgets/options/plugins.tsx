@@ -1043,9 +1043,9 @@ function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange,
                     </div>
                 </OptionsRow>}
                 {pkg.artifactNotes.filter((note) => note.type === "render").length > 0 && <OptionsRow name={`community-package-pages-${pkg.noteId}`} label="Open package pages" description="Open a package dashboard or standalone render page in a Trilium tab.">
-                    <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                    <div className="community-package-page-links">
                         {pkg.artifactNotes.filter((note) => note.type === "render").map((note) => <Button key={note.noteId} text={note.title} size="micro" onClick={() => onOpenArtifact(note.noteId)} />)}
-                    </span>
+                    </div>
                 </OptionsRow>}
                 <OptionsRow name={`community-package-maintenance-${pkg.noteId}`} label={t("plugins.registry_status_label")} description={t("plugins.registry_status_description")}>
                     <span>{[manifestStatus(manifest), manifest.maintainer && translateText("plugins.maintainer", { maintainer: manifest.maintainer }), manifest.license && translateText("plugins.license", { license: manifest.license })].filter(Boolean).join(" · ") || t("plugins.no_registry_metadata")}</span>
