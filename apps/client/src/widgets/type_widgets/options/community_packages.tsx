@@ -7,9 +7,6 @@
  * title: Community Packages
  */
 
-declare const api: any;
-declare const window: any;
-
 import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
 
