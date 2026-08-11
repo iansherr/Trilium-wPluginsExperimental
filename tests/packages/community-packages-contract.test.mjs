@@ -43,6 +43,15 @@ test("catalog keeps installed packages as discovery entries", () => {
     assert.match(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
 });
 
+test("catalog updates preserve an installed package's enabled state", () => {
+    assert.match(
+        managerSource,
+        /await replacePackage\(manifest, true, allowedSourceHosts, dependencyResolution\.packages, packages\)/
+    );
+    assert.match(managerSource, /updated; its previous enabled state was preserved/);
+    assert.doesNotMatch(managerSource, /updated disabled/);
+});
+
 test("catalog surfaces legacy source labels instead of hiding them", () => {
     assert.match(managerSource, /const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
     assert.match(managerSource, /sources: parseConfiguredSources\(note\)/);
