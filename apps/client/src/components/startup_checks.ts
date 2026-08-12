@@ -20,7 +20,6 @@ export class StartupChecks extends Component {
         // Shared by desktop and mobile (both reach here via appContext.start), so the post-enrollment
         // toast lives here rather than being duplicated in each entry point.
         showOAuthEnrollmentResultToast();
-        void reconcilePackageActivationsAtStartup();
     }
 
     async checkCpuArchMismatch() {
@@ -35,7 +34,7 @@ export class StartupChecks extends Component {
     }
 }
 
-async function reconcilePackageActivationsAtStartup() {
+export async function reconcilePackageActivationsAtStartup() {
     try {
         const repairs = await reconcileEnabledPackageActivations();
         if (repairs.length) console.info("Repaired activation state for enabled community packages.", repairs);

@@ -35,7 +35,7 @@ import MobileScreenSwitcherExecutor, { type Screen } from "./mobile_screen_switc
 import type { default as NoteContext, GetTextEditorCallback } from "./note_context.js";
 import RootCommandExecutor from "./root_command_executor.js";
 import ShortcutComponent from "./shortcut_component.js";
-import { StartupChecks } from "./startup_checks.js";
+import { reconcilePackageActivationsAtStartup, StartupChecks } from "./startup_checks.js";
 import TabManager from "./tab_manager.js";
 import zoomComponent from "./zoom.js";
 
@@ -642,6 +642,10 @@ export class AppContext extends Component {
         this.renderWidgets();
 
         await froca.initializedPromise;
+
+        // The package reconciler must run after Froca has its initial note set;
+        // running it from a component constructor races the initial load.
+        void reconcilePackageActivationsAtStartup();
 
         this.tabManager.loadTabs();
 
