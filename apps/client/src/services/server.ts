@@ -35,7 +35,11 @@ async function getHeaders(headers?: Headers) {
         }
     }
 
-    return allHeaders;
+    // Do not serialize a missing context as the literal `null` header value.
+    // The server treats an omitted hoisted-note header as the root context;
+    // sending `null` makes hidden-aware searches fail before the UI has an
+    // active tab during startup.
+    return Object.fromEntries(Object.entries(allHeaders).filter(([, value]) => value !== null && value !== undefined));
 }
 
 async function getWithSilentNotFound<T>(url: string, componentId?: string) {
