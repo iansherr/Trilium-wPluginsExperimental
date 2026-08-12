@@ -4,6 +4,8 @@ import test from "node:test";
 
 const managerSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
 const pluginsSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/plugins.tsx", import.meta.url), "utf8");
+const activationSource = await readFile(new URL("../../apps/client/src/services/package_activation.ts", import.meta.url), "utf8");
+const startupSource = await readFile(new URL("../../apps/client/src/components/startup_checks.ts", import.meta.url), "utf8");
 
 test("package branch moves use Trilium's move-to endpoint", () => {
     assert.match(
@@ -50,6 +52,28 @@ test("catalog updates preserve an installed package's enabled state", () => {
     );
     assert.match(managerSource, /updated; its previous enabled state was preserved/);
     assert.doesNotMatch(managerSource, /updated disabled/);
+});
+
+test("package replacement verifies activation before archiving the previous generation", () => {
+    assert.match(managerSource, /await verifyPackageActivation\(verifiedPackageNotes, manifest, preserveEnabled && previousEnabled\)/);
+    assert.match(managerSource, /await verifyPackageActivation\(/);
+    assert.match(managerSource, /activation verification failed/);
+    assert.match(managerSource, /await archiveNotes\(previousNotes\.filter/);
+    assert.ok(managerSource.indexOf("await verifyPackageActivation(") < managerSource.indexOf("await archiveNotes(previousNotes.filter"));
+});
+
+test("startup reconciliation repairs enabled packages without enabling disabled packages", () => {
+    assert.match(activationSource, /manifest\.getOwnedLabelValue\("packageEnabled"\) !== "true"/);
+    assert.match(activationSource, /disabled:\$\{labelName\}/);
+    assert.match(activationSource, /packageManifest/);
+    assert.match(startupSource, /reconcileEnabledPackageActivations/);
+});
+
+test("installed package health checks activation drift", () => {
+    assert.match(pluginsSource, /function combinedPackageHealth\(pkg: PackageSummary, manifest\?\: CatalogPackage\)/);
+    assert.match(pluginsSource, /function packageActivationHealth\(artifactNotes: FNote\[\], enabled: boolean, manifest\?\: CatalogPackage\)/);
+    assert.match(pluginsSource, /activation mismatch:/);
+    assert.match(pluginsSource, /health_activation/);
 });
 
 test("catalog surfaces legacy source labels instead of hiding them", () => {
