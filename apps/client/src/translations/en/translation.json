@@ -1120,6 +1120,7 @@
     "health_not_in_registry": "not in registry",
     "health_missing": "missing {{artifacts}}",
     "health_activation": "activation mismatch: {{artifacts}}",
+    "activation_repaired": "Repaired {{count}} package activation entries.",
     "disable": "Disable",
     "enable": "Enable",
     "hide_details": "Hide details",

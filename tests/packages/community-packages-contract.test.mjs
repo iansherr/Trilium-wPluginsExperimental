@@ -76,6 +76,13 @@ test("installed package health checks activation drift", () => {
     assert.match(pluginsSource, /health_activation/);
 });
 
+test("plugin refresh rechecks activation after startup and serializes overlapping refreshes", () => {
+    assert.match(pluginsSource, /reconcileEnabledPackageActivations\(\)/);
+    assert.match(pluginsSource, /refreshPromiseRef/);
+    assert.match(pluginsSource, /activation_repaired/);
+    assert.match(pluginsSource, /another plugin, a manual edit, or a late entity reload/);
+});
+
 test("catalog surfaces legacy source labels instead of hiding them", () => {
     assert.match(managerSource, /const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
     assert.match(managerSource, /sources: parseConfiguredSources\(note\)/);

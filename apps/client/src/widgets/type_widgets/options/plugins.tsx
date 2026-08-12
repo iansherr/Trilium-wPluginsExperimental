@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import "./plugins.css";
 
@@ -8,6 +8,7 @@ import { removeOwnedAttributesByNameOrType, setLabel } from "../../../services/a
 import { closeActiveDialog } from "../../../services/dialog";
 import froca from "../../../services/froca";
 import { t } from "../../../services/i18n";
+import { reconcileEnabledPackageActivations } from "../../../services/package_activation";
 import search from "../../../services/search";
 import server from "../../../services/server";
 import toast from "../../../services/toast";
@@ -206,43 +207,71 @@ export default function PluginsSettings() {
     const [sourceDraft, setSourceDraft] = useState("");
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
     const [hostDraft, setHostDraft] = useState("");
+    const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
     const refresh = useCallback(async () => {
-        try {
-            const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
-                findPackageManager(),
-                search.searchForNotesIncludingHidden("#packageManaged"),
-                search.searchForNotesIncludingHidden("#packageManaged #archived", true),
-                search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
-            ]);
-            const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
-            const sources = parseConfiguredPluginSources((labelName) => settings?.getOwnedLabelValue(labelName));
-            const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
-            const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
-            const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
-            const updateCheckIntervalHours = Math.max(1, Number(settings?.getOwnedLabelValue(PACKAGE_UPDATE_INTERVAL_LABEL)) || 24);
-            const includeDeprecatedPackages = settings?.getOwnedLabelValue(PACKAGE_INCLUDE_DEPRECATED_LABEL) === "true";
-            const packages = buildPackageSummaries(packageNotes, false);
-            const archivedPackages = buildPackageSummaries(archivedPackageNotes, true);
+        if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
-            const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
-            const packagesWithSettings = packages.map((pkg) => {
-                const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
-                const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
-            });
-            const archivedWithSettings = archivedPackages.map((pkg) => {
-                const note = archivedPackageNotes.find((candidate) => candidate.noteId === pkg.noteId);
-                const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
-            });
-            const interruptedTransactionCount = new Set(transactionNotes
-                .filter((note) => !note.isArchived)
-                .map((note) => note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL))
-                .filter(Boolean)).size;
-            setState({ manager, settings, packages: packagesWithSettings, archivedPackages: archivedWithSettings, catalog, sources, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
-        } catch (error) {
-            setState({ ...EMPTY_STATE, loading: false, error: error instanceof Error ? error.message : String(error) });
+        const refreshPromise = (async () => {
+            try {
+                // Re-check activation on every manager refresh. This catches labels changed by
+                // another plugin, a manual edit, or a late entity reload after the one-shot startup
+                // reconciliation. The reconciler only changes explicitly enabled packages and skips
+                // transactions, so refreshing this page remains safe during package operations.
+                try {
+                    const repairs = await reconcileEnabledPackageActivations();
+                    if (repairs.length) {
+                        const repairedNoteCount = repairs.reduce((total, repair) => total + repair.repairedNoteIds.length, 0);
+                        toast.showMessage(translateText("plugins.activation_repaired", { count: repairedNoteCount }));
+                    }
+                } catch (error) {
+                    // Health display and manual repair remain available even if a refresh cannot
+                    // write notes (for example while the server is reconnecting).
+                    console.warn("Could not reconcile community package activation state during refresh:", error);
+                }
+
+                const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
+                    findPackageManager(),
+                    search.searchForNotesIncludingHidden("#packageManaged"),
+                    search.searchForNotesIncludingHidden("#packageManaged #archived", true),
+                    search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
+                ]);
+                const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
+                const sources = parseConfiguredPluginSources((labelName) => settings?.getOwnedLabelValue(labelName));
+                const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
+                const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
+                const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
+                const updateCheckIntervalHours = Math.max(1, Number(settings?.getOwnedLabelValue(PACKAGE_UPDATE_INTERVAL_LABEL)) || 24);
+                const includeDeprecatedPackages = settings?.getOwnedLabelValue(PACKAGE_INCLUDE_DEPRECATED_LABEL) === "true";
+                const packages = buildPackageSummaries(packageNotes, false);
+                const archivedPackages = buildPackageSummaries(archivedPackageNotes, true);
+
+                const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
+                const packagesWithSettings = packages.map((pkg) => {
+                    const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
+                    const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
+                    return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                });
+                const archivedWithSettings = archivedPackages.map((pkg) => {
+                    const note = archivedPackageNotes.find((candidate) => candidate.noteId === pkg.noteId);
+                    const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
+                    return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                });
+                const interruptedTransactionCount = new Set(transactionNotes
+                    .filter((note) => !note.isArchived)
+                    .map((note) => note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL))
+                    .filter(Boolean)).size;
+                setState({ manager, settings, packages: packagesWithSettings, archivedPackages: archivedWithSettings, catalog, sources, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
+            } catch (error) {
+                setState({ ...EMPTY_STATE, loading: false, error: error instanceof Error ? error.message : String(error) });
+            }
+        })();
+
+        refreshPromiseRef.current = refreshPromise;
+        try {
+            await refreshPromise;
+        } finally {
+            if (refreshPromiseRef.current === refreshPromise) refreshPromiseRef.current = null;
         }
     }, []);
 
