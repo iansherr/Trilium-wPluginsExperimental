@@ -24,6 +24,7 @@ import {
     parseConfiguredPluginSources,
     parseSourceHosts,
     normalizeSourceHosts,
+    packageActivationHealth,
     packageHealth,
     parseCachedPackageManifest,
     parseRegistryUrls,
@@ -44,7 +45,7 @@ const manifest = {
     permissions: ["network"],
     settings: [{ key: "enabled", type: "boolean" as const, title: "Enabled", default: false }],
     surfaces: [],
-    artifacts: [{ id: "manifest", source: "https://example.com/plugin.json", integrity }],
+    artifacts: [{ id: "manifest", type: "resource" as const, source: "https://example.com/plugin.json", integrity }],
     dependencies: [{ id: "example/dependency", version: ">=1.0.0" }],
     compatibility: { minTriliumVersion: "0.100.0", maxTriliumVersion: "0.110.0" }
 };
@@ -165,6 +166,22 @@ describe("plugin manager validation helpers", () => {
         const cached = parseCachedPackageManifest(JSON.stringify(manifest));
         expect(cached?.id).toBe("example/plugin");
         expect(cached?.settings).toEqual(manifest.settings);
+    });
+
+    it("detects activation drift separately from missing artifacts", () => {
+        const cssManifest = {
+            ...manifest,
+            artifacts: [{ id: "style", type: "css" as const, source: "style.css", integrity }]
+        };
+        const fakeNote = (labels: Record<string, string[]>) => ({
+            getOwnedLabelValue: (name: string) => name === "packageArtifact" ? "style" : null,
+            getOwnedLabels: (name: string) => (labels[name] || []).map((value, index) => ({ attributeId: String(index), value }))
+        });
+
+        expect(packageActivationHealth([fakeNote({ "disabled:appCss": [""] }) as any], true, cssManifest).health).toBe("broken");
+        expect(packageActivationHealth([fakeNote({ appCss: [""] }) as any], true, cssManifest)).toEqual({ health: "healthy", healthMessage: "all artifacts active" });
+        expect(packageActivationHealth([fakeNote({ appCss: [""] }) as any], false, cssManifest).health).toBe("broken");
+        expect(packageActivationHealth([fakeNote({ "disabled:appCss": [""] }) as any], false, cssManifest)).toEqual({ health: "healthy", healthMessage: "all artifacts active" });
     });
 });
 

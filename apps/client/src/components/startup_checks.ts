@@ -2,6 +2,7 @@ import type { OAuthStatus } from "@triliumnext/commons";
 
 import { t } from "../services/i18n";
 import { oauthAccountLabel, oauthProviderDisplayName } from "../services/oauth_status";
+import { reconcileEnabledPackageActivations } from "../services/package_activation";
 import server from "../services/server";
 import toast from "../services/toast";
 import Component from "./component";
@@ -19,6 +20,7 @@ export class StartupChecks extends Component {
         // Shared by desktop and mobile (both reach here via appContext.start), so the post-enrollment
         // toast lives here rather than being duplicated in each entry point.
         showOAuthEnrollmentResultToast();
+        void reconcilePackageActivationsAtStartup();
     }
 
     async checkCpuArchMismatch() {
@@ -30,6 +32,18 @@ export class StartupChecks extends Component {
         } catch (error) {
             console.warn("Could not check CPU arch status:", error);
         }
+    }
+}
+
+async function reconcilePackageActivationsAtStartup() {
+    try {
+        const repairs = await reconcileEnabledPackageActivations();
+        if (repairs.length) console.info("Repaired activation state for enabled community packages.", repairs);
+    } catch (error) {
+        // Startup must remain available if a package is mid-transaction or the
+        // account cannot write notes. The Plugins screen will still report the
+        // activation mismatch and offer repair.
+        console.warn("Could not reconcile community package activation state:", error);
     }
 }
 

@@ -20,6 +20,7 @@ const MANAGED_LABEL = "packageManaged";
 const OWNER_LABEL = "packageOwner";
 const VERSION_LABEL = "packageVersion";
 const ARTIFACT_LABEL = "packageArtifact";
+const MANIFEST_LABEL = "packageManifest";
 const ENABLED_LABEL = "packageEnabled";
 const PINNED_LABEL = "packagePinned";
 const TRANSACTION_LABEL = "packageTransaction";
@@ -996,8 +997,11 @@ async function replacePackage(manifest, preserveEnabled, allowedSourceHosts, dep
         const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
         await restorePackageSettings(stagedPackageNotes, manifest, previousSettings);
         await restorePackagePinned(stagedPackageNotes, previousPinned);
-        await archiveNotes(previousNotes.filter((note) => !transferredNotes.includes(note)));
         if (preserveEnabled && previousEnabled) await applyEnabledState(stagedPackageNotes, true);
+        await api.reloadNotes(stagedPackageNotes.map((note) => note.noteId));
+        const verifiedPackageNotes = (await Promise.all(stagedPackageNotes.map((note) => api.getNote(note.noteId)))).filter(Boolean);
+        await verifyPackageActivation(verifiedPackageNotes, manifest, preserveEnabled && previousEnabled);
+        await archiveNotes(previousNotes.filter((note) => !transferredNotes.includes(note)));
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
         try {
@@ -1042,6 +1046,10 @@ async function installPackageSafely(manifests, allowedSourceHosts, catalog = [])
             const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
             await restorePackageSettings(stagedPackageNotes, manifest, backup.settings || {});
             await restorePackagePinned(stagedPackageNotes, Boolean(backup.pinned));
+        }
+        for (const manifest of manifests) {
+            const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
+            await verifyPackageActivation(stagedPackageNotes, manifest, false);
         }
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
@@ -1524,6 +1532,10 @@ async function restorePackageNotes(notes, enabled) {
     }
     await api.reloadNotes(notes.map((note) => note.noteId));
     await applyEnabledState(notes, enabled);
+    await api.reloadNotes(notes.map((note) => note.noteId));
+    const restoredNotes = (await Promise.all(notes.map((note) => api.getNote(note.noteId)))).filter(Boolean);
+    const issues = activationLabelIssues(restoredNotes, enabled);
+    if (issues.length) throw new Error(`Previous package activation restore failed: ${issues.join(", ")}`);
 }
 
 async function restorePackageSettings(notes, manifest, values) {
@@ -1570,6 +1582,51 @@ async function applyEnabledState(notes, enabled) {
         await setLauncherVisibility(note, enabled);
     }
     await api.reloadNotes(notes.map((note) => note.noteId));
+}
+
+async function verifyPackageActivation(notes, manifest, enabled) {
+    const issues = activationLabelIssues(notes, enabled);
+    const manifestNote = notes.find((note) => note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest");
+    if (!manifestNote || manifestNote.getOwnedLabelValue(ENABLED_LABEL) !== String(enabled)) {
+        issues.push(`manifest ${ENABLED_LABEL}=${enabled}`);
+    }
+
+    const notesByArtifact = new Map(notes.map((note) => [note.getOwnedLabelValue(ARTIFACT_LABEL), note]));
+    for (const artifact of manifest.artifacts || []) {
+        const note = notesByArtifact.get(artifact.id);
+        if (!note) continue;
+        for (const [labelName, expectedValue] of expectedActivationLabels(artifact)) {
+            const active = note.getOwnedLabels(labelName).some((attribute) => attribute.value === expectedValue);
+            const disabled = note.getOwnedLabels(`disabled:${labelName}`).some((attribute) => attribute.value === expectedValue);
+            if (enabled && (!active || disabled)) issues.push(`${artifact.id}:${labelName}`);
+            if (!enabled && (active || !disabled)) issues.push(`${artifact.id}:${labelName}`);
+        }
+    }
+
+    if (issues.length) throw new Error(`${manifest.name} activation verification failed: ${issues.join(", ")}`);
+}
+
+function activationLabelIssues(notes, enabled) {
+    const issues = [];
+    for (const note of notes) {
+        for (const labelName of ACTIVATION_LABELS) {
+            if (enabled && note.getOwnedLabels(`disabled:${labelName}`).length) issues.push(`${note.getOwnedLabelValue(ARTIFACT_LABEL)}:${labelName}`);
+            if (!enabled && note.getOwnedLabels(labelName).length) issues.push(`${note.getOwnedLabelValue(ARTIFACT_LABEL)}:${labelName}`);
+        }
+    }
+    return issues;
+}
+
+function expectedActivationLabels(artifact) {
+    const labels = [];
+    if (artifact.type === "widget") labels.push(["widget", ""]);
+    if (artifact.type === "launcher") labels.push(["launcherType", "customWidget"]);
+    if (artifact.type === "css") labels.push(["appCss", ""]);
+    if (artifact.type === "theme") labels.push(["appTheme", artifact.title || "community"]);
+    if (artifact.activation === "startup") labels.push(["run", artifact.type === "backend" ? "backendStartup" : "frontendStartup"]);
+    if (artifact.activation === "schedule" && artifact.schedule) labels.push(["run", artifact.schedule]);
+    if (artifact.activation === "request" && artifact.route) labels.push(["customRequestHandler", artifact.route]);
+    return labels;
 }
 
 function packageSettingsFromNote(note, manifest) {
@@ -1685,6 +1742,7 @@ function packageAttributes(manifest, artifactId = "manifest", transactionId = ""
         { type: "label", name: OWNER_LABEL, value: manifest.id },
         { type: "label", name: VERSION_LABEL, value: manifest.version },
         { type: "label", name: ARTIFACT_LABEL, value: artifactId },
+        ...(artifactId === "manifest" ? [{ type: "label", name: MANIFEST_LABEL, value: JSON.stringify(manifest) }] : []),
         ...(artifact?.integrity ? [{ type: "label", name: INTEGRITY_LABEL, value: artifact.integrity }] : []),
         ...(transactionId ? [{ type: "label", name: TRANSACTION_LABEL, value: transactionId }] : [])
     ];

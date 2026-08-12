@@ -26,6 +26,7 @@ const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community-packages-manager_rende
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
 const PACKAGE_MANIFEST_LABEL = "packageManifest";
+const PACKAGE_ARTIFACT_LABEL = "packageArtifact";
 const PACKAGE_ACTIVATION_LABELS = ["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"];
 const PACKAGE_TRANSACTION_LABEL = "packageTransaction";
 const PACKAGE_SOURCES_LABEL = "packageSources";
@@ -103,8 +104,13 @@ export interface PackageCompatibility {
 
 export interface PackageArtifact {
     id: string;
+    type: "frontend" | "backend" | "widget" | "launcher" | "render" | "css" | "theme" | "endpoint" | "resource";
     source: string;
     integrity: string;
+    title?: string;
+    activation?: "manual" | "startup" | "launcher" | "event" | "schedule" | "request";
+    route?: string;
+    schedule?: "hourly" | "daily";
 }
 
 export interface CatalogPackage {
@@ -223,12 +229,12 @@ export default function PluginsSettings() {
             const packagesWithSettings = packages.map((pkg) => {
                 const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
                 const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...packageHealth(pkg.artifactIds, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
             });
             const archivedWithSettings = archivedPackages.map((pkg) => {
                 const note = archivedPackageNotes.find((candidate) => candidate.noteId === pkg.noteId);
                 const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...packageHealth(pkg.artifactIds, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
             });
             const interruptedTransactionCount = new Set(transactionNotes
                 .filter((note) => !note.isArchived)
@@ -903,6 +909,46 @@ export function packageHealth(artifactIds: string[], manifest?: CatalogPackage) 
         : { health: "healthy" as const, healthMessage: "all artifacts present" };
 }
 
+function combinedPackageHealth(pkg: PackageSummary, manifest?: CatalogPackage) {
+    const artifactHealth = packageHealth(pkg.artifactIds, manifest);
+    const activationHealth = packageActivationHealth(pkg.artifactNotes, pkg.enabled, manifest);
+    return activationHealth.health === "broken" ? activationHealth : artifactHealth;
+}
+
+export function packageActivationHealth(artifactNotes: FNote[], enabled: boolean, manifest?: CatalogPackage) {
+    if (!manifest) return { health: "unknown" as const, healthMessage: "not in registry" };
+
+    const issues: string[] = [];
+    const notesByArtifact = new Map(artifactNotes.map((note) => [note.getOwnedLabelValue(PACKAGE_ARTIFACT_LABEL), note]));
+    for (const artifact of manifest.artifacts) {
+        const note = notesByArtifact.get(artifact.id);
+        if (!note) continue;
+
+        for (const [labelName, expectedValue] of expectedActivationLabels(artifact)) {
+            const active = note.getOwnedLabels(labelName).some((attribute) => attribute.value === expectedValue);
+            const disabled = note.getOwnedLabels(`disabled:${labelName}`).some((attribute) => attribute.value === expectedValue);
+            if (enabled && (!active || disabled)) issues.push(`${artifact.id}:${labelName}`);
+            if (!enabled && active) issues.push(`${artifact.id}:${labelName}`);
+        }
+    }
+
+    return issues.length
+        ? { health: "broken" as const, healthMessage: `activation mismatch: ${issues.slice(0, 6).join(", ")}` }
+        : { health: "healthy" as const, healthMessage: "all artifacts active" };
+}
+
+function expectedActivationLabels(artifact: PackageArtifact) {
+    const labels: Array<[string, string]> = [];
+    if (artifact.type === "widget") labels.push(["widget", ""]);
+    if (artifact.type === "launcher") labels.push(["launcherType", "customWidget"]);
+    if (artifact.type === "css") labels.push(["appCss", ""]);
+    if (artifact.type === "theme") labels.push(["appTheme", artifact.title || "community"]);
+    if (artifact.activation === "startup") labels.push(["run", artifact.type === "backend" ? "backendStartup" : "frontendStartup"]);
+    if (artifact.activation === "schedule" && artifact.schedule) labels.push(["run", artifact.schedule]);
+    if (artifact.activation === "request" && artifact.route) labels.push(["customRequestHandler", artifact.route]);
+    return labels;
+}
+
 async function loadCatalog(sources: string[], packages: PackageSummary[], includeDeprecatedPackages: boolean) {
     const configuredSources = normalizePluginSources(sources);
     const cachedCatalog = packages
@@ -1097,6 +1143,7 @@ function formatHealthMessage(message: string) {
     if (message === "not checked") return t("plugins.health_not_checked");
     if (message === "not in registry") return t("plugins.health_not_in_registry");
     if (message.startsWith("missing ")) return translateText("plugins.health_missing", { artifacts: message.slice("missing ".length) });
+    if (message.startsWith("activation mismatch: ")) return translateText("plugins.health_activation", { artifacts: message.slice("activation mismatch: ".length) });
     return message;
 }
 
@@ -1270,6 +1317,7 @@ export function isPackageArtifact(value: unknown): value is PackageArtifact {
     const artifact = value as Partial<PackageArtifact>;
     return typeof artifact.id === "string"
         && PACKAGE_ARTIFACT_ID_PATTERN.test(artifact.id)
+        && typeof artifact.type === "string"
         && typeof artifact.source === "string"
         && (isSecurePackageUrl(artifact.source) || isRelativePackageSource(artifact.source))
         && typeof artifact.integrity === "string"
