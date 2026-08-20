@@ -43,19 +43,25 @@ export function setCommunityPackagesManagerSource(source?: string) {
 
 function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
     if (!communityPackagesManagerSource) return [];
+    // The code note is a sibling declared *before* the render note rather than its child: siblings
+    // are fully created (note, then attributes) in array order, so the renderNote relation below
+    // always finds its target. Nested, it pointed at a note that did not exist yet the first time
+    // this definition was applied, which rolled back the whole hidden-subtree transaction and made
+    // creating a fresh database impossible. `enforceBranches` relocates the note on instances that
+    // already have it nested, so fresh and upgraded databases end up with the same structure.
     return [{
+        id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+        title: "Community Packages",
+        type: "code",
+        mime: "text/jsx",
+        content: communityPackagesManagerSource,
+        enforceBranches: true,
+        attributes: [{ type: "label", name: "readOnly" }]
+    }, {
         id: COMMUNITY_PACKAGES_MANAGER_RENDER_ID,
         title: "Community Packages",
         type: "render",
-        attributes: [{ type: "relation", name: "renderNote", value: COMMUNITY_PACKAGES_MANAGER_CODE_ID }],
-        children: [{
-            id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
-            title: "Community Packages",
-            type: "code",
-            mime: "text/jsx",
-            content: communityPackagesManagerSource,
-            attributes: [{ type: "label", name: "readOnly" }]
-        }]
+        attributes: [{ type: "relation", name: "renderNote", value: COMMUNITY_PACKAGES_MANAGER_CODE_ID }]
     }];
 }
 
@@ -607,6 +613,14 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
+    // Children are created before this note's own attributes are saved, so that a relation
+    // declared here may target a descendant (e.g. a render note pointing at the code note it
+    // renders). Saving attributes first made such a relation throw on the very first run,
+    // because its target did not exist yet.
+    for (const child of item.children || []) {
+        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
+    }
+
     for (const attr of attrs) {
         const attrId = `${note.noteId}_${attr.type.charAt(0)}${attr.name}`;
 
@@ -630,9 +644,6 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
-    for (const child of item.children || []) {
-        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
-    }
 }
 
 export default {

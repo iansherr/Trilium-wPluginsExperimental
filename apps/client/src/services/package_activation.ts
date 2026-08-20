@@ -26,7 +26,7 @@ export async function reconcileEnabledPackageActivations(): Promise<PackageActiv
     try {
         await froca.initializedPromise;
         const notes = await search.searchForNotesIncludingHidden("#packageOwner");
-        const packageIds = [...new Set(notes.map((note) => note.getOwnedLabelValue("packageOwner")).filter(Boolean))];
+        const packageIds = [...new Set(notes.map((note) => note.getOwnedLabelValue("packageOwner")).filter((packageId): packageId is string => !!packageId))];
         const repairs: PackageActivationRepair[] = [];
 
         for (const packageId of packageIds) {
@@ -37,7 +37,7 @@ export async function reconcileEnabledPackageActivations(): Promise<PackageActiv
             if (!manifest || manifest.getOwnedLabelValue("packageEnabled") !== "true") continue;
             const cachedManifest = parseCachedManifest(manifest.getOwnedLabelValue("packageManifest"));
 
-            const repairedNoteIds = [];
+            const repairedNoteIds: string[] = [];
             for (const note of packageNotes) {
                 let repaired = false;
                 for (const labelName of PACKAGE_ACTIVATION_LABELS) {
