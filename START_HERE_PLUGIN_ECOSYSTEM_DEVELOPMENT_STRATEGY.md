@@ -169,12 +169,18 @@ Always run these commands to verify code integrity before committing changes:
 
 ## 8. TriliumDEV Companion Plugin Blueprint (`iansherr/triliumdev-companion`)
 
-The **TriliumDEV Companion Plugin** runs directly inside Trilium Notes as a native community package note:
+The **TriliumDEV Companion Plugin** runs directly inside Trilium Notes as a native community package note and supports both **Developers** and **End-User Testers**:
 
-### Features & Capabilities:
-1. **Version Detection**: Queries GitHub API (`https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/commits/main`) to detect new dev commits or release tags.
-2. **Launch Hot-Reload Mode Action**: Includes a **"Launch Dev Watch Server"** button inside the plugin UI that triggers Electron dev watch mode (`ELECTRON_IS_DEV=1`) for instant live hot-reloading.
-3. **1-Click Binary Update**: Triggers binary packaging (`pnpm dev:binary`) or opens direct pre-built GitHub release `.dmg`/`.zip` downloads.
+### Dual-Mode Architecture:
+1. **End-User / Tester Mode (No local codebase required)**:
+   - Queries GitHub API (`https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/releases/latest`).
+   - Compares local version (`window.glob.triliumVersion`) against remote release tags (`v0.104.1-dev.X`).
+   - Renders a 1-click **"Download Pre-Built Binary Update"** button that downloads and launches the compiled `.dmg` / `.zip` asset directly from GitHub Releases.
+2. **Developer Mode (Multi-Machine Custom Directory Binding)**:
+   - **Configurable Source Directory Setting**: Includes a `packageSetting:localSourceDirectory` text box in the plugin settings UI (e.g., `/Users/iansherr/Projects/Trilium` or `/home/user/code/Trilium`).
+   - **Native Folder Picker**: Provides a **"Select Local Source Folder"** button that opens Electron's native directory picker (`showOpenDialog({ properties: ['openDirectory'] })`) to set the path visually.
+   - **Auto-Discovery Fallback**: Automatically checks `process.env.TRILIUM_DEV_DIR` or `process.cwd()` if no path is configured.
+   - **Launch Hot-Reload Action**: When a local source folder is connected, clicking **"Launch Dev Watch Server"** spawns Vite HMR for that specific workspace directory, allowing sub-second hot reloading on any computer!
 
 ---
 
