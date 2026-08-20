@@ -14,7 +14,7 @@ export default function StateBadge({ enabled }: { enabled: boolean }) {
     return (
         <Badge
             className={`state-badge ${enabled ? "active" : "inactive"}`}
-            text={t(enabled ? "plugins.enabled" : "plugins.disabled")}
+            text={enabled ? "ENABLED" : "DISABLED"}
             outline
         />
     );

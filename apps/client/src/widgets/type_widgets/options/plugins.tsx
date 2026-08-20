@@ -232,12 +232,16 @@ export default function PluginsSettings() {
                     console.warn("Could not reconcile community package activation state during refresh:", error);
                 }
 
-                const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
-                    findPackageManager(),
+                const manager = await findPackageManager();
+                const [managedNotes, ownerNotes, archivedManagedNotes, archivedOwnerNotes, transactionNotes] = await Promise.all([
                     search.searchForNotesIncludingHidden("#packageManaged"),
+                    search.searchForNotesIncludingHidden("#packageOwner"),
                     search.searchForNotesIncludingHidden("#packageManaged #archived", true),
+                    search.searchForNotesIncludingHidden("#packageOwner #archived", true),
                     search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
                 ]);
+                const packageNotes = [...new Map([...managedNotes, ...ownerNotes].map((note) => [note.noteId, note])).values()];
+                const archivedPackageNotes = [...new Map([...archivedManagedNotes, ...archivedOwnerNotes].map((note) => [note.noteId, note])).values()];
                 const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
                 const sources = parseConfiguredPluginSources((labelName) => settings?.getOwnedLabelValue(labelName));
                 const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";

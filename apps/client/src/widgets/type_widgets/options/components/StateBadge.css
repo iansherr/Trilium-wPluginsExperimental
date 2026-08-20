@@ -7,10 +7,30 @@
 }
 
 /* The badge itself: a colored outline whose hue is driven by --color per state. */
-.state-badge.active {
-    --color: var(--admonition-tip-accent-color, #40c025);
+.ext-badge.state-badge.active {
+    background-color: rgba(40, 167, 69, 0.15) !important;
+    color: #28a745 !important;
+    border: 1px solid #28a745 !important;
+    padding: 2px 8px !important;
+    border-radius: 12px !important;
+    font-size: 0.75rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.03em !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
 }
 
-.state-badge.inactive {
-    --color: var(--admonition-caution-accent-color, #ff2e2e);
+.ext-badge.state-badge.inactive {
+    background-color: rgba(108, 117, 125, 0.15) !important;
+    color: #6c757d !important;
+    border: 1px solid #6c757d !important;
+    padding: 1px 7px !important;
+    border-radius: 12px !important;
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.03em !important;
+    text-transform: uppercase !important;
+    display: inline-flex !important;
+    align-items: center !important;
 }

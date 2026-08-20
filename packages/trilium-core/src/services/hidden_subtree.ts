@@ -109,6 +109,7 @@ export default function TriliumDevCompanionWidget() {
         content: widgetSource,
         enforceBranches: true,
         attributes: [
+            { type: "label", name: "packageManaged" },
             { type: "label", name: "packageOwner", value: "iansherr/triliumdev-companion" },
             { type: "label", name: "packageArtifact", value: "companion-widget" },
             { type: "label", name: "widget" }
@@ -119,6 +120,7 @@ export default function TriliumDevCompanionWidget() {
         type: "doc",
         enforceBranches: true,
         attributes: [
+            { type: "label", name: "packageManaged" },
             { type: "label", name: "packageOwner", value: "iansherr/triliumdev-companion" },
             { type: "label", name: "packageVersion", value: "1.0.0" },
             { type: "label", name: "packageEnabled", value: "true" },
