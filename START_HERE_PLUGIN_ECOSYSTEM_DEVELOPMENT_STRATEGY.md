@@ -134,17 +134,22 @@ To ensure all plugin features and topic branches remain compatible with ongoing 
 
 ---
 
-## 6. Personal TriliumDEV Binary Build Protocol
+## 6. Interactive TriliumDEV Management Tool (`trilium-dev.sh`)
 
-To compile and package personal desktop executables from this workspace:
+To make launching dev mode, testing, binary packaging, and release tagging effortless, an interactive CLI tool is included:
 
 ```bash
-# Execute single-command dev binary build helper
-pnpm desktop:build-binary
-
-# Executable binary outputs to:
-# apps/desktop/out/
+# Interactive menu
+pnpm dev:cli
+# OR
+./scripts/trilium-dev.sh
 ```
+
+### Shortcuts:
+* **`pnpm dev:hot`**: Launches live Hot-Reload Watch Mode (`pnpm desktop:start`).
+* **`pnpm dev:prod`**: Runs local production build (`pnpm desktop:start-prod`).
+* **`pnpm dev:binary`**: Packages standalone desktop binary (`apps/desktop/out/`).
+* **`pnpm dev:release`**: Prompts for release tag (`v0.104.1-dev.1`) and pushes to GitHub.
 
 ---
 
@@ -162,19 +167,14 @@ Always run these commands to verify code integrity before committing changes:
 
 ---
 
-## 8. TriliumDEV Companion & Version Detection Plugin Blueprint
+## 8. TriliumDEV Companion Plugin Blueprint (`iansherr/triliumdev-companion`)
 
-To make managing and updating local TriliumDEV builds effortless, the **TriliumDEV Companion Plugin** can be installed directly into Trilium Notes as a native community package note:
+The **TriliumDEV Companion Plugin** runs directly inside Trilium Notes as a native community package note:
 
-### Plugin Package Manifest Schema (`iansherr/triliumdev-companion`)
-- **Manifest ID**: `iansherr/triliumdev-companion`
-- **Permissions**: `["network"]`
-- **Widget Artifact**: Frontend widget checking GitHub API on startup.
-- **Functionality**:
-  1. Reads local running version via `window.glob.triliumVersion` and git commit hash.
-  2. Queries GitHub API: `https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/commits/main`.
-  3. Displays a non-intrusive notification pill in Trilium when new commits or builds exist on `iansherr/Trilium-wPluginsExperimental`.
-  4. Provides a 1-click link to trigger local build (`pnpm desktop:build-binary`) or download latest release artifacts.
+### Features & Capabilities:
+1. **Version Detection**: Queries GitHub API (`https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/commits/main`) to detect new dev commits or release tags.
+2. **Launch Hot-Reload Mode Action**: Includes a **"Launch Dev Watch Server"** button inside the plugin UI that triggers Electron dev watch mode (`ELECTRON_IS_DEV=1`) for instant live hot-reloading.
+3. **1-Click Binary Update**: Triggers binary packaging (`pnpm dev:binary`) or opens direct pre-built GitHub release `.dmg`/`.zip` downloads.
 
 ---
 
@@ -182,33 +182,30 @@ To make managing and updating local TriliumDEV builds effortless, the **TriliumD
 
 ### A. How Code Changes Move into the Live App
 
-You do **not** need to rebuild the standalone binary executable every time you edit code during active development:
-
 1. **Active Live Development (Hot Reloading)**:
    ```bash
-   pnpm desktop:start
+   pnpm dev:hot
    ```
    * **Behavior**: Launches Electron in development mode with Vite hot-reloading. Any change to TypeScript, React components, CSS, or backend services instantly updates in the running app without rebuilding binaries.
 2. **Local Production Test Run**:
    ```bash
-   pnpm desktop:start-prod
+   pnpm dev:prod
    ```
    * **Behavior**: Compiles the production bundle and runs it immediately in Node/Electron to test real production behavior without packaging installer binaries.
 3. **Executable Binary Rebuild**:
    ```bash
-   pnpm desktop:build-binary
+   pnpm dev:binary
    ```
    * **Behavior**: Re-runs typecheck and Vitest specs, compiles production assets, and packages the standalone executable binary in `apps/desktop/out/`.
 
 ### B. Release Tagging Strategy (Avoiding Upstream Version Conflicts)
 
-When creating release tags for TriliumDEV builds to share pre-packaged binaries with team members or testers:
-
-1. **Custom Tag Namespace**: Always append `-dev.X` or `-dev-vX` to your version tags (e.g. `v0.104.1-dev.1`, `v0.104.1-dev.2`).
+1. **Custom Tag Namespace**: Always append `-dev.X` to your version tags (e.g. `v0.104.1-dev.1`, `v0.104.1-dev.2`).
 2. **Upstream Isolation**: Adding `-dev.X` ensures your fork's releases never collide with upstream `TriliumNext/Trilium` official tags (`v0.104.1`).
 3. **Automated Binary Release Upload**:
    ```bash
-   git tag v0.104.1-dev.1
-   git push origin v0.104.1-dev.1
+   pnpm dev:release
+   # OR
+   git tag v0.104.1-dev.1 && git push origin v0.104.1-dev.1
    ```
-   * **Result**: GitHub Actions builds the packaged desktop application (`.dmg`, `.zip`, `.exe`) and attaches the executable binary assets directly to the GitHub Release page for download.
+   * **Result**: GitHub Actions builds the packaged desktop application (`.dmg`, `.zip`, `.exe`) and attaches the executable binary assets directly to the GitHub Release page.
