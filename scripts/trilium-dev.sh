@@ -52,7 +52,7 @@ case "$MODE" in
         pnpm --filter desktop electron-forge:package
         echo ""
         echo "=================================================="
-        echo "  SUCCESS: Dev binary packaged in apps/desktop/out/"
+        echo "  SUCCESS: Dev binary packaged in apps/desktop/dist/out/"
         echo "=================================================="
         ;;
     release|4)
