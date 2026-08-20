@@ -606,7 +606,7 @@ export default function PluginsSettings() {
                         </OptionsRow>
                         {configuredPackage === pkg.id && <InstalledPackageDetails
                             pkg={pkg}
-                            manifest={state.catalog.find((candidate) => candidate.id === pkg.id)}
+                            manifest={state.catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest}
                             onChange={(key, value) => updatePackageSetting(pkg.id, key, value)}
                             onSave={() => void savePackageSettings(pkg)}
                             onPinChange={(pinned) => void savePackagePin(pkg, pinned)}
