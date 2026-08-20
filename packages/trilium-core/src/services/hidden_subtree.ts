@@ -123,6 +123,7 @@ export default defineWidget({
         title: "TriliumDEV Companion",
         type: "doc",
         enforceBranches: true,
+        enforceAttributes: true,
         attributes: [
             { type: "label", name: "packageManaged" },
             { type: "label", name: "packageOwner", value: "iansherr/triliumdev-companion" },

@@ -1379,7 +1379,7 @@ export function isCatalogPackageEntry(value: RawCatalogPackage): value is RawCat
 export function isSecurePackageUrl(value: string) {
     try {
         const url = new URL(value);
-        return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname));
+        return url.protocol === "https:" || url.protocol === "file:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname));
     } catch {
         return false;
     }
@@ -1399,12 +1399,17 @@ export function isRelativePackageSource(value: string) {
 
 export function normalizePluginSourceUrl(source: string) {
     const trimmedSource = source.trim();
+    if (trimmedSource.startsWith("file://")) return trimmedSource;
+    if (trimmedSource.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(trimmedSource)) {
+        return `file://${trimmedSource.startsWith("/") ? "" : "/"}${trimmedSource.replaceAll("\\", "/")}`;
+    }
     const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
         ? `https://${trimmedSource}`
         : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)
             ? `https://${trimmedSource}`
             : trimmedSource;
     const parsed = new URL(normalizedInput);
+    if (parsed.protocol === "file:") return normalizedInput;
     if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "github.com") return normalizedInput;
 
     const segments = parsed.pathname.split("/").filter(Boolean);

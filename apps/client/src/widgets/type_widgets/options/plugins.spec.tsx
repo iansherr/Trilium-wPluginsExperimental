@@ -90,6 +90,7 @@ describe("plugin manager validation helpers", () => {
         expect(isSecurePackageUrl("https://example.com/plugin.json")).toBe(true);
         expect(isSecurePackageUrl("http://localhost:39125/plugin.json")).toBe(true);
         expect(isSecurePackageUrl("http://127.0.0.1:39125/plugin.json")).toBe(true);
+        expect(isSecurePackageUrl("file:///Users/test/package.json")).toBe(true);
         expect(isSecurePackageUrl("http://example.com/plugin.json")).toBe(false);
         expect(isSecurePackageUrl("javascript:alert(1)")).toBe(false);
     });
