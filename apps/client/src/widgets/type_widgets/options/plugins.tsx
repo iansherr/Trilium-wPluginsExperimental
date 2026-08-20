@@ -119,6 +119,7 @@ export interface CatalogPackage {
     name: string;
     description: string;
     version: string;
+    repository?: string;
     permissions: string[];
     settings: PackageSettingDefinition[];
     surfaces: PackageSurface[];
