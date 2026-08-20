@@ -1,89 +1,107 @@
-# Plugin Ecosystem & Upstream PR Strategy
+# Plugin Ecosystem Upstream Strategy & Agent Execution Playbook
 
-## 1. Overview & Architectural Goals
-
-The Trilium Plugin & Community Packages system introduces a first-class, declarative plugin ecosystem into Trilium Notes. It enables developers to package, publish, and maintain custom widgets, themes, background handlers, and scripts as structured note bundles, while giving end users a safe, manageable, and seamless installation and configuration experience.
-
-### Key Capabilities of this Version
-- **First-Class Plugin Management**: Built-in Settings → Plugins page and Community Packages catalog interface.
-- **Declarative Package Manifests**: Single or multi-artifact package bundles containing JS widgets, CSS themes, server scripts, and custom request handlers.
-- **SRI & Security Integrity Validation**: Strict SHA-256 integrity hash verification, HTTPS source enforcement, download host whitelisting, and network permission controls.
-- **Operation Locking & Safety**: Process-local operation locking (`package_operation_lock`) to prevent race conditions and transaction corruption during multi-step package installations or updates.
-- **Activation Reconciliation & Lifecycle Preservation**: Automatic drift detection and reconciliation of enabled package artifacts (`widget` vs `disabled:widget`) across application restarts and package updates.
-- **Offline & Local Metadata Support**: Fallback rendering for uncataloged or local packages using embedded cached manifests (`pkg.cachedManifest`).
+This document serves as the authoritative **State of Play, Upstream Strategy, and Agent Execution Guide** for the Trilium Plugin Ecosystem & Community Packages system. Any AI agent or developer working in this repository MUST follow the directives and workflow rules established below.
 
 ---
 
-## 2. Upstream PR Status (Submitted to `TriliumNext/Trilium`)
+## 1. Core Principles & Philosophy
 
-The initial foundation was split into 3 independent, scoped Pull Requests to facilitate upstream review:
+When developing features, fixing bugs, or managing git branches in this repository, always enforce the following constraints:
+
+1. **Micro-Sized PR Branches**: Break up work into the smallest reasonable, self-contained units (from 1-line bug fixes up to localized test suites). Smaller PRs land faster and reduce merge conflict risks.
+2. **Minimal Code Touch Footprint**: Change as little existing core Trilium code as possible. Prefer non-invasive additive components, localized helper utilities, and isolated specs over wide refactors.
+3. **Strict PR Scope Boundaries**: NEVER bloat an existing open PR with new features, follow-up enhancements, or unrelated refactors. Keep open PRs locked to their original intent.
+4. **Targeted Branch Updates**: Update existing branches ONLY when required to resolve merge conflicts with `upstream/main`, adjust to a changing state of play, or address explicit maintainer review feedback.
+5. **No Unapproved Upstream Pushes**: NEVER execute `git push` to `origin` or `upstream` without explicit approval from the user.
+
+---
+
+## 2. Current State of Play
+
+### Fork `main` Branch Role
+- **Personal TriliumDEV Binary Source**: The `main` branch on this fork (`iansherr/Trilium`) holds the complete, consolidated working codebase. It is used directly to build personal **TriliumDEV binaries** (`pnpm desktop:build-binary`).
+- **Merged Local State**: `main` is kept synchronized with upstream Trilium releases while incorporating all local plugin enhancements, UI badges, offline manifest fixes, and procedural unit test suites.
+
+### Upstream PR Status (Filed to `TriliumNext/Trilium`)
 
 | Upstream PR # | Branch Name | Scope / Purpose | Status |
 | :--- | :--- | :--- | :--- |
-| **#10824** | `iansherr:agent/plugin-manager` | Core plugin settings UI, package metadata validation, and operation coordination locking. | Open (Awaiting review) |
-| **#10825** | `iansherr:agent/plugin-build` | Multi-architecture native SQLite binary preservation for cross-platform Docker testing. | Open (Awaiting review) |
-| **#10826** | `iansherr:agent/plugin-dev` | Reproducible developer test harness and script-deployer test overrides. | Open (Awaiting review) |
+| **#10824** | `iansherr:agent/plugin-manager` | Core plugin settings UI, package metadata validation, and operation coordination locking. | Open (Awaiting maintainer approval) |
+| **#10825** | `iansherr:agent/plugin-build` | Multi-architecture native SQLite binary preservation for cross-platform Docker testing. | Open (Awaiting maintainer approval) |
+| **#10826** | `iansherr:agent/plugin-dev` | Reproducible developer test harness and script-deployer test overrides. | Open (Awaiting maintainer approval) |
 
 ---
 
-## 3. Sequential Follow-Up PR Queue Plan
+## 3. Upstream PR Submission Queue & Waiting Plan
 
-To maintain small, easily reviewable pull requests, follow-up features and bug fixes are organized into a strict sequential submission queue. Each PR will be submitted to `TriliumNext/Trilium` after previous foundational PRs are merged.
+### The "Wait for Approval" Directive
+Do NOT submit new PRs upstream to `TriliumNext/Trilium` until PRs #10824, #10825, and #10826 have been reviewed, approved, and merged by the upstream maintainers.
+
+### Queue Sequence
+Once Phase 1 PRs are merged upstream, pull `upstream/main`, rebase the following micro-branches, and submit them in strict sequential order:
 
 ```
 [Phase 1: PRs #10824, #10825, #10826 Merged Upstream]
                          │
                          ▼
 [PR 4: fix/plugins-lifecycle-followups]
-  ↳ Activation preservation across updates & startup reconciliation.
+  ↳ Background activation state preservation across updates & startup reconciliation.
                          │
                          ▼
 [PR 5: fix/plugins-offline-metadata]
-  ↳ Cached manifest fallback for offline & uncataloged extensions.
+  ↳ 1-line fallback to cachedManifest for offline & uncataloged extensions.
                          │
                          ▼
 [PR 6: feat/plugins-ui-enhancements]
-  ↳ Status badges (StateBadge), collapsible archived view, bulk cleanup.
+  ↳ StateBadge status pills (Enabled/Disabled/Broken), collapsible archive card, cleanup.
                          │
                          ▼
 [PR 7: test/plugins-procedural-matrix]
-  ↳ 30-case procedural component & failure matrix test suite.
+  ↳ 30-case procedural UI component & failure matrix Vitest suite.
 ```
 
-### Detailed PR Queue Breakdown
+### Modular Topic Branch Index
 
-#### PR 4: Activation Preservation & Reconciliation
-* **Branch**: `fix/plugins-lifecycle-followups`
-* **Changes**:
-  - `apps/client/src/services/package_activation.ts`: Startup reconciliation logic.
-  - `packages/trilium-core/src/services/hidden_subtree.ts`: Manager seeding and initial activation setup.
-  - `tests/packages/community-packages-contract.test.mjs`: Lifecycle contract tests.
-
-#### PR 5: Offline Metadata & Uncataloged Plugin Setting Support
-* **Branch**: `fix/plugins-offline-metadata`
-* **Changes**:
-  - `apps/client/src/widgets/type_widgets/options/plugins.tsx`: Fallback to `pkg.cachedManifest` in `InstalledPackageDetails` (line 614).
-
-#### PR 6: UI Enhancements & State Badges
-* **Branch**: `feat/plugins-ui-enhancements`
-* **Changes**:
-  - `apps/client/src/widgets/type_widgets/options/components/StateBadge.tsx` & `.css`: Status badge indicators (`Enabled`, `Disabled`, `Broken`).
-  - `apps/client/src/widgets/type_widgets/options/community_packages.tsx`: Catalog render view refinements.
-  - `apps/client/src/translations/en/translation.json`: English translation strings for badge status and archival cleanup.
-
-#### PR 7: Procedural Unit Test Matrix Suite
-* **Branch**: `test/plugins-procedural-matrix`
-* **Changes**:
-  - `apps/client/src/widgets/type_widgets/options/plugins_ui_lifecycle.spec.tsx`: Exhaustive Preact unit test suite testing all entry boxes, option boxes, selectors, toggles, buttons, surfaces, and failure combinations.
+* **`fix/plugins-lifecycle-followups`**: Preserves enabled/disabled activations across updates; automatic drift reconciliation on client startup and manager refresh.
+* **`fix/plugins-offline-metadata`**: Fallback to `pkg.cachedManifest` when catalog lookup returns `undefined` (fixing "manifest unavailable" for offline/local extensions).
+* **`feat/plugins-ui-enhancements`**: Adds `StateBadge.tsx` / `StateBadge.css` status pills and collapsible archived package management.
+* **`test/plugins-procedural-matrix`**: Comprehensive unit test suite (`plugins_ui_lifecycle.spec.tsx`) covering every entry box, option box, selector, toggle switch, action button, and failure matrix.
 
 ---
 
-## 4. Personal TriliumDEV Binary & Local Integration Strategy
+## 4. Continual Upstream Synchronization Workflow
 
-To ensure your local **TriliumDEV binary** contains the complete, up-to-date feature set without prematurely pushing unapproved changes to upstream GitHub:
+To ensure that all plugin feature branches remain compatible with ongoing upstream `TriliumNext/Trilium` releases:
 
-1. **Fork `main` Branch**: Remains clean and aligned with upstream stable releases.
-2. **Local Integration Branch (`integration/community-packages`)**:
-   - Merges all local topic branches (`fix/plugins-lifecycle-followups`, `fix/plugins-offline-metadata`, `feat/plugins-ui-enhancements`, `test/plugins-procedural-matrix`).
-   - Serves as the source branch for compiling local **TriliumDEV** binaries.
-3. **No Unrequested Upstream Pushes**: Topic branches are held locally and pushed upstream sequentially as previous PRs land.
+1. **Fetch Upstream**:
+   ```bash
+   git fetch upstream main
+   ```
+2. **Merge Upstream into Fork `main`**:
+   ```bash
+   git checkout main
+   git merge upstream/main
+   ```
+3. **Resolve Conflicts & Verify**:
+   - Resolve any merge conflicts cleanly.
+   - Run typecheck and test suite verification:
+     ```bash
+     pnpm typecheck
+     pnpm --filter client test plugins
+     ```
+4. **Rebase Local Topic Branches**:
+   - As `main` advances, periodically rebase local micro-branches (`fix/plugins-lifecycle-followups`, etc.) on `main` to verify ongoing compatibility.
+
+---
+
+## 5. TriliumDEV Binary Build Protocol
+
+To compile and package personal desktop binaries from this workspace:
+
+```bash
+# Execute dev binary build helper
+pnpm desktop:build-binary
+
+# Executable outputs to:
+# apps/desktop/out/
+```
