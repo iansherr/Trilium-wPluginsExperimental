@@ -3,7 +3,7 @@
 > [!NOTE]
 > **Trilium Plugin Ecosystem Development Build**  
 > This repository fork is an active development build of Trilium Notes equipped with the complete **Plugin System & Community Packages Manager**. It is maintained specifically to allow building and running custom **TriliumDEV** binaries and developing community plugins while foundational PRs ([#10824](https://github.com/TriliumNext/Trilium/pull/10824), [#10825](https://github.com/TriliumNext/Trilium/pull/10825), [#10826](https://github.com/TriliumNext/Trilium/pull/10826)) and sequential follow-ups are being considered upstream by the TriliumNext team.  
-> For details on the architecture and upstream PR submission queue, see the [Plugin Ecosystem Upstream Strategy](./docs/Developer%20Guide/Developer%20Guide/Concepts/Plugin%20Ecosystem%20Upstream%20Strategy.md).
+> For details on the architecture, state of play, and upstream PR submission queue, see the [Plugin Ecosystem Development Strategy & Agent Playbook](./START_HERE_PLUGIN_ECOSYSTEM_DEVELOPMENT_STRATEGY.md).
 
 ![GitHub Sponsors](https://img.shields.io/github/sponsors/eliandoran) ![LiberaPay patrons](https://img.shields.io/liberapay/patrons/ElianDoran)  
 ![Docker Pulls](https://img.shields.io/docker/pulls/triliumnext/trilium)
