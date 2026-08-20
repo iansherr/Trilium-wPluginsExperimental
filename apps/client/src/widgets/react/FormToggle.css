@@ -1,16 +1,44 @@
 .switch-widget {
-    --switch-track-width: 50px;
+    --switch-track-width: 48px;
     --switch-track-height: 24px;
-    --switch-off-track-background: var(--more-accented-background-color);
-    --switch-on-track-background: var(--main-text-color);
+    --switch-off-track-background: #8e8e93;
+    --switch-on-track-background: #2e7d32;
 
-    --switch-thumb-width: 16px;
-    --switch-thumb-height: 16px;
-    --switch-off-thumb-background: var(--main-background-color);
-    --switch-on-thumb-background: var(--main-background-color);
+    --switch-thumb-width: 18px;
+    --switch-thumb-height: 18px;
+    --switch-off-thumb-background: #ffffff;
+    --switch-on-thumb-background: #ffffff;
 
     display: flex;
     align-items: center;
+    gap: 6px;
+}
+
+.switch-widget .switch-status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 0.7em;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    line-height: 1;
+    user-select: none;
+    transition: all 150ms ease-in-out;
+}
+
+.switch-widget .switch-status-pill.on {
+    background-color: rgba(46, 125, 50, 0.15);
+    color: #2e7d32;
+    border: 1px solid rgba(46, 125, 50, 0.4);
+}
+
+.switch-widget .switch-status-pill.off {
+    background-color: var(--more-accented-background-color, #e0e0e0);
+    color: var(--muted-text-color, #757575);
+    border: 1px solid var(--border-color, #cccccc);
 }
 
 /* The track of the toggle switch */
@@ -18,7 +46,7 @@
 .switch-widget .switch-button {
     display: block;
     position: relative;
-    margin-inline-start: 8px;
+    margin-inline-start: 4px;
     width: var(--switch-track-width);
     height: var(--switch-track-height);
     border-radius: 24px;

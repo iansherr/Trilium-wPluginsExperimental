@@ -591,7 +591,7 @@ export default function PluginsSettings() {
                 {!state.loading && !state.packages.length && <NoItems icon="bx bx-package" text={t("plugins.no_installed")} />}
                 {state.packages.map((pkg) => (
                     <div key={pkg.noteId}>
-                        <OptionsRow name={`community-package-${pkg.noteId}`} label={<span style={{ display: "inline-flex", alignItems: "center", gap: "0.5em" }}><span>{pkg.title}</span><StateBadge enabled={pkg.enabled} /></span>} description={formatInstalledPackageDescription(pkg)}>
+                        <OptionsRow name={`community-package-${pkg.noteId}`} label={pkg.title} description={formatInstalledPackageDescription(pkg)}>
                             <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
                                 <Button
                                     text={pkg.enabled ? t("plugins.disable") : t("plugins.enable")}
