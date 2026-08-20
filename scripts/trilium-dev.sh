@@ -45,7 +45,7 @@ case "$MODE" in
         pnpm install
         echo "[2/4] Running typecheck and plugin unit tests..."
         pnpm typecheck
-        pnpm --filter client test plugins
+        pnpm --filter client exec vitest run plugins
         echo "[3/4] Building client & desktop application..."
         pnpm --filter desktop build
         echo "[4/4] Packaging desktop binary executable..."
@@ -75,7 +75,7 @@ case "$MODE" in
     test|5)
         echo "--> Running TriliumDEV Verification Suites..."
         pnpm typecheck
-        pnpm --filter client test plugins
+        pnpm --filter client exec vitest run plugins
         node --test tests/packages/package-manifest.test.mjs tests/packages/community-packages-contract.test.mjs tests/packages/package-update-e2e.test.mjs
         ;;
     *)
