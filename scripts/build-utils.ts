@@ -77,8 +77,13 @@ export default class BuildHelper {
                 // the require.resolve branch is unreachable, but esbuild
                 // still sees the static string and warns. External marker
                 // suppresses the warning without changing runtime behavior.
-                "@triliumnext/core/src/assets/*"
+                "@triliumnext/core/src/assets/*",
+                "ckeditor5/ckeditor5-content.css",
+                "file-type"
             ],
+            logOverride: {
+                "direct-eval": "silent"
+            },
             metafile: true,
             splitting: false,
             loader: {
