@@ -86,9 +86,9 @@ function buildTriliumDevCompanionDefinition(): HiddenSubtreeItem[] {
         ]
     };
 
-    const widgetSource = `import { Button } from "trilium:preact";
+    const widgetSource = `import { Button, defineWidget } from "trilium:preact";
 
-export default function TriliumDevCompanionWidget() {
+function TriliumDevCompanionWidget() {
     return (
         <div style={{ padding: "0.5em 1em", borderBottom: "1px solid var(--main-border-color)", background: "var(--main-bg-color)", fontSize: "0.85em", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span><strong>🚀 TriliumDEV Companion</strong> (Running TriliumDEV build)</span>
@@ -98,6 +98,11 @@ export default function TriliumDevCompanionWidget() {
         </div>
     );
 }
+
+export default defineWidget({
+    parent: "header",
+    render: TriliumDevCompanionWidget
+});
 `;
 
     return [{
