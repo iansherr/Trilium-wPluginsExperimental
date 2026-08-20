@@ -215,3 +215,18 @@ The **TriliumDEV Companion Plugin** runs directly inside Trilium Notes as a nati
    git tag v0.104.1-dev.1 && git push origin v0.104.1-dev.1
    ```
    * **Result**: GitHub Actions builds the packaged desktop application (`.dmg`, `.zip`, `.exe`) and attaches the executable binary assets directly to the GitHub Release page.
+
+---
+
+## 10. Resilience, Edge Cases, & Security Audit
+
+The Plugin Ecosystem includes explicit safeguards for edge cases and unexpected runtime failures:
+
+| Scenario / Edge Case | Safeguard Implementation | Status |
+| :--- | :--- | :--- |
+| **Offline / Network Outage** | Cached manifest fallback (`|| pkg.cachedManifest`) in `plugins.tsx` line 614 enables package details and settings to load when offline. | **Verified** |
+| **Interrupted App Shutdown** | Intermediate transaction notes are tagged with `#packageTransaction`. Startup reconciliation (`recoverInterruptedTransactions()`) cleans up orphaned notes. | **Verified** |
+| **Settings Reset on Upgrade** | `backupPackageConfiguration()` stores a JSON snapshot (`#packageConfigBackup`). `restorePackageSettings()` re-applies user settings (`packageSetting:*`) on upgrade. | **Verified** |
+| **Activation Drift** | `package_activation.ts` detects drift between `packageEnabled: "true"` and artifact notes, stripping inert `disabled:` prefixes automatically on client startup. | **Verified** |
+| **Concurrency Collisions** | Process-local lease lock (`package_operation_lock`) on the server prevents multi-tab or concurrent client package modification corruption. | **Verified** |
+| **Unsafe Sources / SRI** | Requires HTTPS for non-localhost sources, enforces download host whitelisting (`packageAllowedSourceHosts`), and validates SHA-256 SRI hashes. | **Verified** |
