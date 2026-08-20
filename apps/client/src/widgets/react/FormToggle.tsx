@@ -35,9 +35,6 @@ export default function FormToggle({ currentValue, helpPage, switchOnName, switc
         <div className="switch-widget">
             {hasLabel && <span className="switch-name">{ currentValue ? switchOffName : switchOnName }</span>}
             { afterName }
-            <span className={clsx("switch-status-pill", currentValue ? "on" : "off")}>
-                {currentValue ? "ON" : "OFF"}
-            </span>
 
             <label>
                 <div
