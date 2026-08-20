@@ -175,3 +175,40 @@ To make managing and updating local TriliumDEV builds effortless, the **TriliumD
   2. Queries GitHub API: `https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/commits/main`.
   3. Displays a non-intrusive notification pill in Trilium when new commits or builds exist on `iansherr/Trilium-wPluginsExperimental`.
   4. Provides a 1-click link to trigger local build (`pnpm desktop:build-binary`) or download latest release artifacts.
+
+---
+
+## 9. Development Iteration & Release Management Guide
+
+### A. How Code Changes Move into the Live App
+
+You do **not** need to rebuild the standalone binary executable every time you edit code during active development:
+
+1. **Active Live Development (Hot Reloading)**:
+   ```bash
+   pnpm desktop:start
+   ```
+   * **Behavior**: Launches Electron in development mode with Vite hot-reloading. Any change to TypeScript, React components, CSS, or backend services instantly updates in the running app without rebuilding binaries.
+2. **Local Production Test Run**:
+   ```bash
+   pnpm desktop:start-prod
+   ```
+   * **Behavior**: Compiles the production bundle and runs it immediately in Node/Electron to test real production behavior without packaging installer binaries.
+3. **Executable Binary Rebuild**:
+   ```bash
+   pnpm desktop:build-binary
+   ```
+   * **Behavior**: Re-runs typecheck and Vitest specs, compiles production assets, and packages the standalone executable binary in `apps/desktop/out/`.
+
+### B. Release Tagging Strategy (Avoiding Upstream Version Conflicts)
+
+When creating release tags for TriliumDEV builds to share pre-packaged binaries with team members or testers:
+
+1. **Custom Tag Namespace**: Always append `-dev.X` or `-dev-vX` to your version tags (e.g. `v0.104.1-dev.1`, `v0.104.1-dev.2`).
+2. **Upstream Isolation**: Adding `-dev.X` ensures your fork's releases never collide with upstream `TriliumNext/Trilium` official tags (`v0.104.1`).
+3. **Automated Binary Release Upload**:
+   ```bash
+   git tag v0.104.1-dev.1
+   git push origin v0.104.1-dev.1
+   ```
+   * **Result**: GitHub Actions builds the packaged desktop application (`.dmg`, `.zip`, `.exe`) and attaches the executable binary assets directly to the GitHub Release page for download.
