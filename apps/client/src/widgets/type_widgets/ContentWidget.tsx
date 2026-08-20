@@ -8,7 +8,7 @@ import AdvancedSettings from "./options/advanced";
 import AppearanceSettings from "./options/appearance";
 import BackupSettings from "./options/backup";
 import CodeNoteSettings from "./options/code_notes";
-import ContentManagerSettings from "./options/content_manager";
+import ActiveContentSettings from "./options/active_content";
 import DatabaseSettings from "./options/database";
 import DesktopSettings from "./options/desktop";
 import EtapiSettings from "./options/etapi";
@@ -34,7 +34,7 @@ export const CONTENT_WIDGETS: Record<OptionPages | "_backendLog" | "_spaceUsage"
     _optionsShortcuts: ShortcutSettings,
     _optionsTextNotes: TextNoteSettings,
     _optionsCodeNotes: CodeNoteSettings,
-    _optionsContentManager: ContentManagerSettings,
+    _optionsContentManager: ActiveContentSettings,
     _optionsMedia: MediaSettings,
     _optionsSpellcheck: SpellcheckSettings,
     _optionsPassword: PasswordSettings,
