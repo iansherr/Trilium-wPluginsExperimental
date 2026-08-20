@@ -65,6 +65,69 @@ function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
     }];
 }
 
+export const TRILIUMDEV_COMPANION_NOTE_ID = "_sd_triliumdev-companion_manifest";
+export const TRILIUMDEV_COMPANION_WIDGET_ID = "_sd_triliumdev-companion_widget";
+
+function buildTriliumDevCompanionDefinition(): HiddenSubtreeItem[] {
+    const manifest = {
+        id: "iansherr/triliumdev-companion",
+        name: "TriliumDEV Companion",
+        version: "1.0.0",
+        description: "Developer companion for TriliumDEV binary builds, update detection, and hot-reload watch control.",
+        permissions: ["network"],
+        artifacts: [
+            { id: "companion-widget", type: "widget", activation: "startup" }
+        ],
+        settings: [
+            { key: "localSourceDirectory", label: "Local Source Directory", type: "string", default: "" }
+        ],
+        surfaces: [
+            { id: "dev-settings", title: "TriliumDEV Settings", type: "settings", settingKeys: ["localSourceDirectory"] }
+        ]
+    };
+
+    const widgetSource = `
+import { React } from "preact";
+
+export default function TriliumDevCompanionWidget() {
+    return (
+        <div style={{ padding: "0.5em 1em", borderBottom: "1px solid var(--main-border-color)", background: "var(--main-bg-color)", fontSize: "0.85em", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span><strong>🚀 TriliumDEV Companion</strong> (Running TriliumDEV build)</span>
+            <span style={{ display: "flex", gap: "0.5em" }}>
+                <button className="btn btn-sm btn-primary" onClick={() => window.open("https://github.com/iansherr/Trilium-wPluginsExperimental", "_blank")}>GitHub Repo</button>
+            </span>
+        </div>
+    );
+}
+`;
+
+    return [{
+        id: TRILIUMDEV_COMPANION_WIDGET_ID,
+        title: "TriliumDEV Companion Widget",
+        type: "code",
+        mime: "text/jsx",
+        content: widgetSource,
+        enforceBranches: true,
+        attributes: [
+            { type: "label", name: "packageOwner", value: "iansherr/triliumdev-companion" },
+            { type: "label", name: "packageArtifact", value: "companion-widget" },
+            { type: "label", name: "widget" }
+        ]
+    }, {
+        id: TRILIUMDEV_COMPANION_NOTE_ID,
+        title: "TriliumDEV Companion",
+        type: "doc",
+        enforceBranches: true,
+        attributes: [
+            { type: "label", name: "packageOwner", value: "iansherr/triliumdev-companion" },
+            { type: "label", name: "packageVersion", value: "1.0.0" },
+            { type: "label", name: "packageEnabled", value: "true" },
+            { type: "label", name: "packageArtifact", value: "manifest" },
+            { type: "label", name: "packageManifest", value: JSON.stringify(manifest) }
+        ]
+    }];
+}
+
 function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenSubtreeItem {
     const launchbarConfig = buildLaunchBarConfig();
 
@@ -190,6 +253,7 @@ function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenS
                 icon: "bx-book"
             },
             ...buildCommunityPackagesManagerDefinition(),
+            ...buildTriliumDevCompanionDefinition(),
             {
                 // place for user scripts hidden stuff (scripts should not create notes directly under hidden root)
                 id: "_userHidden",
