@@ -86,15 +86,14 @@ function buildTriliumDevCompanionDefinition(): HiddenSubtreeItem[] {
         ]
     };
 
-    const widgetSource = `
-import { React } from "preact";
+    const widgetSource = `import { Button } from "trilium:preact";
 
 export default function TriliumDevCompanionWidget() {
     return (
         <div style={{ padding: "0.5em 1em", borderBottom: "1px solid var(--main-border-color)", background: "var(--main-bg-color)", fontSize: "0.85em", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span><strong>🚀 TriliumDEV Companion</strong> (Running TriliumDEV build)</span>
             <span style={{ display: "flex", gap: "0.5em" }}>
-                <button className="btn btn-sm btn-primary" onClick={() => window.open("https://github.com/iansherr/Trilium-wPluginsExperimental", "_blank")}>GitHub Repo</button>
+                <Button kind="primary" size="micro" onClick={() => window.open("https://github.com/iansherr/Trilium-wPluginsExperimental", "_blank")}>GitHub Repo</Button>
             </span>
         </div>
     );
