@@ -9,6 +9,7 @@ import AppearanceSettings from "./options/appearance";
 import BackupSettings from "./options/backup";
 import CodeNoteSettings from "./options/code_notes";
 import ContentManagerSettings from "./options/content_manager";
+import DatabaseSettings from "./options/database";
 import DesktopSettings from "./options/desktop";
 import EtapiSettings from "./options/etapi";
 import InternationalizationOptions from "./options/i18n";
@@ -22,11 +23,13 @@ import ShortcutSettings from "./options/shortcuts";
 import SpellcheckSettings from "./options/spellcheck";
 import SyncOptions from "./options/sync";
 import TextNoteSettings from "./options/text_notes";
+import SpaceUsage from "./space_usage";
 import { TypeWidgetProps } from "./type_widget";
 
-export type OptionPages = "_optionsAppearance" | "_optionsShortcuts" | "_optionsTextNotes" | "_optionsCodeNotes" | "_optionsContentManager" | "_optionsMedia" | "_optionsSpellcheck" | "_optionsPassword" | "_optionsEtapi" | "_optionsBackup" | "_optionsSync" | "_optionsDesktop" | "_optionsOther" | "_optionsLocalization" | "_optionsSecurity" | "_optionsAdvanced" | "_optionsLlm" | "_optionsPlugins";
+export type OptionPages = "_optionsAppearance" | "_optionsShortcuts" | "_optionsTextNotes" | "_optionsCodeNotes" | "_optionsContentManager" | "_optionsMedia" | "_optionsSpellcheck" | "_optionsPassword" | "_optionsEtapi" | "_optionsBackup" | "_optionsDatabase" | "_optionsSync" | "_optionsDesktop" | "_optionsOther" | "_optionsLocalization" | "_optionsSecurity" | "_optionsAdvanced" | "_optionsLlm" | "_optionsPlugins";
 
-const CONTENT_WIDGETS: Record<OptionPages | "_backendLog", (props: TypeWidgetProps) => JSX.Element> = {
+/** The page behind each of these notes. Exported for the options search, which renders them all. */
+export const CONTENT_WIDGETS: Record<OptionPages | "_backendLog" | "_spaceUsage", (props: TypeWidgetProps) => JSX.Element> = {
     _optionsAppearance: AppearanceSettings,
     _optionsShortcuts: ShortcutSettings,
     _optionsTextNotes: TextNoteSettings,
@@ -37,6 +40,7 @@ const CONTENT_WIDGETS: Record<OptionPages | "_backendLog", (props: TypeWidgetPro
     _optionsPassword: PasswordSettings,
     _optionsEtapi: EtapiSettings,
     _optionsBackup: BackupSettings,
+    _optionsDatabase: DatabaseSettings,
     _optionsSync: SyncOptions,
     _optionsDesktop: DesktopSettings,
     _optionsOther: OtherSettings,
@@ -45,7 +49,8 @@ const CONTENT_WIDGETS: Record<OptionPages | "_backendLog", (props: TypeWidgetPro
     _optionsAdvanced: AdvancedSettings,
     _optionsLlm: LlmSettings,
     _optionsPlugins: PluginsSettings,
-    _backendLog: BackendLog
+    _backendLog: BackendLog,
+    _spaceUsage: SpaceUsage
 };
 
 /**

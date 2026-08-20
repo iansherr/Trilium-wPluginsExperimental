@@ -308,6 +308,14 @@ describe("preload script", () => {
             });
         });
 
+        it("showItemInFolder sends correct IPC message", () => {
+            shell().showItemInFolder("/tmp/test.txt");
+            expect(ipcRendererSent).toContainEqual({
+                channel: "show-item-in-folder",
+                args: ["/tmp/test.txt"]
+            });
+        });
+
         it("openFileUrl invokes correct IPC channel", async () => {
             await shell().openFileUrl("file:///tmp/test.txt");
             expect(ipcRendererInvoked).toContainEqual({
@@ -697,6 +705,11 @@ describe("preload script", () => {
         it("pickDirectory may be called without a starting location", async () => {
             await dialog().pickDirectory();
             expect(ipcRendererInvoked).toContainEqual({ channel: "dialog-pick-directory", args: [undefined] });
+        });
+
+        it("confirmStartOver invokes its IPC channel, passing nothing it could steer", async () => {
+            await dialog().confirmStartOver();
+            expect(ipcRendererInvoked).toContainEqual({ channel: "dialog-confirm-start-over", args: [] });
         });
     });
 

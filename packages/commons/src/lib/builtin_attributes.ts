@@ -183,6 +183,8 @@ const BUILTIN_ATTRIBUTES = [
     { type: "label", name: "snippetDescription", valueType: "text", hasUserValue: true },
     { type: "label", name: "textSnippet", valueType: "boolean" },
     { type: "label", name: "textSnippetDescription", valueType: "text", hasUserValue: true },
+    // Offers the note's content as an instruction in the text editor's AI assistant menu.
+    { type: "label", name: "aiQuickAction", valueType: "boolean" },
     // Forces the table of contents open or shut; without the label the heading count decides.
     { type: "label", name: "toc", valueType: "select", selectOptions: [ "show", "hide" ] },
     { type: "label", name: "color", valueType: "color" },
@@ -336,6 +338,8 @@ const BUILTIN_ATTRIBUTES = [
     { type: "relation", name: "runOnAttributeCreation", isDangerous: true },
     { type: "relation", name: "runOnAttributeChange", isDangerous: true },
     { type: "relation", name: "template" },
+    // Set on a template: where a note created from it goes when no parent is picked explicitly.
+    { type: "relation", name: "template:newNoteDefaultParent" },
     { type: "relation", name: "inherit" },
     // Set on a journal root, to be applied as `~template` on each note the period generates.
     { type: "relation", name: "dateTemplate" },

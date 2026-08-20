@@ -31,7 +31,6 @@ import PdfPages from "./pdf/PdfPages";
 import RightPanelWidget, { CollapsibleWidgets, ExpandWidgetRequest, ExpandWidgetRequests } from "./RightPanelWidget";
 import RightPanePeekButton from "./RightPanePeekButton";
 import RightPaneTabs, { RIGHT_PANE_TABS, RightPaneTabDefinition, RightPaneTabId } from "./RightPaneTabs";
-import SimilarNotes from "./SimilarNotes";
 import TableOfContents from "./TableOfContents";
 
 const MIN_WIDTH_PERCENT = 5;
@@ -75,7 +74,7 @@ export default function RightPanelContainer({ widgetsByParent }: { widgetsByPare
     useTriliumEvent("toggleRightPane", toggleDocked);
     useTriliumEvent("peekRightPane", togglePeek);
 
-    // An entry point aimed at one tab (the chat launcher, the status bar's connection badges): it opens
+    // An entry point aimed at one tab (the chat launcher, the note map's keyboard action): it opens
     // the pane on that tab, brings it to the front if the pane is already open on another one, and puts
     // it away again when it is the tab on show — see reduceTabSelection for what that amounts to.
     // `peek` opens it as a glance instead of a dock; `expandWidgetId` opens the one widget the entry
@@ -113,11 +112,8 @@ export default function RightPanelContainer({ widgetsByParent }: { widgetsByPare
 
     // Outside-press / Esc *soft*-dismisses the peek: it hides but stays mounted, so re-peeking is
     // instant and preserves widget state. The × button and the docked toggle hard-close (unmount).
-    // A `right-pane-peek-source` control (the status bar's connection badges) peeks the pane itself
-    // (see selectRightPaneTab above), so dismissing on its press would only close the pane for the
-    // click that follows to reopen it.
     usePeekDismiss(mode === "peek", dismiss, {
-        keepOpenSelector: "#right-pane, .right-pane-peek-button, .right-pane-peek-source",
+        keepOpenSelector: "#right-pane, .right-pane-peek-button",
         focusSelector: ".right-pane-peek-button"
     });
 
@@ -228,18 +224,13 @@ function useItems(rightPaneVisible: boolean, widgetsByParent: WidgetsByParent): 
         },
         {
             // Where the note sits in the tree, above what points at it: placements first, then the
-            // backlinks below take whatever height is left.
+            // backlinks below.
             el: <NotePaths />,
             enabled: !!note,
             tab: "connections"
         },
         {
             el: <Backlinks />,
-            enabled: !!note,
-            tab: "connections"
-        },
-        {
-            el: <SimilarNotes />,
             enabled: !!note,
             tab: "connections"
         },

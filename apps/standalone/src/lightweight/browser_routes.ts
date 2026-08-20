@@ -4,7 +4,7 @@
  */
 
 import { BootstrapDefinition } from '@triliumnext/commons';
-import { entity_changes, getContext, getPlatform, getSharedBootstrapItems, getSql, routes, sql_init } from '@triliumnext/core';
+import { checkIntegrity, consistency_checks, entity_changes, getContext, getPlatform, getSharedBootstrapItems, getSql, routes, sql_init } from '@triliumnext/core';
 import llmRoute from '@triliumnext/core/src/routes/api/llm.js';
 
 import packageJson from '../../package.json' with { type: 'json' };
@@ -288,6 +288,10 @@ export function registerRoutes(router: BrowserRouter): void {
         checkApiAuth: noopMiddleware,
         checkApiAuthOrElectron: noopMiddleware,
         checkAppNotInitialized,
+        // Nothing reaches this build but the page it is part of: there is no port, no session and
+        // nobody else who could ask. The wizard's password gate exists for instances served over a
+        // network, which this one never is.
+        checkSetupAuth: noopMiddleware,
         checkCredentials: noopMiddleware,
         loginRateLimiter: noopMiddleware,
         uploadMiddlewareWithErrorHandling: noopMiddleware,
@@ -308,6 +312,23 @@ export function registerRoutes(router: BrowserRouter): void {
     apiRoute('post', '/api/llm-chat/stream-start', llmRoute.startChatStream);
     apiRoute('post', '/api/llm-chat/stream-abort', llmRoute.abortChatStream);
 
+    // Keeping the database in order, which the server answers from its own routes (see the server's
+    // `routes.ts`). Registered here rather than in the shared table because only two of the three
+    // belong in this runtime: compacting rebuilds the database through the temporary store, which
+    // this build keeps in memory, so it would ask the browser for the size of the database again at
+    // the moment the user is short of room.
+    apiRoute("get", "/api/database/check-integrity", () => checkIntegrity());
+    // Awaited rather than left running, and without a transaction of its own: the checks write as
+    // they go and reload becca at the end, which no other request may be interleaved with. The
+    // server lets its own run on past the response, having no such connection to protect.
+    createAsyncRoute(router, { transactional: false })(
+        "post",
+        "/api/database/find-and-fix-consistency-issues",
+        [],
+        () => consistency_checks.runOnDemandChecks(true),
+        apiResultHandler
+    );
+
     // Dummy routes for compatibility.
     apiRoute("get", "/api/script/widgets", () => []);
     apiRoute("get", "/api/script/startup", () => []);
@@ -321,6 +342,11 @@ function bootstrapRoute(req: { query: Record<string, string | undefined> }): Boo
     const isDbInitialized = sql_init.isDbInitialized();
     const commonItems = {
         ...getSharedBootstrapItems(assetPath, isDbInitialized),
+        // The setup wizard's password gate exists for instances served over a network. This one is
+        // served to nobody, so asking would be asking for nothing — and `checkSetupAuth` here is a
+        // no-op, which would leave the screen holding out for an answer it never checks.
+        setupAuthRequired: false,
+        setupSecondFactorRequired: false,
         isDev: import.meta.env.DEV,
         isStandalone: true,
         // A window torn off into its own popup carries `?extraWindow`, same as on the server. It has

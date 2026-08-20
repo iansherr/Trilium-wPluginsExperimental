@@ -60,7 +60,6 @@ export const DESKTOP_FLOATING_BUTTONS: FloatingButtonsList = [
     OpenTriliumApiDocsButton,
     OpenElectronApiDocsButton,
     SaveToNoteButton,
-    RelationMapButtons,
     CopyImageReferenceButton,
     ExportImageButtons,
     ExportSpreadsheetButton,
@@ -249,39 +248,6 @@ export function buildSaveSqlToNoteHandler(note: FNote) {
             await appContext.tabManager.getActiveContext()?.setNote(notePath);
         }
     };
-}
-
-function RelationMapButtons({ note, isDefaultViewMode, triggerEvent }: FloatingButtonContext) {
-    const isEnabled = (note.type === "relationMap" && isDefaultViewMode);
-    return isEnabled && (
-        <>
-            <FloatingButton
-                icon="bx bx-folder-plus"
-                text={t("relation_map_buttons.create_child_note_title")}
-                onClick={() => triggerEvent("relationMapCreateChildNote")}
-            />
-
-            <FloatingButton
-                icon="bx bx-crop"
-                text={t("relation_map_buttons.reset_pan_zoom_title")}
-                onClick={() => triggerEvent("relationMapResetPanZoom")}
-            />
-
-            <div className="btn-group">
-                <FloatingButton
-                    icon="bx bx-zoom-in"
-                    text={t("relation_map_buttons.zoom_in_title")}
-                    onClick={() => triggerEvent("relationMapResetZoomIn")}
-                />
-
-                <FloatingButton
-                    icon="bx bx-zoom-out"
-                    text={t("relation_map_buttons.zoom_out_title")}
-                    onClick={() => triggerEvent("relationMapResetZoomOut")}
-                />
-            </div>
-        </>
-    );
 }
 
 function CopyImageReferenceButton({ note, isDefaultViewMode }: FloatingButtonContext) {
@@ -473,6 +439,21 @@ export function BacklinksList({ note }: { note: FNote }) {
             )}
         </li>
     ));
+}
+
+/**
+ * {@link BacklinksList} in the markup its styling hangs off (see Backlinks.css), for the places that
+ * frame the list rather than build it: the sidebar's card, the mobile note menu's modal, the status
+ * bar's dropdown. The floating button keeps its own container, being a popup it also sizes by hand.
+ */
+export function BacklinksWidget({ note }: { note: FNote }) {
+    return (
+        <div class="tn-backlinks-widget">
+            <ul class="backlinks-items">
+                <BacklinksList note={note} />
+            </ul>
+        </div>
+    );
 }
 
 function needsRefresh(note: FNote, loadResults: LoadResults) {

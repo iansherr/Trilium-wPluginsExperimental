@@ -69,7 +69,8 @@
     "toggle-archived-notes": "ノートツリーでアーカイブされたノートを表示 / 非表示にする",
     "peek-right-pane": "右ペインを、コンテンツの上にフローティング表示し、フォーカスが外れると閉じる一時的なパネルとしてプレビューします",
     "show-deleted-notes": "\"削除されたノート\" ダイアログを表示",
-    "show-shortcut-hints": "フォーカスされているウィジェットのキーボードショートカットを表示"
+    "show-shortcut-hints": "フォーカスされているウィジェットのキーボードショートカットを表示",
+    "show-space-usage": "\"スペース使用状況\" ページを開く"
   },
   "keyboard_action_names": {
     "back-in-note-history": "ノートの履歴を戻る",
@@ -171,7 +172,8 @@
     "toggle-archived-notes": "アーカイブ済みノートの表示の切り替え",
     "peek-right-pane": "右ペインをピーク表示",
     "show-deleted-notes": "削除されたノートを表示",
-    "show-shortcut-hints": "ショートカットのヒントを表示"
+    "show-shortcut-hints": "ショートカットのヒントを表示",
+    "show-space-usage": "スペース使用状況を表示"
   },
   "login": {
     "title": "ログイン",
@@ -296,7 +298,9 @@
     "desktop-title": "デスクトップ",
     "deleted-notes-title": "削除されたノート",
     "color-scheme-switcher-title": "配色の切り替え",
-    "content-manager-title": "コンテンツマネージャー"
+    "content-manager-title": "コンテンツマネージャー",
+    "database-title": "データベース",
+    "space-usage-title": "スペース使用状況"
   },
   "notes": {
     "new-note": "新しいノート",
@@ -379,7 +383,8 @@
     "background": "背景",
     "markdown-snippet": "マークダウンスニペット",
     "code-snippet": "コードスニペット",
-    "dashboard": "ダッシュボード"
+    "dashboard": "ダッシュボード",
+    "ai-quick-action": "AI クイックアクション"
   },
   "share_404": {
     "title": "該当なし",
@@ -509,5 +514,16 @@
     "pick_backup_title": "復元するバックアップを選択",
     "backup_filter": "Trilium バックアップ (*.db, *.tnbackup)",
     "any_file_filter": "すべてのファイル"
+  },
+  "setup-window": {
+    "getting-started": "はじめに - Trilium Notes",
+    "start-over": "最初からやり直す - Trilium Notes"
+  },
+  "start-over-dialog": {
+    "title": "最初からやり直す",
+    "message": "Trilium を再起動してセットアップ画面に戻りますか？",
+    "detail": "まず現在のナレッジベースのバックアップを作成するよう案内されます。新しいナレッジベースの作成、バックアップの復元、別デバイスからの同期を選ぶまでは、何も削除されません。\n\nスクリプトや見覚えのないノートから指示された場合は、続行しないでください。",
+    "cancel": "キャンセル",
+    "confirm": "再起動して最初からやり直す"
   }
 }

@@ -364,6 +364,11 @@ button.custom-title-bar-button {
     border-color: var(--button-border-color);
 }
 
+/* An action that takes something away, marked as such the way destructive menu items are. */
+.icon-action.destructive-action-icon {
+    color: var(--dropdown-item-icon-destructive-color);
+}
+
 .icon-action.disabled {
     color: var(--muted-text-color) !important;
     cursor: not-allowed;
@@ -451,6 +456,13 @@ button kbd {
     --bs-dropdown-link-active-bg: var(--active-item-background-color) !important;
 }
 
+/* A portaled menu (the Dropdown's `portalToBody`) stacks in the root context, so it has to clear a
+   modal (1055) and a stacked quick-edit popup (1100), and stay under the prompts (2000) it can
+   summon. */
+body > .tn-dropdown-portal > .dropdown-menu {
+    --bs-dropdown-zindex: 1200;
+}
+
 body.desktop .dropdown-menu,
 body.desktop .tabulator-popup-container,
 :root .excalidraw .dropdown-menu .dropdown-menu-container,
@@ -498,7 +510,7 @@ body.desktop .tabulator-popup-container,
     opacity: 1;
 }
 
-.dropdown-item:hover:not(.disabled, .dropdown-container-item),
+.dropdown-item:hover:not(.disabled, .active, .dropdown-container-item),
 .tabulator-menu-item:hover,
 :root .excalidraw .context-menu .context-menu-item:hover {
     color: var(--hover-item-text-color) !important;
@@ -664,7 +676,7 @@ button.btn-sm {
     color: var(--left-pane-text-color);
 }
 
-.ck.ck-block-toolbar-button {
+.ck.ck-button.ck-block-toolbar-button {
     transform: translateX(7px);
     color: var(--muted-text-color);
     background-color: var(--main-background-color);
@@ -672,6 +684,8 @@ button.btn-sm {
     min-width: 0;
     padding: 0;
     z-index: 1000;
+    translate: -40% 0;
+    padding: 0;
 }
 
 body[dir=rtl] .ck.ck-block-toolbar-button {
@@ -1093,13 +1107,16 @@ code {
 
 .ck-content code:not(pre code) {
     padding: 0.1em 0.35em;
-    border: 1px solid var(--inline-code-border-color);
     border-radius: 5px;
     background-color: var(--inline-code-background-color);
     /* Monospace runs visually larger than the surrounding prose at the same nominal size. */
-    font-size: 0.9em;
+    font-size: 0.8em;
     /* A long path or identifier must wrap rather than push the paragraph past the note width. */
     overflow-wrap: break-word;
+
+    &.ck-code_selected {
+        background-color: var(--inline-code-hover-background-color) !important;
+    }
 }
 
 .animated {
@@ -1685,7 +1702,10 @@ body.desktop li.dropdown-submenu:hover > ul.dropdown-menu {
     top: 0;
     inset-inline-start: calc(100% - 2px); /* -2px, otherwise there's a small gap between menu and submenu where the hover can disappear */
     margin-top: -10px;
-    /* to make submenu scrollable https://github.com/zadam/trilium/issues/3136 */
+}
+
+/* to make submenu scrollable https://github.com/zadam/trilium/issues/3136 */
+.dropdown-submenu > .dropdown-menu:not(:has(.dropdown-submenu)) {
     max-height: 600px;
     overflow: auto;
 }
@@ -2303,13 +2323,16 @@ body.electron.platform-darwin:not(.native-titlebar) .tab-row-container {
  * Only macOS reserves the traffic lights' room with this spacer; every other platform uses the
  * container padding below, which handles controls on either side. Keeping the spacer at zero
  * elsewhere avoids reserving `titlebar-area-x` twice on a Linux desktop with left-hand controls.
+ *
+ * `titlebar-area-x` is where the traffic lights actually end, as the platform measures it, and it
+ * is reported in CSS pixels — so it already accounts both for the width the running macOS gives
+ * the cluster and for the page zoom, which the system-drawn buttons do not follow. A fixed reserve
+ * cannot do either: it shrinks with the page while the buttons stay put, so zooming out slid them
+ * over whatever the tab bar puts first (the pane toggle). It resolves to zero when there are no
+ * controls to clear, i.e. with a native title bar or in full screen.
  */
 body.electron.platform-darwin #tab-row-left-spacer {
     width: env(titlebar-area-x);
-}
-
-body.electron.platform-darwin:not(.native-titlebar):not(.full-screen) #tab-row-left-spacer {
-    width: 80px;
 }
 
 /*
@@ -3136,6 +3159,8 @@ iframe.print-iframe {
        variant — this makes both variants share one deterministic geometry. */
     position: absolute;
     top: calc((1lh - var(--_checkbox-size)) / 2);
+    inset-inline-start: -25px;
+    inset-inline-end: auto;
     /* `1lh` must resolve against the text's line height, not the UA form-control
        font, and the UA's 3px checkbox margins would offset the absolute position.
        (Bootstrap's reboot happens to do both, but don't depend on it.) */
