@@ -18,6 +18,7 @@
     "server:start-prod": "pnpm run --filter server start-prod",
     "desktop:start": "pnpm run --filter desktop dev",
     "desktop:build": "pnpm run --filter desktop build",
+    "desktop:build-binary": "bash ./scripts/build-dev-binary.sh",
     "desktop:start-prod": "pnpm run --filter desktop start-prod",
     "standalone:start": "pnpm run --filter standalone dev",
     "standalone:build": "pnpm run --filter standalone build",
