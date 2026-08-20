@@ -122,8 +122,15 @@ To ensure all plugin features and topic branches remain compatible with ongoing 
      pnpm typecheck
      pnpm --filter client test plugins
      ```
-5. **Rebase Topic Branches**:
-   - Periodically rebase local topic branches onto updated `main` to ensure ongoing zero-conflict compatibility.
+5. **Rebase Topic Branches onto Main**:
+   - Rebase each topic branch onto updated `main` to ensure zero merge conflicts before upstream submission:
+     ```bash
+     git checkout fix/plugins-lifecycle-followups && git rebase main
+     git checkout fix/plugins-offline-metadata && git rebase main
+     git checkout feat/plugins-ui-enhancements && git rebase main
+     git checkout test/plugins-procedural-matrix && git rebase main
+     git checkout main
+     ```
 
 ---
 
