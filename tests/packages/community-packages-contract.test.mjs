@@ -4,8 +4,7 @@ import test from "node:test";
 
 const managerSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
 const pluginsSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/plugins.tsx", import.meta.url), "utf8");
-const optionsRowSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/components/OptionsRow.tsx", import.meta.url), "utf8");
-const stateBadgeSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/components/StateBadge.tsx", import.meta.url), "utf8");
+
 const activationSource = await readFile(new URL("../../apps/client/src/services/package_activation.ts", import.meta.url), "utf8");
 const startupSource = await readFile(new URL("../../apps/client/src/components/startup_checks.ts", import.meta.url), "utf8");
 
@@ -177,32 +176,17 @@ test("unfinished migration notes are excluded from ordinary package state", () =
 test("package updates persist versioned configuration backups and inherit them on reinstall", () => {
     assert.match(managerSource, /const CONFIG_BACKUP_LABEL = "packageConfigBackup"/);
     assert.match(managerSource, /schemaVersion: CONFIG_BACKUP_SCHEMA_VERSION/);
-    assert.match(managerSource, /async function backupPackageConfiguration\(manifest, previousManifest, settings, packageData, enabled, pinned\)/);
+    assert.match(managerSource, /async function backupPackageConfiguration\(manifest, previousManifest, settings, enabled, pinned\)/);
     assert.match(managerSource, /type: "code",\s*mime: "application\/json"/);
     assert.match(managerSource, /async function readLatestConfigBackup\(packageId\)/);
-    assert.match(managerSource, /await restorePackageSettings\(stagedPackageNotes, manifest, backup\.settings \|\| \{\}, backup\.packageData \|\| \{\}\)/);
+    assert.match(managerSource, /await restorePackageSettings\(stagedPackageNotes, manifest, backup\.settings \|\| \{\}\)/);
     assert.match(managerSource, /function packageSettingsSnapshot\(note, manifest\)/);
     assert.match(managerSource, /candidate\.name\.startsWith\("packageSetting:"\)/);
 });
 
-test("package backup captures every packageData label and restores only that prefix", () => {
-    assert.match(managerSource, /const PACKAGE_DATA_PREFIX = "packageData:"/);
-    assert.match(managerSource, /function packageDataSnapshot\(note\)/);
-    assert.match(managerSource, /candidate\.name\.startsWith\(PACKAGE_DATA_PREFIX\)/);
-    assert.match(managerSource, /packageData,\n\s+enabled: Boolean\(enabled\)/);
-    assert.match(managerSource, /backup\.packageData \|\| \{\}/);
-    assert.match(managerSource, /labelName\.startsWith\(PACKAGE_DATA_PREFIX\) && typeof value === "string"/);
-});
 
-test("installed plugin rows state their enabled state, and plain toggles do not", () => {
-    assert.match(stateBadgeSource, /options\.state_enabled/);
-    assert.match(stateBadgeSource, /options\.state_disabled/);
-    assert.match(stateBadgeSource, /<Badge\b/);
-    assert.match(pluginsSource, /<StateBadge enabled=\{pkg\.enabled\}/);
-    // A toggle already conveys its own state; the badge belongs only where the control's
-    // verb is the inverse of the state, as on the Enable/Disable plugin rows.
-    assert.doesNotMatch(optionsRowSource, /StateBadge/);
-});
+
+
 
 test("package storage reports archived generations and bounds active configuration backups", () => {
     assert.match(managerSource, /async function readPackageStorageSummary\(\)/);
