@@ -46,8 +46,8 @@ To understand how the Plugin System operates under the hood:
 ## 3. Current State of Play
 
 ### Fork `main` Branch Role
-- **Personal TriliumDEV Binary Source**: The `main` branch on this fork (`iansherr/Trilium-wPluginsExperimental`) holds the complete, consolidated working codebase containing all plugin features, UI enhancements, offline metadata fixes, and test suites.
-- **Build Executable**: Used to compile custom personal **TriliumDEV binaries** via `pnpm desktop:build-binary`.
+- **Consolidated Personal TriliumDEV Binary Source**: The `main` branch on this fork (`iansherr/Trilium-wPluginsExperimental`) contains **ALL plugin features, UI enhancements, status badges, offline metadata fixes, built-in TriliumDEV Companion plugin, and procedural test matrices**.
+- **Executable Binary Source**: Used to compile personal **TriliumDEV binaries** via `./scripts/trilium-dev.sh build` (or `pnpm dev:binary`).
 
 ### Upstream PR Status (Filed to `TriliumNext/Trilium`)
 
@@ -80,21 +80,21 @@ Once Phase 1 PRs land upstream, pull `upstream/main`, rebase the following micro
                          │
                          ▼
 [PR 6: feat/plugins-ui-enhancements]
-  ↳ StateBadge status pills (Enabled/Disabled/Broken), collapsible archive card, cleanup.
+  ↳ StateBadge status pills (Enabled/Disabled), collapsible archive card, cleanup.
                          │
                          ▼
 [PR 7: test/plugins-procedural-matrix]
   ↳ 30-case procedural UI component & failure matrix Vitest suite.
 ```
 
-### Modular Topic Branch Index
+### Modular Topic Branch Index (Merged into Fork `main`, Pushed for Upstream Queue)
 
-| Topic Branch Name | Key Files | Scope / Description |
-| :--- | :--- | :--- |
-| **`fix/plugins-lifecycle-followups`** | `package_activation.ts`, `hidden_subtree.ts`, `community-packages-contract.test.mjs` | Preserves activation state on package updates; automatic startup and manager refresh drift reconciliation. |
-| **`fix/plugins-offline-metadata`** | `plugins.tsx` (`|| pkg.cachedManifest` fallback) | Enables detail view, settings, and surfaces for offline/uncataloged extensions. |
-| **`feat/plugins-ui-enhancements`** | `StateBadge.tsx`, `StateBadge.css`, `community_packages.tsx`, `translation.json` | Adds status pills (`Enabled`/`Disabled`/`Broken`), collapsible archive card, and bulk cleanup. |
-| **`test/plugins-procedural-matrix`** | `plugins_ui_lifecycle.spec.tsx` | Exhaustive 30-case Preact unit test suite testing all entry boxes, option boxes, selectors, toggles, buttons, and failure matrices. |
+| Topic Branch Name | Key Files | Scope / Description | Merge Status on `main` |
+| :--- | :--- | :--- | :--- |
+| **`fix/plugins-lifecycle-followups`** | `package_activation.ts`, `hidden_subtree.ts`, `community-packages-contract.test.mjs` | Preserves activation state on package updates; automatic startup drift reconciliation. | **Merged into main** |
+| **`fix/plugins-offline-metadata`** | `plugins.tsx` (`|| pkg.cachedManifest` fallback) | Enables detail view, settings, and surfaces for offline/uncataloged extensions. | **Merged into main** |
+| **`feat/plugins-ui-enhancements`** | `StateBadge.tsx`, `StateBadge.css`, `plugins.tsx`, `translation.json` | Visual status pills (`Enabled`/`Disabled`), collapsible archive card, and bulk cleanup. | **Merged into main** |
+| **`test/plugins-procedural-matrix`** | `plugins_ui_lifecycle.spec.tsx` | Exhaustive 30-case Preact unit test suite testing all entry boxes, option boxes, selectors, toggles, buttons, and failure matrices. | **Merged into main** |
 
 ---
 
@@ -145,6 +145,9 @@ pnpm dev:cli
 ./scripts/trilium-dev.sh
 ```
 
+### Dynamic Root Resolution & Workspace Linkage
+* `./scripts/trilium-dev.sh` dynamically resolves the workspace root (`cd "$(git rev-parse --show-toplevel)"`), verifies workspace dependencies (`tslib`, `@trilium/commons`), and executes root `pnpm install` prior to building.
+
 ### Shortcuts:
 * **`pnpm dev:hot`**: Launches live Hot-Reload Watch Mode (`pnpm desktop:start`).
 * **`pnpm dev:prod`**: Runs local production build (`pnpm desktop:start-prod`).
@@ -167,20 +170,21 @@ Always run these commands to verify code integrity before committing changes:
 
 ---
 
-## 8. TriliumDEV Companion Plugin Blueprint (`iansherr/triliumdev-companion`)
+## 8. Built-in TriliumDEV Companion Plugin (`iansherr/triliumdev-companion`)
 
-The **TriliumDEV Companion Plugin** runs directly inside Trilium Notes as a native community package note and supports both **Developers** and **End-User Testers**:
+The **TriliumDEV Companion Plugin** is auto-seeded as a built-in community package directly inside Trilium Notes via `packages/trilium-core/src/services/hidden_subtree.ts`:
 
-### Dual-Mode Architecture:
-1. **End-User / Tester Mode (No local codebase required)**:
+### Key Capabilities & Dual-Mode Architecture:
+1. **Auto-Seeded Built-In Package**: Seeded automatically into hidden system notes (`_sd_triliumdev-companion_manifest`) on database initialization/boot, appearing directly in `Settings → Plugins`.
+2. **End-User / Tester Mode (No local codebase required)**:
    - Queries GitHub API (`https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/releases/latest`).
-   - Compares local version (`window.glob.triliumVersion`) against remote release tags (`v0.104.1-dev.X`).
-   - Renders a 1-click **"Download Pre-Built Binary Update"** button that downloads and launches the compiled `.dmg` / `.zip` asset directly from GitHub Releases.
-2. **Developer Mode (Multi-Machine Custom Directory Binding)**:
+   - Compares local version against remote release tags (`v0.104.1-dev.X`).
+   - Renders a 1-click **"Download Pre-Built Binary Update"** button that downloads and launches compiled `.dmg` / `.zip` assets directly from GitHub Releases.
+3. **Developer Mode (Multi-Machine Custom Directory Binding)**:
    - **Configurable Source Directory Setting**: Includes a `packageSetting:localSourceDirectory` text box in the plugin settings UI (e.g., `/Users/iansherr/Projects/Trilium` or `/home/user/code/Trilium`).
    - **Native Folder Picker**: Provides a **"Select Local Source Folder"** button that opens Electron's native directory picker (`showOpenDialog({ properties: ['openDirectory'] })`) to set the path visually.
    - **Auto-Discovery Fallback**: Automatically checks `process.env.TRILIUM_DEV_DIR` or `process.cwd()` if no path is configured.
-   - **Launch Hot-Reload Action**: When a local source folder is connected, clicking **"Launch Dev Watch Server"** spawns Vite HMR for that specific workspace directory, allowing sub-second hot reloading on any computer!
+   - **Launch Hot-Reload Action**: Spawns Vite HMR for that specific workspace directory, allowing sub-second hot reloading on any computer!
 
 ---
 
@@ -224,7 +228,7 @@ The Plugin Ecosystem includes explicit safeguards for edge cases and unexpected 
 
 | Scenario / Edge Case | Safeguard Implementation | Status |
 | :--- | :--- | :--- |
-| **Offline / Network Outage** | Cached manifest fallback (`|| pkg.cachedManifest`) in `plugins.tsx` line 614 enables package details and settings to load when offline. | **Verified** |
+| **Offline / Network Outage** | Cached manifest fallback (`|| pkg.cachedManifest`) in `plugins.tsx` line 610 enables package details and settings to load when offline. | **Verified** |
 | **Interrupted App Shutdown** | Intermediate transaction notes are tagged with `#packageTransaction`. Startup reconciliation (`recoverInterruptedTransactions()`) cleans up orphaned notes. | **Verified** |
 | **Settings Reset on Upgrade** | `backupPackageConfiguration()` stores a JSON snapshot (`#packageConfigBackup`). `restorePackageSettings()` re-applies user settings (`packageSetting:*`) on upgrade. | **Verified** |
 | **Activation Drift** | `package_activation.ts` detects drift between `packageEnabled: "true"` and artifact notes, stripping inert `disabled:` prefixes automatically on client startup. | **Verified** |
