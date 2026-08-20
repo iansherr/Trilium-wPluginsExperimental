@@ -4,6 +4,10 @@ import test from "node:test";
 
 const managerSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
 const pluginsSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/plugins.tsx", import.meta.url), "utf8");
+const optionsRowSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/components/OptionsRow.tsx", import.meta.url), "utf8");
+const stateBadgeSource = await readFile(new URL("../../apps/client/src/widgets/type_widgets/options/components/StateBadge.tsx", import.meta.url), "utf8");
+const activationSource = await readFile(new URL("../../apps/client/src/services/package_activation.ts", import.meta.url), "utf8");
+const startupSource = await readFile(new URL("../../apps/client/src/components/startup_checks.ts", import.meta.url), "utf8");
 
 test("package branch moves use Trilium's move-to endpoint", () => {
     assert.match(
@@ -39,7 +43,62 @@ test("catalog bundles keep component selection separate from package lifecycle",
 test("catalog keeps installed packages as discovery entries", () => {
     assert.match(managerSource, /const updateAvailable = entry && isNewerVersion\(manifest\.version, entry\.version\)/);
     assert.match(managerSource, /text="Manage in Plugins"/);
-    assert.doesNotMatch(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
+    assert.match(managerSource, /text=\{busyPackage === manifest\.id \? "Updating…" : "Update"\}/);
+    assert.match(managerSource, /onClick=\{\(\) => update\(manifest\)\}/);
+});
+
+test("catalog updates preserve an installed package's enabled state", () => {
+    assert.match(
+        managerSource,
+        /await replacePackage\(manifest, true, allowedSourceHosts, dependencyResolution\.packages, packages\)/
+    );
+    assert.match(managerSource, /updated; its previous enabled state was preserved/);
+    assert.doesNotMatch(managerSource, /updated disabled/);
+});
+
+test("package replacement verifies activation before archiving the previous generation", () => {
+    assert.match(managerSource, /await verifyPackageActivation\(verifiedPackageNotes, manifest, preserveEnabled && previousEnabled\)/);
+    assert.match(managerSource, /await verifyPackageActivation\(/);
+    assert.match(managerSource, /activation verification failed/);
+    assert.match(managerSource, /await archiveNotes\(previousNotes\.filter/);
+    assert.ok(managerSource.indexOf("await verifyPackageActivation(") < managerSource.indexOf("await archiveNotes(previousNotes.filter"));
+});
+
+test("startup reconciliation repairs enabled packages without enabling disabled packages", () => {
+    assert.match(activationSource, /manifest\.getOwnedLabelValue\("packageEnabled"\) !== "true"/);
+    assert.match(activationSource, /disabled:\$\{labelName\}/);
+    assert.match(activationSource, /packageManifest/);
+    assert.match(startupSource, /reconcileEnabledPackageActivations/);
+});
+
+test("installed package health checks activation drift", () => {
+    assert.match(pluginsSource, /function combinedPackageHealth\(pkg: PackageSummary, manifest\?\: CatalogPackage\)/);
+    assert.match(pluginsSource, /function packageActivationHealth\(artifactNotes: FNote\[\], enabled: boolean, manifest\?\: CatalogPackage\)/);
+    assert.match(pluginsSource, /activation mismatch:/);
+    assert.match(pluginsSource, /health_activation/);
+});
+
+test("plugin refresh rechecks activation after startup and serializes overlapping refreshes", () => {
+    assert.match(pluginsSource, /reconcileEnabledPackageActivations\(\)/);
+    assert.match(pluginsSource, /refreshPromiseRef/);
+    assert.match(pluginsSource, /activation_repaired/);
+    assert.match(pluginsSource, /another plugin, a manual edit, or a late entity reload/);
+});
+
+test("catalog surfaces legacy source labels instead of hiding them", () => {
+    assert.match(managerSource, /const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
+    assert.match(managerSource, /sources: parseConfiguredSources\(note\)/);
+    assert.match(managerSource, /function parseConfiguredSources\(note\)/);
+    assert.match(managerSource, /note\?\.getOwnedLabelValue\(LEGACY_DIRECT_MANIFEST_URLS_LABEL\)/);
+});
+
+test("plugin settings canonicalize and mirror legacy source labels on save", () => {
+    assert.match(pluginsSource, /const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
+    assert.match(pluginsSource, /parseConfiguredPluginSources\(\(labelName\) => settings\?\.getOwnedLabelValue\(labelName\)\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_SOURCES_LABEL, JSON\.stringify\(sources\)\)/);
+    assert.match(pluginsSource, /buildLegacyPluginSourceLabels\(sources\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources\.packageRegistryUrl\)/);
+    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources\.packageDirectManifestUrls\)/);
 });
 
 test("plugin settings enable and disable every managed artifact activation", () => {
@@ -60,6 +119,25 @@ test("plugin settings owns installed lifecycle and manifest entry points", () =>
     assert.match(pluginsSource, /type PackageSurfaceType = "page" \| "settings" \| "modal" \| "deeplink"/);
     assert.match(pluginsSource, /PACKAGE_MODAL_COMMANDS/);
     assert.match(pluginsSource, /openPackageSurface\(pkg, surface\)/);
+});
+
+test("plugin settings puts updates first and hides an empty archive section", () => {
+    const updatesIndex = pluginsSource.indexOf('title={t("plugins.updates_title")}');
+    const availableIndex = pluginsSource.indexOf('title={t("plugins.available_title")}');
+    assert.notEqual(updatesIndex, -1);
+    assert.notEqual(availableIndex, -1);
+    assert.ok(updatesIndex < availableIndex, "updates should be the first plugin section");
+    assert.match(pluginsSource, /state\.archivedPackages\.length > 0 && <OptionsSection/);
+    assert.doesNotMatch(pluginsSource, /!state\.loading && !state\.archivedPackages\.length && <NoItems icon="bx bx-archive"/);
+});
+
+test("archived plugins are collapsed by default and support bulk cleanup", () => {
+    assert.match(pluginsSource, /const \[archivedExpanded, setArchivedExpanded\] = useState\(false\)/);
+    assert.match(pluginsSource, /async function deleteArchivedPackages\(\)/);
+    assert.match(pluginsSource, /delete_archived_confirm/);
+    assert.match(pluginsSource, /cleanup_archived_label/);
+    assert.match(pluginsSource, /aria-expanded=\{archivedExpanded\}/);
+    assert.match(pluginsSource, /disabled=\{Boolean\(savingPackage\)\}/);
 });
 
 test("JSX launcher and render artifacts use the JSX MIME", () => {
@@ -99,12 +177,31 @@ test("unfinished migration notes are excluded from ordinary package state", () =
 test("package updates persist versioned configuration backups and inherit them on reinstall", () => {
     assert.match(managerSource, /const CONFIG_BACKUP_LABEL = "packageConfigBackup"/);
     assert.match(managerSource, /schemaVersion: CONFIG_BACKUP_SCHEMA_VERSION/);
-    assert.match(managerSource, /async function backupPackageConfiguration\(manifest, previousManifest, settings, enabled, pinned\)/);
+    assert.match(managerSource, /async function backupPackageConfiguration\(manifest, previousManifest, settings, packageData, enabled, pinned\)/);
     assert.match(managerSource, /type: "code",\s*mime: "application\/json"/);
     assert.match(managerSource, /async function readLatestConfigBackup\(packageId\)/);
-    assert.match(managerSource, /await restorePackageSettings\(stagedPackageNotes, manifest, backup\.settings \|\| \{\}\)/);
+    assert.match(managerSource, /await restorePackageSettings\(stagedPackageNotes, manifest, backup\.settings \|\| \{\}, backup\.packageData \|\| \{\}\)/);
     assert.match(managerSource, /function packageSettingsSnapshot\(note, manifest\)/);
     assert.match(managerSource, /candidate\.name\.startsWith\("packageSetting:"\)/);
+});
+
+test("package backup captures every packageData label and restores only that prefix", () => {
+    assert.match(managerSource, /const PACKAGE_DATA_PREFIX = "packageData:"/);
+    assert.match(managerSource, /function packageDataSnapshot\(note\)/);
+    assert.match(managerSource, /candidate\.name\.startsWith\(PACKAGE_DATA_PREFIX\)/);
+    assert.match(managerSource, /packageData,\n\s+enabled: Boolean\(enabled\)/);
+    assert.match(managerSource, /backup\.packageData \|\| \{\}/);
+    assert.match(managerSource, /labelName\.startsWith\(PACKAGE_DATA_PREFIX\) && typeof value === "string"/);
+});
+
+test("installed plugin rows state their enabled state, and plain toggles do not", () => {
+    assert.match(stateBadgeSource, /options\.state_enabled/);
+    assert.match(stateBadgeSource, /options\.state_disabled/);
+    assert.match(stateBadgeSource, /<Badge\b/);
+    assert.match(pluginsSource, /<StateBadge enabled=\{pkg\.enabled\}/);
+    // A toggle already conveys its own state; the badge belongs only where the control's
+    // verb is the inverse of the state, as on the Enable/Disable plugin rows.
+    assert.doesNotMatch(optionsRowSource, /StateBadge/);
 });
 
 test("package storage reports archived generations and bounds active configuration backups", () => {

@@ -8,7 +8,7 @@ import bundleService from "../services/bundle.js";
 import froca from "../services/froca.js";
 import { initLocale, t } from "../services/i18n.js";
 import keyboardActionsService from "../services/keyboard_actions.js";
-import linkService, { type ViewScope } from "../services/link.js";
+import linkService, { type HashPane, type ViewScope } from "../services/link.js";
 import type LoadResults from "../services/load_results.js";
 import type { CreateNoteOpts } from "../services/note_create.js";
 import options from "../services/options.js";
@@ -35,7 +35,7 @@ import MobileScreenSwitcherExecutor, { type Screen } from "./mobile_screen_switc
 import type { default as NoteContext, GetTextEditorCallback } from "./note_context.js";
 import RootCommandExecutor from "./root_command_executor.js";
 import ShortcutComponent from "./shortcut_component.js";
-import { StartupChecks } from "./startup_checks.js";
+import { reconcilePackageActivationsAtStartup, StartupChecks } from "./startup_checks.js";
 import TabManager from "./tab_manager.js";
 import zoomComponent from "./zoom.js";
 
@@ -76,6 +76,13 @@ export interface NoteCommandData extends CommandData {
     notePath?: string | null;
     hoistedNoteId?: string | null;
     viewScope?: ViewScope;
+    /**
+     * Panes to open beside `notePath`, in order — how a tab moved or copied into a window of its own
+     * takes its splits along. Honoured only while booting a detached window.
+     */
+    splits?: HashPane[] | null;
+    /** Index into `[main pane, ...splits]` of the pane to focus. Defaults to the main pane. */
+    activeSplit?: number;
 }
 
 export interface ExecuteCommandData<T> extends CommandData {
@@ -635,6 +642,10 @@ export class AppContext extends Component {
         this.renderWidgets();
 
         await froca.initializedPromise;
+
+        // The package reconciler must run after Froca has its initial note set;
+        // running it from a component constructor races the initial load.
+        void reconcilePackageActivationsAtStartup();
 
         this.tabManager.loadTabs();
 

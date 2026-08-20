@@ -19,17 +19,54 @@
 
 .option-row-input {
     flex-shrink: 0;
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Package artifacts have human-readable titles, which can be wider than the
+   settings pane. Let this action group take the available row width and wrap
+   each button instead of forcing the row past the card edge. */
+.option-row-input:has(.community-package-page-links) {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+}
+
+.community-package-page-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4em;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.community-package-page-links > button {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: start;
+    white-space: normal;
 }
 
 .option-row-input > select,
 .option-row-input > .dropdown {
     width: auto;
     min-width: 150px;
+    max-width: 100%;
 }
 
 .option-row-input > .dropdown button {
     width: 100%;
     text-align: start;
+}
+
+/* A choice too long to show is cut short rather than carried off the card. The arrow is a background
+   image with padding reserved for it (forms.css), so it keeps its place at the end. */
+.option-row-input > select,
+.option-row-input > .dropdown > button {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .option-row-description {

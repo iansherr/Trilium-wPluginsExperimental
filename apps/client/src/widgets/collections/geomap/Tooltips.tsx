@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { type Map as MapLibreGLMap, type MapGeoJSONFeature, type MapMouseEvent, Popup } from "maplibre-gl";
 import { useContext, useEffect } from "preact/hooks";
 
@@ -73,15 +74,21 @@ const EDGE_PADDING = 8;
  * on click for the same reason (see note_tooltip.ts). Without this, a preview whose marker was
  * clicked stood exactly where the pane then opened, and one still on its way landed on top of it.
  */
-export default function Tooltips({ selectedNoteId }: {
+export default function Tooltips({ selectedNoteId, paneMaximized }: {
     /** The note the detail pane stands for, or `null` while the pane is down and every marker
      *  previews. See the selection in DetailPane. */
     selectedNoteId: string | null;
+    /** The pane has been grown over the map, which leaves no room a preview could be shown in. See
+     *  the maximized pane in DetailPane. */
+    paneMaximized: boolean;
 }) {
     const map = useContext(ParentMap);
 
     useEffect(() => {
-        if (!map) return;
+        // Nothing previews while the pane covers the map: there is no room left for a preview to be
+        // slid into, and the markers it would preview are behind the pane. Gated here rather than
+        // at the placing, so a preview already up is taken down with the handlers as the pane grows.
+        if (!map || paneMaximized) return;
 
         const tooltip = new Popup({
             closeButton: false,
@@ -113,10 +120,16 @@ export default function Tooltips({ selectedNoteId }: {
             // The read raced against the rest of the wait rather than run after it: the preview
             // holds to the full HOVER_DELAY however fast the note comes back, but a round trip no
             // longer stretches that wait unless it outlasts what is left of it.
-            const [ content ] = await Promise.all([
-                froca.getNote(noteId).then((note) => renderTooltip(note)),
+            const [ rendered ] = await Promise.all([
+                froca.getNote(noteId).then(async (note) => ({
+                    content: await renderTooltip(note),
+                    // The note's own colour, which the preview is tinted with exactly as the
+                    // tooltip service tints the ones it puts up itself (see note_tooltip.ts).
+                    colorClass: note?.getColorClass()
+                })),
                 new Promise((resolve) => setTimeout(resolve, HOVER_DELAY - READ_DELAY))
             ]);
+            const { content, colorClass } = rendered;
             // A note with no content and no path renders to nothing; the pointer may well have
             // moved on to another marker while this one was being read; and a click may have
             // dismissed the preview while it was still on its way (see dismiss).
@@ -125,7 +138,7 @@ export default function Tooltips({ selectedNoteId }: {
             shown = noteId;
             tooltip
                 .setLngLat(coordinates)
-                .setHTML(buildTooltipHtml(content))
+                .setHTML(buildTooltipHtml(content, colorClass))
                 .addTo(map);
             placePreview(map, tooltip, coordinates, selectedNoteId !== null);
 
@@ -225,7 +238,7 @@ export default function Tooltips({ selectedNoteId }: {
         // Depending on the selection makes every change of it a dismissal in itself, which covers
         // the selections no click announces: a note created onto the map is opened into the pane
         // by the code that created it (see index.tsx).
-    }, [ map, selectedNoteId ]);
+    }, [ map, selectedNoteId, paneMaximized ]);
 
     return null;
 }
@@ -302,9 +315,12 @@ function placePreview(map: MapLibreGLMap, tooltip: Popup, coordinates: [ number,
  * Written without a line break anywhere between the tags, because `.tooltip-inner` is `pre-line`:
  * every newline inside it is a newline the preview is drawn with, and laying this out as one would
  * lay out markup put a blank line above the preview and another below it.
+ *
+ * @param colorClass the note's colour, which belongs on this same element: the theme tints a
+ *                   preview through `.note-tooltip.with-hue`, off the hue the class carries.
  */
-function buildTooltipHtml(content: string) {
-    return `<div class="tooltip note-tooltip show" role="tooltip">`
+function buildTooltipHtml(content: string, colorClass?: string) {
+    return `<div class="${clsx("tooltip", "note-tooltip", "show", colorClass)}" role="tooltip">`
         + `<div class="tooltip-inner">`
         + `<div class="note-tooltip-content">${sanitizeNoteContentHtml(content)}</div>`
         + `</div>`

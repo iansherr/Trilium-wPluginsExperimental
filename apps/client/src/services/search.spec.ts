@@ -50,4 +50,15 @@ describe("search service", () => {
         expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged")}`);
         expect(notes.map((n) => n.noteId)).toEqual([note.noteId]);
     });
+
+    it("includes archived notes when requested", async () => {
+        const note = buildNote({ title: "Archived package" });
+        const get = vi.fn(async () => ({ searchResultNoteIds: [note.noteId] }));
+        server.get = get as typeof server.get;
+
+        const notes = await searchService.searchForNotesIncludingHidden("#packageManaged #archived", true);
+
+        expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged #archived")}?includeArchived=true`);
+        expect(notes.map((n) => n.noteId)).toEqual([note.noteId]);
+    });
 });

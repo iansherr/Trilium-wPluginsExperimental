@@ -1,7 +1,17 @@
+import {
+    bytesEqual,
+    readU16BE,
+    readU16LE,
+    readU64LE,
+    utf8,
+    writeU16LE,
+    writeU32LE,
+    writeU64LE
+} from "./bytes.js";
 import { BackupContainerError } from "./errors.js";
 
 /** ASCII magic that opens every container. */
-export const MAGIC = Buffer.from("Trilium Notes Backup", "ascii");
+export const MAGIC = utf8("Trilium Notes Backup");
 
 /** Format version this module reads and writes. Version 0 is never valid. */
 export const FORMAT_VERSION = 1;
@@ -10,17 +20,30 @@ export const FLAG_COMPRESSED = 0b0000_0001;
 export const FLAG_ENCRYPTED = 0b0000_0010;
 export const FLAG_RESERVED = 0b1111_1100;
 
-export const FIXED_HEADER_BYTES = 32;
+export const FIXED_HEADER_BYTES = 40;
 export const DIGEST_BYTES = 32;
 export const TAG_BYTES = 16;
 export const SALT_BYTES = 16;
 export const NONCE_PREFIX_BYTES = 8;
 export const NONCE_BYTES = 12;
 export const KEY_BYTES = 32;
+export const TIMESTAMP_BYTES = 8;
+export const SIZE_BYTES = 8;
 
-/** Header length is fixed per flag combination in version 1, and readers require equality. */
-export const HEADER_BYTES_PLAIN = 64;
-export const HEADER_BYTES_ENCRYPTED = 108;
+/** Header length is fixed per flag combination, and readers require equality. */
+export const HEADER_BYTES_PLAIN = 40;
+export const HEADER_BYTES_ENCRYPTED = 84;
+
+/**
+ * What follows the payload: the digest over it, and the length it actually came to.
+ *
+ * Both are only knowable once the payload has been written, which is why they sit at the end rather
+ * than in the header. Nothing in a container therefore has to be written back to, so any writer can
+ * produce one in a single forward pass, and every container carries a digest whatever its flags
+ * say, including the plain uncompressed unencrypted one, which would otherwise have nothing at all
+ * standing behind its contents.
+ */
+export const TRAILER_BYTES = DIGEST_BYTES + SIZE_BYTES;
 
 /** Default ceiling on the header, applied before anything is allocated or sought. */
 export const DEFAULT_MAX_HEADER_BYTES = 4096;
@@ -52,7 +75,7 @@ export const DEFAULT_MAX_KDF_MEMORY_BYTES = 512 * 1024 * 1024;
 export const GZIP_OS_UNKNOWN = 255;
 
 /** First 16 bytes of any SQLite database file. */
-export const SQLITE_MAGIC = Buffer.from("SQLite format 3\0", "latin1");
+export const SQLITE_MAGIC = utf8("SQLite format 3\0");
 
 /** Bytes of output needed before the SQLite header can be checked. */
 export const SQLITE_HEADER_BYTES = 18;
@@ -65,23 +88,45 @@ export interface ScryptParams {
 
 export interface EncryptionHeader extends ScryptParams {
     kdfId: number;
-    salt: Buffer;
-    noncePrefix: Buffer;
-    verifierTag: Buffer;
+    salt: Uint8Array;
+    noncePrefix: Uint8Array;
+    verifierTag: Uint8Array;
 }
 
 export interface ContainerHeader {
     version: number;
+    /**
+     * When the backup was taken, in milliseconds since the Unix epoch, or `0` when not recorded.
+     *
+     * Stated in the clear so that a directory of backups can be dated without opening any of them,
+     * and without depending on a filesystem timestamp that copying does not preserve.
+     */
+    timestamp: number;
     compressed: boolean;
     encrypted: boolean;
     /**
      * Size of the wrapped database before compression, or 0 when unknown. A hint, never an
-     * instruction.
+     * instruction: the authoritative figure is the one the trailer records once the payload is
+     * written. This one is here for what has to be known in advance, such as the length of a
+     * download or a progress bar to draw against.
      */
     plaintextSize: number;
     headerLength: number;
     encryption: EncryptionHeader | null;
-    digest: Buffer;
+}
+
+/**
+ * What follows the payload, once there is a payload to describe. See {@link TRAILER_BYTES}.
+ *
+ * Not covered by anything the header authenticates, for the same reason the digest never was: it is
+ * written after the fact. In an encrypted container the frames already make tampering detectable,
+ * and here the digest does what it has always done, which is catch bit rot and truncation.
+ */
+export interface ContainerTrailer {
+    /** SHA-256 over the payload exactly as stored. */
+    digest: Uint8Array;
+    /** The plaintext length as counted while writing, which the reader holds the output to. */
+    plaintextSize: number;
 }
 
 /** Header length implied by the flags, which readers require exactly. */
@@ -92,17 +137,12 @@ export function headerLengthFor(encrypted: boolean): number {
 /**
  * End of the span that the verifier tag and every frame authenticate.
  *
- * The verifier tag and the payload digest are the last two fields of the header and are both
- * written after the fact, so neither can be inside what the header authenticates. Stopping here
- * also keeps a bit flip in the verifier tag from invalidating every frame in the file.
+ * The verifier tag is the last field of the header and is written once the key exists, so it cannot
+ * be inside what it authenticates. Stopping here also keeps a bit flip in the verifier tag from
+ * invalidating every frame in the file. Everything before it, the timestamp included, is covered.
  */
 export function authenticatedHeaderEnd(headerLength: number): number {
-    return headerLength - TAG_BYTES - DIGEST_BYTES;
-}
-
-/** Offset of the payload digest, always the last 32 bytes of the header. */
-export function digestOffset(headerLength: number): number {
-    return headerLength - DIGEST_BYTES;
+    return headerLength - TAG_BYTES;
 }
 
 /** Memory a scrypt derivation needs, which is what the reader ceiling is applied to. */
@@ -111,46 +151,70 @@ export function scryptMemoryBytes({ log2N, r }: ScryptParams): number {
 }
 
 /** 12-byte GCM nonce for a frame counter, or for {@link VERIFIER_COUNTER}. */
-export function nonceFor(noncePrefix: Buffer, counter: number): Buffer {
-    const nonce = Buffer.allocUnsafe(NONCE_BYTES);
-    noncePrefix.copy(nonce, 0);
-    nonce.writeUInt32LE(counter, NONCE_PREFIX_BYTES);
+export function nonceFor(noncePrefix: Uint8Array, counter: number): Uint8Array {
+    const nonce = new Uint8Array(NONCE_BYTES);
+    nonce.set(noncePrefix, 0);
+    writeU32LE(nonce, NONCE_PREFIX_BYTES, counter);
     return nonce;
 }
 
-/**
- * Serialises a header. The digest is written as supplied, so a writer passes zeros and patches
- * later.
- */
-export function encodeHeader(header: ContainerHeader): Buffer {
-    const buffer = Buffer.alloc(header.headerLength);
+/** Serialises a header. Every field is known before the payload, so nothing is patched in later. */
+export function encodeHeader(header: ContainerHeader): Uint8Array {
+    const buffer = new Uint8Array(header.headerLength);
 
-    MAGIC.copy(buffer, 0);
-    buffer.writeUInt8(header.version, MAGIC.length);
+    buffer.set(MAGIC, 0);
+    buffer[MAGIC.length] = header.version;
+    writeU64LE(buffer, 21, BigInt(header.timestamp));
     const compressed = header.compressed ? FLAG_COMPRESSED : 0;
     const encrypted = header.encrypted ? FLAG_ENCRYPTED : 0;
-    buffer.writeUInt8(compressed | encrypted, 21);
-    buffer.writeUInt16LE(header.headerLength, 22);
-    buffer.writeBigUInt64LE(BigInt(header.plaintextSize), 24);
+    buffer[29] = compressed | encrypted;
+    writeU16LE(buffer, 30, header.headerLength);
+    writeU64LE(buffer, 32, BigInt(header.plaintextSize));
 
     if (header.encryption) {
         const { kdfId, log2N, r, p, salt, noncePrefix, verifierTag } = header.encryption;
-        buffer.writeUInt8(kdfId, 32);
-        buffer.writeUInt8(log2N, 33);
-        buffer.writeUInt8(r, 34);
-        buffer.writeUInt8(p, 35);
-        salt.copy(buffer, 36);
-        noncePrefix.copy(buffer, 52);
-        verifierTag.copy(buffer, 60);
+        buffer[40] = kdfId;
+        buffer[41] = log2N;
+        buffer[42] = r;
+        buffer[43] = p;
+        buffer.set(salt, 44);
+        buffer.set(noncePrefix, 60);
+        buffer.set(verifierTag, 68);
     }
-
-    header.digest.copy(buffer, digestOffset(header.headerLength));
 
     return buffer;
 }
 
+/** Serialises the trailer, which is written once the payload is complete. */
+export function encodeTrailer(trailer: ContainerTrailer): Uint8Array {
+    const buffer = new Uint8Array(TRAILER_BYTES);
+
+    buffer.set(trailer.digest, 0);
+    writeU64LE(buffer, DIGEST_BYTES, BigInt(trailer.plaintextSize));
+
+    return buffer;
+}
+
+/** Parses the trailer out of exactly {@link TRAILER_BYTES} bytes. */
+export function decodeTrailer(buffer: Uint8Array): ContainerTrailer {
+    if (buffer.length !== TRAILER_BYTES) {
+        throw new BackupContainerError(
+            "truncated",
+            `Trailer is ${buffer.length} bytes, expected ${TRAILER_BYTES}.`
+        );
+    }
+
+    const plaintextSize = readU64LE(buffer, DIGEST_BYTES);
+
+    return {
+        digest: buffer.subarray(0, DIGEST_BYTES),
+        plaintextSize: plaintextSize > BigInt(Number.MAX_SAFE_INTEGER) ? 0 : Number(plaintextSize)
+    };
+}
+
 export interface FixedHeader {
     version: number;
+    timestamp: number;
     compressed: boolean;
     encrypted: boolean;
     plaintextSize: number;
@@ -164,15 +228,15 @@ export interface FixedHeader {
  * @param buffer the first {@link FIXED_HEADER_BYTES} bytes of the file.
  * @param maxHeaderBytes ceiling above which a header is refused outright.
  */
-export function decodeFixedHeader(buffer: Buffer, maxHeaderBytes: number): FixedHeader {
-    if (!buffer.subarray(0, MAGIC.length).equals(MAGIC)) {
+export function decodeFixedHeader(buffer: Uint8Array, maxHeaderBytes: number): FixedHeader {
+    if (!bytesEqual(buffer.subarray(0, MAGIC.length), MAGIC)) {
         throw new BackupContainerError(
             "not-a-container",
             "File does not start with the container magic."
         );
     }
 
-    const version = buffer.readUInt8(MAGIC.length);
+    const version = buffer[MAGIC.length];
     if (version === 0) {
         throw new BackupContainerError("unsupported-version", "Version 0 is never valid.");
     }
@@ -183,7 +247,7 @@ export function decodeFixedHeader(buffer: Buffer, maxHeaderBytes: number): Fixed
         );
     }
 
-    const flags = buffer.readUInt8(21);
+    const flags = buffer[29];
     if (flags & FLAG_RESERVED) {
         throw new BackupContainerError(
             "unsupported-flags",
@@ -192,7 +256,7 @@ export function decodeFixedHeader(buffer: Buffer, maxHeaderBytes: number): Fixed
     }
     const encrypted = (flags & FLAG_ENCRYPTED) !== 0;
 
-    const headerLength = buffer.readUInt16LE(22);
+    const headerLength = readU16LE(buffer, 30);
     if (headerLength > maxHeaderBytes) {
         throw new BackupContainerError(
             "invalid-header-length",
@@ -208,11 +272,13 @@ export function decodeFixedHeader(buffer: Buffer, maxHeaderBytes: number): Fixed
     }
 
     // A hint that may only ever tighten a bound, so an unrepresentable value is the same as
-    // "unknown".
-    const plaintextSize = buffer.readBigUInt64LE(24);
+    // "unknown". The same goes for a date nothing could have produced.
+    const plaintextSize = readU64LE(buffer, 32);
+    const timestamp = readU64LE(buffer, 21);
 
     return {
         version,
+        timestamp: timestamp > BigInt(Number.MAX_SAFE_INTEGER) ? 0 : Number(timestamp),
         compressed: (flags & FLAG_COMPRESSED) !== 0,
         encrypted,
         plaintextSize: plaintextSize > BigInt(Number.MAX_SAFE_INTEGER) ? 0 : Number(plaintextSize),
@@ -221,15 +287,37 @@ export function decodeFixedHeader(buffer: Buffer, maxHeaderBytes: number): Fixed
 }
 
 /**
+ * Exact byte length of an uncompressed container wrapping `plaintextSize` bytes.
+ *
+ * Encrypted, that is the header, the payload, the length field and tag around every frame including
+ * the final one, which is empty when the payload is an exact multiple of the frame size, and the
+ * trailer. Unencrypted, the payload is written as it stands between the header and the trailer.
+ *
+ * Exactness is the point twice over: a download that states its size correctly is one the browser
+ * can draw a progress bar for, and a file that does not measure this much is one a reader can
+ * refuse before reading any of it. Compression breaks the derivation, since the payload is then
+ * shorter than the plaintext by a ratio nothing states in advance.
+ */
+export function containerSize(plaintextSize: number, encrypted: boolean): number {
+    if (!encrypted) {
+        return HEADER_BYTES_PLAIN + plaintextSize + TRAILER_BYTES;
+    }
+
+    const frames = Math.floor(plaintextSize / FRAME_SIZE) + 1;
+
+    return HEADER_BYTES_ENCRYPTED + plaintextSize + frames * (4 + TAG_BYTES) + TRAILER_BYTES;
+}
+
+/**
  * Parses the fields after the fixed header. `buffer` is the whole header, `headerLength` bytes
  * long.
  */
-export function decodeHeader(buffer: Buffer, maxHeaderBytes: number): ContainerHeader {
+export function decodeHeader(buffer: Uint8Array, maxHeaderBytes: number): ContainerHeader {
     const fixed = decodeFixedHeader(buffer.subarray(0, FIXED_HEADER_BYTES), maxHeaderBytes);
 
     let encryption: EncryptionHeader | null = null;
     if (fixed.encrypted) {
-        const kdfId = buffer.readUInt8(32);
+        const kdfId = buffer[40];
         if (kdfId !== KDF_SCRYPT) {
             throw new BackupContainerError(
                 "unsupported-kdf",
@@ -239,20 +327,16 @@ export function decodeHeader(buffer: Buffer, maxHeaderBytes: number): ContainerH
 
         encryption = {
             kdfId,
-            log2N: buffer.readUInt8(33),
-            r: buffer.readUInt8(34),
-            p: buffer.readUInt8(35),
-            salt: buffer.subarray(36, 52),
-            noncePrefix: buffer.subarray(52, 60),
-            verifierTag: buffer.subarray(60, 76)
+            log2N: buffer[41],
+            r: buffer[42],
+            p: buffer[43],
+            salt: buffer.subarray(44, 60),
+            noncePrefix: buffer.subarray(60, 68),
+            verifierTag: buffer.subarray(68, 84)
         };
     }
 
-    return {
-        ...fixed,
-        encryption,
-        digest: buffer.subarray(digestOffset(fixed.headerLength), fixed.headerLength)
-    };
+    return { ...fixed, encryption };
 }
 
 /**
@@ -290,9 +374,9 @@ export function validateScryptParams(params: ScryptParams, maxMemoryBytes: numbe
  *
  * @param head at least {@link SQLITE_HEADER_BYTES} bytes from offset 0 of the output.
  */
-export function validateSqliteHeader(head: Buffer): void {
+export function validateSqliteHeader(head: Uint8Array): void {
     const magicMatches = head.length >= SQLITE_HEADER_BYTES
-        && head.subarray(0, SQLITE_MAGIC.length).equals(SQLITE_MAGIC);
+        && bytesEqual(head.subarray(0, SQLITE_MAGIC.length), SQLITE_MAGIC);
 
     if (!magicMatches) {
         throw new BackupContainerError(
@@ -302,7 +386,7 @@ export function validateSqliteHeader(head: Buffer): void {
     }
 
     // Big-endian, and the value 1 encodes 65536 because that does not fit the field.
-    const pageSize = head.readUInt16BE(16);
+    const pageSize = readU16BE(head, 16);
     const isPowerOfTwo = pageSize >= 512 && pageSize <= 32768 && (pageSize & (pageSize - 1)) === 0;
     if (pageSize !== 1 && !isPowerOfTwo) {
         throw new BackupContainerError(

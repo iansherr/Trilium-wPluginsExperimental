@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import "./plugins.css";
 
@@ -8,6 +8,7 @@ import { removeOwnedAttributesByNameOrType, setLabel } from "../../../services/a
 import { closeActiveDialog } from "../../../services/dialog";
 import froca from "../../../services/froca";
 import { t } from "../../../services/i18n";
+import { reconcileEnabledPackageActivations } from "../../../services/package_activation";
 import search from "../../../services/search";
 import server from "../../../services/server";
 import toast from "../../../services/toast";
@@ -26,9 +27,18 @@ const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community-packages-manager_rende
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
 const PACKAGE_MANIFEST_LABEL = "packageManifest";
+const PACKAGE_ARTIFACT_LABEL = "packageArtifact";
 const PACKAGE_ACTIVATION_LABELS = ["widget", "appCss", "appTheme", "run", "customRequestHandler", "launcherType"];
 const PACKAGE_TRANSACTION_LABEL = "packageTransaction";
 const PACKAGE_SOURCES_LABEL = "packageSources";
+const PACKAGE_REGISTRY_URL_LABEL = "packageRegistryUrl";
+const PACKAGE_REGISTRY_URLS_LABEL = "packageRegistryUrls";
+const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
+const LEGACY_PACKAGE_SOURCE_LABELS = [
+    PACKAGE_REGISTRY_URL_LABEL,
+    PACKAGE_REGISTRY_URLS_LABEL,
+    PACKAGE_DIRECT_MANIFEST_URLS_LABEL
+];
 const PACKAGE_CHECK_UPDATES_LABEL = "packageCheckForUpdates";
 const PACKAGE_UPDATE_INTERVAL_LABEL = "packageUpdateIntervalHours";
 const PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL = "packageAllowedSourceHosts";
@@ -95,8 +105,13 @@ export interface PackageCompatibility {
 
 export interface PackageArtifact {
     id: string;
+    type: "frontend" | "backend" | "widget" | "launcher" | "render" | "css" | "theme" | "endpoint" | "resource";
     source: string;
     integrity: string;
+    title?: string;
+    activation?: "manual" | "startup" | "launcher" | "event" | "schedule" | "request";
+    route?: string;
+    schedule?: "hourly" | "daily";
 }
 
 export interface CatalogPackage {
@@ -104,6 +119,7 @@ export interface CatalogPackage {
     name: string;
     description: string;
     version: string;
+    repository?: string;
     permissions: string[];
     settings: PackageSettingDefinition[];
     surfaces: PackageSurface[];
@@ -187,47 +203,76 @@ export default function PluginsSettings() {
     const [savingSettings, setSavingSettings] = useState(false);
     const [savingPackage, setSavingPackage] = useState("");
     const [configuredPackage, setConfiguredPackage] = useState("");
+    const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [editingSourceIndex, setEditingSourceIndex] = useState<number | null>(null);
     const [sourceDraft, setSourceDraft] = useState("");
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
     const [hostDraft, setHostDraft] = useState("");
+    const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
     const refresh = useCallback(async () => {
-        try {
-            const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
-                findPackageManager(),
-                search.searchForNotesIncludingHidden("#packageManaged"),
-                search.searchForNotesIncludingHidden("#packageManaged #archived"),
-                search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
-            ]);
-            const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
-            const sources = parseRegistryUrls(settings?.getOwnedLabelValue(PACKAGE_SOURCES_LABEL) || "");
-            const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
-            const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
-            const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
-            const updateCheckIntervalHours = Math.max(1, Number(settings?.getOwnedLabelValue(PACKAGE_UPDATE_INTERVAL_LABEL)) || 24);
-            const includeDeprecatedPackages = settings?.getOwnedLabelValue(PACKAGE_INCLUDE_DEPRECATED_LABEL) === "true";
-            const packages = buildPackageSummaries(packageNotes, false);
-            const archivedPackages = buildPackageSummaries(archivedPackageNotes, true);
+        if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
-            const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
-            const packagesWithSettings = packages.map((pkg) => {
-                const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
-                const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...packageHealth(pkg.artifactIds, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
-            });
-            const archivedWithSettings = archivedPackages.map((pkg) => {
-                const note = archivedPackageNotes.find((candidate) => candidate.noteId === pkg.noteId);
-                const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
-                return { ...pkg, ...packageHealth(pkg.artifactIds, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
-            });
-            const interruptedTransactionCount = new Set(transactionNotes
-                .filter((note) => !note.isArchived)
-                .map((note) => note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL))
-                .filter(Boolean)).size;
-            setState({ manager, settings, packages: packagesWithSettings, archivedPackages: archivedWithSettings, catalog, sources, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
-        } catch (error) {
-            setState({ ...EMPTY_STATE, loading: false, error: error instanceof Error ? error.message : String(error) });
+        const refreshPromise = (async () => {
+            try {
+                // Re-check activation on every manager refresh. This catches labels changed by
+                // another plugin, a manual edit, or a late entity reload after the one-shot startup
+                // reconciliation. The reconciler only changes explicitly enabled packages and skips
+                // transactions, so refreshing this page remains safe during package operations.
+                try {
+                    const repairs = await reconcileEnabledPackageActivations();
+                    if (repairs.length) {
+                        const repairedNoteCount = repairs.reduce((total, repair) => total + repair.repairedNoteIds.length, 0);
+                        toast.showMessage(translateText("plugins.activation_repaired", { count: repairedNoteCount }));
+                    }
+                } catch (error) {
+                    // Health display and manual repair remain available even if a refresh cannot
+                    // write notes (for example while the server is reconnecting).
+                    console.warn("Could not reconcile community package activation state during refresh:", error);
+                }
+
+                const [manager, packageNotes, archivedPackageNotes, transactionNotes] = await Promise.all([
+                    findPackageManager(),
+                    search.searchForNotesIncludingHidden("#packageManaged"),
+                    search.searchForNotesIncludingHidden("#packageManaged #archived", true),
+                    search.searchForNotesIncludingHidden(`#${PACKAGE_TRANSACTION_LABEL}`)
+                ]);
+                const settings = (await search.searchForNotesIncludingHidden("#packageManagerSettings"))[0] || null;
+                const sources = parseConfiguredPluginSources((labelName) => settings?.getOwnedLabelValue(labelName));
+                const allowNetworkPackages = settings?.getOwnedLabelValue("packageAllowNetwork") === "true";
+                const allowedSourceHosts = parseSourceHosts(settings?.getOwnedLabelValue(PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL) || "");
+                const checkForUpdates = settings?.getOwnedLabelValue(PACKAGE_CHECK_UPDATES_LABEL) === "true";
+                const updateCheckIntervalHours = Math.max(1, Number(settings?.getOwnedLabelValue(PACKAGE_UPDATE_INTERVAL_LABEL)) || 24);
+                const includeDeprecatedPackages = settings?.getOwnedLabelValue(PACKAGE_INCLUDE_DEPRECATED_LABEL) === "true";
+                const packages = buildPackageSummaries(packageNotes, false);
+                const archivedPackages = buildPackageSummaries(archivedPackageNotes, true);
+
+                const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
+                const packagesWithSettings = packages.map((pkg) => {
+                    const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
+                    const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
+                    return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                });
+                const archivedWithSettings = archivedPackages.map((pkg) => {
+                    const note = archivedPackageNotes.find((candidate) => candidate.noteId === pkg.noteId);
+                    const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
+                    return { ...pkg, ...combinedPackageHealth(pkg, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
+                });
+                const interruptedTransactionCount = new Set(transactionNotes
+                    .filter((note) => !note.isArchived)
+                    .map((note) => note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL))
+                    .filter(Boolean)).size;
+                setState({ manager, settings, packages: packagesWithSettings, archivedPackages: archivedWithSettings, catalog, sources, allowNetworkPackages, allowedSourceHosts, checkForUpdates, updateCheckIntervalHours, includeDeprecatedPackages, interruptedTransactionCount, updateCount, registryError, loading: false, error: null });
+            } catch (error) {
+                setState({ ...EMPTY_STATE, loading: false, error: error instanceof Error ? error.message : String(error) });
+            }
+        })();
+
+        refreshPromiseRef.current = refreshPromise;
+        try {
+            await refreshPromise;
+        } finally {
+            if (refreshPromiseRef.current === refreshPromise) refreshPromiseRef.current = null;
         }
     }, []);
 
@@ -287,6 +332,14 @@ export default function PluginsSettings() {
         try {
             const sources = normalizePluginSources(state.sources);
             await setLabel(state.settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
+            // Keep the legacy labels as a compatibility mirror. Older embedded
+            // package managers do not understand packageSources, and deleting
+            // these labels makes a newer Plugins screen silently disconnect an
+            // older manager after the user saves settings.
+            const legacySources = buildLegacyPluginSourceLabels(sources);
+            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources.packageRegistryUrl);
+            await setLabel(state.settings.noteId, PACKAGE_REGISTRY_URLS_LABEL, legacySources.packageRegistryUrls);
+            await setLabel(state.settings.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources.packageDirectManifestUrls);
             await setLabel(state.settings.noteId, "packageAllowNetwork", state.allowNetworkPackages ? "true" : "false");
             await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts.join("\n")));
             await setLabel(state.settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, state.checkForUpdates ? "true" : "false");
@@ -354,7 +407,7 @@ export default function PluginsSettings() {
         if (!window.confirm(translateText("plugins.lifecycle_confirm", { action, title: pkg.title }))) return;
         setSavingPackage(pkg.id);
         try {
-            const notes = await search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"${archived ? "" : " #archived"}`);
+            const notes = await search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"${archived ? "" : " #archived"}`, !archived);
             const packageNotes = notes.filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
             if (!packageNotes.length) throw new Error(`No package-owned notes found for ${pkg.id}`);
             await setPackageArtifactActivation(pkg.id, false, packageNotes);
@@ -373,21 +426,44 @@ export default function PluginsSettings() {
         }
     }
 
+    async function deletePackageNotes(pkg: PackageSummary) {
+        const [active, archived] = await Promise.all([
+            search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"`),
+            search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`, true)
+        ]);
+        const packageNotes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
+            .filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
+        const packageNoteIds = new Set(packageNotes.map((note) => note.noteId));
+        const notes = packageNotes.filter((note) =>
+            !note.getParentBranches().some((branch) => packageNoteIds.has(branch.parentNoteId))
+        );
+        const taskId = randomString(12);
+        for (const [index, note] of notes.entries()) {
+            await server.remove(`notes/${note.noteId}?taskId=${taskId}&eraseNotes=false&last=${index === notes.length - 1 ? "true" : "false"}`);
+        }
+    }
+
     async function deletePackage(pkg: PackageSummary) {
         if (!window.confirm(translateText("plugins.delete_plugin_confirm", { title: pkg.title }))) return;
         setSavingPackage(pkg.id);
         try {
-            const [active, archived] = await Promise.all([
-                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}"`),
-                search.searchForNotesIncludingHidden(`#packageOwner="${pkg.id}" #archived`)
-            ]);
-            const notes = [...new Map([...active, ...archived].map((note) => [note.noteId, note])).values()]
-                .filter((note) => !note.getOwnedLabelValue(PACKAGE_TRANSACTION_LABEL));
-            const taskId = randomString(12);
-            for (const [index, note] of notes.entries()) {
-                await server.remove(`notes/${note.noteId}?taskId=${taskId}&eraseNotes=false&last=${index === notes.length - 1 ? "true" : "false"}`);
-            }
+            await deletePackageNotes(pkg);
             toast.showMessage(translateText("plugins.plugin_deleted", { title: pkg.title }));
+            await refresh();
+        } catch (error) {
+            toast.showError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setSavingPackage("");
+        }
+    }
+
+    async function deleteArchivedPackages() {
+        if (!state.archivedPackages.length) return;
+        if (!window.confirm(translateText("plugins.delete_archived_confirm", { count: state.archivedPackages.length }))) return;
+        setSavingPackage("__archived_cleanup__");
+        try {
+            for (const pkg of state.archivedPackages) await deletePackageNotes(pkg);
+            toast.showMessage(translateText("plugins.archived_deleted", { count: state.archivedPackages.length }));
             await refresh();
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
@@ -445,6 +521,23 @@ export default function PluginsSettings() {
     return (
         <>
             <OptionsPageHeader />
+
+            <OptionsSection
+                title={t("plugins.updates_title")}
+                description={t("plugins.updates_description")}
+            >
+                {state.registryError && <p role="alert">{formatPluginUpdateError(state.registryError)}</p>}
+                {!state.loading && state.updateCount === null && !state.registryError && <p>{t("plugins.configure_source")}</p>}
+                {!state.loading && state.updateCount === 0 && !state.registryError && <NoItems icon="bx bx-check" text={t("plugins.up_to_date")} />}
+                {!state.loading && state.updateCount !== null && state.updateCount > 0 && (
+                    <OptionsRowWithButton
+                        label={translateText("plugins.updates_available", { count: state.updateCount })}
+                        description={t("plugins.review_updates_description")}
+                        buttonText={t("plugins.review_updates")}
+                        onClick={() => void openCatalog()}
+                    />
+                )}
+            </OptionsSection>
 
             <OptionsSection
                 title={t("plugins.available_title")}
@@ -514,7 +607,7 @@ export default function PluginsSettings() {
                         </OptionsRow>
                         {configuredPackage === pkg.id && <InstalledPackageDetails
                             pkg={pkg}
-                            manifest={state.catalog.find((candidate) => candidate.id === pkg.id)}
+                            manifest={state.catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest}
                             onChange={(key, value) => updatePackageSetting(pkg.id, key, value)}
                             onSave={() => void savePackageSettings(pkg)}
                             onPinChange={(pinned) => void savePackagePin(pkg, pinned)}
@@ -529,53 +622,54 @@ export default function PluginsSettings() {
                 ))}
             </OptionsSection>
 
-            <OptionsSection
+            {state.archivedPackages.length > 0 && <OptionsSection
                 title={t("plugins.archived_title")}
                 description={t("plugins.archived_description")}
+                actions={<Button
+                    text={archivedExpanded ? t("plugins.hide_archived") : translateText("plugins.show_archived", { count: state.archivedPackages.length })}
+                    icon={archivedExpanded ? "bx-chevron-up" : "bx-chevron-down"}
+                    size="small"
+                    aria-expanded={archivedExpanded}
+                    onClick={() => setArchivedExpanded((expanded) => !expanded)}
+                    disabled={Boolean(savingPackage)}
+                />}
             >
-                {!state.loading && !state.archivedPackages.length && <NoItems icon="bx bx-archive" text={t("plugins.no_archived")} />}
-                {state.archivedPackages.map((pkg) => (
-                    <OptionsRow
-                        key={pkg.noteId}
-                        name={`community-package-archived-${pkg.noteId}`}
-                        label={pkg.title}
-                        description={formatInstalledPackageDescription(pkg)}
-                    >
-                        <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
-                            <Button
-                                text={t("plugins.restore")}
-                                kind="primary"
-                                size="micro"
-                                disabled={savingPackage === pkg.id}
-                                onClick={() => void setPackageArchived(pkg, false)}
-                            />
-                            <Button
-                                text={t("plugins.delete_plugin")}
-                                size="micro"
-                                disabled={savingPackage === pkg.id}
-                                onClick={() => void deletePackage(pkg)}
-                            />
-                        </span>
-                    </OptionsRow>
-                ))}
-            </OptionsSection>
-
-            <OptionsSection
-                title={t("plugins.updates_title")}
-                description={t("plugins.updates_description")}
-            >
-                {state.registryError && <p role="alert">{formatPluginUpdateError(state.registryError)}</p>}
-                {!state.loading && state.updateCount === null && !state.registryError && <p>{t("plugins.configure_source")}</p>}
-                {!state.loading && state.updateCount === 0 && !state.registryError && <NoItems icon="bx bx-check" text={t("plugins.up_to_date")} />}
-                {!state.loading && state.updateCount !== null && state.updateCount > 0 && (
+                {archivedExpanded && <>
                     <OptionsRowWithButton
-                        label={translateText("plugins.updates_available", { count: state.updateCount })}
-                        description={t("plugins.review_updates_description")}
-                        buttonText={t("plugins.review_updates")}
-                        onClick={() => void openCatalog()}
+                        label={t("plugins.cleanup_archived_label")}
+                        description={t("plugins.cleanup_archived_description")}
+                        buttonText={t("plugins.cleanup_archived")}
+                        buttonClassName="btn-warning"
+                        disabled={Boolean(savingPackage)}
+                        onClick={() => void deleteArchivedPackages()}
                     />
-                )}
+                    {state.archivedPackages.map((pkg) => (
+                        <OptionsRow
+                            key={pkg.noteId}
+                            name={`community-package-archived-${pkg.noteId}`}
+                            label={pkg.title}
+                            description={formatInstalledPackageDescription(pkg)}
+                        >
+                            <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                                <Button
+                                    text={t("plugins.restore")}
+                                    kind="primary"
+                                    size="micro"
+                                    disabled={Boolean(savingPackage)}
+                                    onClick={() => void setPackageArchived(pkg, false)}
+                                />
+                                <Button
+                                    text={t("plugins.delete_plugin")}
+                                    size="micro"
+                                    disabled={Boolean(savingPackage)}
+                                    onClick={() => void deletePackage(pkg)}
+                                />
+                            </span>
+                        </OptionsRow>
+                    ))}
+                </>}
             </OptionsSection>
+            }
 
             <OptionsSection
                 title={t("plugins.advanced_title")}
@@ -771,6 +865,8 @@ function EditablePluginList({ values, editingIndex, draftValue, inputType, input
                         iconAction
                         buttonClassName="bx bx-dots-vertical-rounded"
                         hideToggleArrow
+                        noDropdownListStyle
+                        portalToBody
                         title={menuLabel}
                         buttonProps={{ "aria-label": menuLabel }}
                     >
@@ -843,6 +939,46 @@ export function packageHealth(artifactIds: string[], manifest?: CatalogPackage) 
         : { health: "healthy" as const, healthMessage: "all artifacts present" };
 }
 
+function combinedPackageHealth(pkg: PackageSummary, manifest?: CatalogPackage) {
+    const artifactHealth = packageHealth(pkg.artifactIds, manifest);
+    const activationHealth = packageActivationHealth(pkg.artifactNotes, pkg.enabled, manifest);
+    return activationHealth.health === "broken" ? activationHealth : artifactHealth;
+}
+
+export function packageActivationHealth(artifactNotes: FNote[], enabled: boolean, manifest?: CatalogPackage) {
+    if (!manifest) return { health: "unknown" as const, healthMessage: "not in registry" };
+
+    const issues: string[] = [];
+    const notesByArtifact = new Map(artifactNotes.map((note) => [note.getOwnedLabelValue(PACKAGE_ARTIFACT_LABEL), note]));
+    for (const artifact of manifest.artifacts) {
+        const note = notesByArtifact.get(artifact.id);
+        if (!note) continue;
+
+        for (const [labelName, expectedValue] of expectedActivationLabels(artifact)) {
+            const active = note.getOwnedLabels(labelName).some((attribute) => attribute.value === expectedValue);
+            const disabled = note.getOwnedLabels(`disabled:${labelName}`).some((attribute) => attribute.value === expectedValue);
+            if (enabled && (!active || disabled)) issues.push(`${artifact.id}:${labelName}`);
+            if (!enabled && active) issues.push(`${artifact.id}:${labelName}`);
+        }
+    }
+
+    return issues.length
+        ? { health: "broken" as const, healthMessage: `activation mismatch: ${issues.slice(0, 6).join(", ")}` }
+        : { health: "healthy" as const, healthMessage: "all artifacts active" };
+}
+
+function expectedActivationLabels(artifact: PackageArtifact) {
+    const labels: Array<[string, string]> = [];
+    if (artifact.type === "widget") labels.push(["widget", ""]);
+    if (artifact.type === "launcher") labels.push(["launcherType", "customWidget"]);
+    if (artifact.type === "css") labels.push(["appCss", ""]);
+    if (artifact.type === "theme") labels.push(["appTheme", artifact.title || "community"]);
+    if (artifact.activation === "startup") labels.push(["run", artifact.type === "backend" ? "backendStartup" : "frontendStartup"]);
+    if (artifact.activation === "schedule" && artifact.schedule) labels.push(["run", artifact.schedule]);
+    if (artifact.activation === "request" && artifact.route) labels.push(["customRequestHandler", artifact.route]);
+    return labels;
+}
+
 async function loadCatalog(sources: string[], packages: PackageSummary[], includeDeprecatedPackages: boolean) {
     const configuredSources = normalizePluginSources(sources);
     const cachedCatalog = packages
@@ -853,10 +989,16 @@ async function loadCatalog(sources: string[], packages: PackageSummary[], includ
     }
 
     const sourceResults = configuredSources.map(async (source): Promise<RawCatalogPackage[]> => {
-        if (!isSecurePackageUrl(source)) throw new Error(`${source} is not a permitted plugin source URL`);
-        const resolvedSource = normalizePluginSourceUrl(source);
+        let resolvedSource: string;
+        try {
+            resolvedSource = normalizePluginSourceUrl(source);
+        } catch {
+            throw new Error(`${source} is not a permitted plugin source URL (use HTTPS or a localhost HTTP URL)`);
+        }
+        if (!isSecurePackageUrl(resolvedSource)) throw new Error(`${source} is not a permitted plugin source URL`);
         const response = await fetch(resolvedSource);
         if (!response.ok) throw new Error(`${source} returned HTTP ${response.status}`);
+        if (!isSecurePackageUrl(response.url || resolvedSource)) throw new Error(`${source} redirected to a non-permitted URL`);
         const payload = await response.json() as { packages?: RawCatalogPackage[] } | RawCatalogPackage;
         if ("packages" in payload && Array.isArray(payload.packages)) return payload.packages;
         if (isCatalogPackageEntry(payload as RawCatalogPackage)) return [payload as RawCatalogPackage];
@@ -948,7 +1090,46 @@ export function parseRegistryUrls(value: string | null | undefined) {
 }
 
 export function normalizePluginSources(sources: string[]) {
-    return [...new Set(sources.map((source) => source.trim()).filter(Boolean))];
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const source of sources) {
+        const trimmedSource = source.trim();
+        if (!trimmedSource) continue;
+        let identity = trimmedSource;
+        try {
+            identity = normalizePluginSourceUrl(trimmedSource);
+        } catch {
+            // Preserve invalid values so the UI can report the exact entry.
+        }
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        result.push(trimmedSource);
+    }
+    return result;
+}
+
+export function buildLegacyPluginSourceLabels(sources: string[]) {
+    const normalizedSources = normalizePluginSources(sources).map((source) => {
+        try {
+            return normalizePluginSourceUrl(source);
+        } catch {
+            return source;
+        }
+    });
+    const serializedSources = JSON.stringify(normalizedSources);
+    return {
+        // The singular label is still used by the oldest package manager.
+        packageRegistryUrl: normalizedSources[0] || "",
+        packageRegistryUrls: serializedSources,
+        packageDirectManifestUrls: serializedSources
+    };
+}
+
+export function parseConfiguredPluginSources(getLabelValue: (labelName: string) => string | null | undefined) {
+    return normalizePluginSources([
+        ...parseRegistryUrls(getLabelValue(PACKAGE_SOURCES_LABEL)),
+        ...LEGACY_PACKAGE_SOURCE_LABELS.flatMap((labelName) => parseRegistryUrls(getLabelValue(labelName)))
+    ]);
 }
 
 export function parseSourceHosts(value: string | null | undefined) {
@@ -992,6 +1173,7 @@ function formatHealthMessage(message: string) {
     if (message === "not checked") return t("plugins.health_not_checked");
     if (message === "not in registry") return t("plugins.health_not_in_registry");
     if (message.startsWith("missing ")) return translateText("plugins.health_missing", { artifacts: message.slice("missing ".length) });
+    if (message.startsWith("activation mismatch: ")) return translateText("plugins.health_activation", { artifacts: message.slice("activation mismatch: ".length) });
     return message;
 }
 
@@ -1021,9 +1203,9 @@ function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange,
                     </div>
                 </OptionsRow>}
                 {pkg.artifactNotes.filter((note) => note.type === "render").length > 0 && <OptionsRow name={`community-package-pages-${pkg.noteId}`} label="Open package pages" description="Open a package dashboard or standalone render page in a Trilium tab.">
-                    <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                    <div className="community-package-page-links">
                         {pkg.artifactNotes.filter((note) => note.type === "render").map((note) => <Button key={note.noteId} text={note.title} size="micro" onClick={() => onOpenArtifact(note.noteId)} />)}
-                    </span>
+                    </div>
                 </OptionsRow>}
                 <OptionsRow name={`community-package-maintenance-${pkg.noteId}`} label={t("plugins.registry_status_label")} description={t("plugins.registry_status_description")}>
                     <span>{[manifestStatus(manifest), manifest.maintainer && translateText("plugins.maintainer", { maintainer: manifest.maintainer }), manifest.license && translateText("plugins.license", { license: manifest.license })].filter(Boolean).join(" · ") || t("plugins.no_registry_metadata")}</span>
@@ -1165,6 +1347,7 @@ export function isPackageArtifact(value: unknown): value is PackageArtifact {
     const artifact = value as Partial<PackageArtifact>;
     return typeof artifact.id === "string"
         && PACKAGE_ARTIFACT_ID_PATTERN.test(artifact.id)
+        && typeof artifact.type === "string"
         && typeof artifact.source === "string"
         && (isSecurePackageUrl(artifact.source) || isRelativePackageSource(artifact.source))
         && typeof artifact.integrity === "string"
@@ -1211,14 +1394,20 @@ export function isRelativePackageSource(value: string) {
 }
 
 export function normalizePluginSourceUrl(source: string) {
-    const parsed = new URL(source);
-    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+    const trimmedSource = source.trim();
+    const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
+        ? `https://${trimmedSource}`
+        : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)
+            ? `https://${trimmedSource}`
+            : trimmedSource;
+    const parsed = new URL(normalizedInput);
+    if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "github.com") return normalizedInput;
 
     const segments = parsed.pathname.split("/").filter(Boolean);
-    if (segments.length < 2) return source;
+    if (segments.length < 2) return normalizedInput;
     const owner = segments[0];
     const repository = segments[1].replace(/\.git$/, "");
-    if (!owner || !repository) return source;
+    if (!owner || !repository) return normalizedInput;
 
     if (segments[2] === "blob" && segments[3] && segments.length > 4) {
         return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;

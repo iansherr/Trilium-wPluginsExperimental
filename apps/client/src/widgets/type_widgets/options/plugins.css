@@ -41,6 +41,21 @@
     flex-shrink: 0;
 }
 
+/* These menus open from inside the settings modal. Keep them above the modal
+   contents and opaque: the generic list-menu backdrop treatment can otherwise
+   make the small action popup look washed out or see-through over the dialog. */
+.plugin-list-editor-actions .dropdown-menu {
+    --bs-dropdown-zindex: 1060;
+    background: var(--menu-background-color-no-backdrop) !important;
+    background-color: var(--menu-background-color-no-backdrop) !important;
+    backdrop-filter: none !important;
+    opacity: 1 !important;
+}
+
+.plugin-list-editor-actions .dropdown-menu::before {
+    display: none;
+}
+
 @keyframes plugin-list-row-in {
     from {
         opacity: 0.65;

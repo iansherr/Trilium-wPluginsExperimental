@@ -4,6 +4,7 @@ import i18next from "i18next";
 import {
     compareVersions,
     compatibilityStatus,
+    buildLegacyPluginSourceLabels,
     formatCompatibility,
     formatDependency,
     formatInstalledPackageDescription,
@@ -20,8 +21,10 @@ import {
     manifestStatus,
     normalizePluginSourceUrl,
     normalizePluginSources,
+    parseConfiguredPluginSources,
     parseSourceHosts,
     normalizeSourceHosts,
+    packageActivationHealth,
     packageHealth,
     parseCachedPackageManifest,
     parseRegistryUrls,
@@ -42,7 +45,7 @@ const manifest = {
     permissions: ["network"],
     settings: [{ key: "enabled", type: "boolean" as const, title: "Enabled", default: false }],
     surfaces: [],
-    artifacts: [{ id: "manifest", source: "https://example.com/plugin.json", integrity }],
+    artifacts: [{ id: "manifest", type: "resource" as const, source: "https://example.com/plugin.json", integrity }],
     dependencies: [{ id: "example/dependency", version: ">=1.0.0" }],
     compatibility: { minTriliumVersion: "0.100.0", maxTriliumVersion: "0.110.0" }
 };
@@ -58,6 +61,19 @@ describe("plugin manager validation helpers", () => {
             "https://two.example/index.json"
         ]);
         expect(parseRegistryUrls(null)).toEqual([]);
+    });
+
+    it("surfaces legacy source labels alongside canonical sources", () => {
+        const labels: Record<string, string> = {
+            packageSources: '["https://catalog.example/registry.json"]',
+            packageDirectManifestUrls: "https://github.example/retired/trilium-package.json\nhttps://catalog.example/registry.json",
+            packageRegistryUrls: "[]",
+            packageRegistryUrl: ""
+        };
+        expect(parseConfiguredPluginSources((labelName) => labels[labelName])).toEqual([
+            "https://catalog.example/registry.json",
+            "https://github.example/retired/trilium-package.json"
+        ]);
     });
 
     it("normalizes source hosts to one host per line", () => {
@@ -88,7 +104,34 @@ describe("plugin manager validation helpers", () => {
         expect(normalizePluginSourceUrl("https://github.com/timeworthy/ikmal_tools_trilium/blob/main/trilium-package.json")).toBe(
             "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
         );
+        expect(normalizePluginSourceUrl("github.com/timeworthy/ikmal_tools_trilium")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
+        expect(normalizePluginSourceUrl("raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json")).toBe(
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        );
         expect(normalizePluginSources([" https://example.com/a.json ", "https://example.com/a.json", ""])).toEqual(["https://example.com/a.json"]);
+        expect(normalizePluginSources([
+            "https://github.com/timeworthy/ikmal_tools_trilium",
+            "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json"
+        ])).toEqual(["https://github.com/timeworthy/ikmal_tools_trilium"]);
+    });
+
+    it("writes compatible aliases for older package managers", () => {
+        expect(buildLegacyPluginSourceLabels([
+            "github.com/timeworthy/ikmal_tools_trilium",
+            "http://127.0.0.1:39125/registry.json"
+        ])).toEqual({
+            packageRegistryUrl: "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+            packageRegistryUrls: JSON.stringify([
+                "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+                "http://127.0.0.1:39125/registry.json"
+            ]),
+            packageDirectManifestUrls: JSON.stringify([
+                "https://raw.githubusercontent.com/timeworthy/ikmal_tools_trilium/main/trilium-package.json",
+                "http://127.0.0.1:39125/registry.json"
+            ])
+        });
     });
 
     it("validates package settings, dependencies, artifacts, and compatibility", () => {
@@ -123,6 +166,22 @@ describe("plugin manager validation helpers", () => {
         const cached = parseCachedPackageManifest(JSON.stringify(manifest));
         expect(cached?.id).toBe("example/plugin");
         expect(cached?.settings).toEqual(manifest.settings);
+    });
+
+    it("detects activation drift separately from missing artifacts", () => {
+        const cssManifest = {
+            ...manifest,
+            artifacts: [{ id: "style", type: "css" as const, source: "style.css", integrity }]
+        };
+        const fakeNote = (labels: Record<string, string[]>) => ({
+            getOwnedLabelValue: (name: string) => name === "packageArtifact" ? "style" : null,
+            getOwnedLabels: (name: string) => (labels[name] || []).map((value, index) => ({ attributeId: String(index), value }))
+        });
+
+        expect(packageActivationHealth([fakeNote({ "disabled:appCss": [""] }) as any], true, cssManifest).health).toBe("broken");
+        expect(packageActivationHealth([fakeNote({ appCss: [""] }) as any], true, cssManifest)).toEqual({ health: "healthy", healthMessage: "all artifacts active" });
+        expect(packageActivationHealth([fakeNote({ appCss: [""] }) as any], false, cssManifest).health).toBe("broken");
+        expect(packageActivationHealth([fakeNote({ "disabled:appCss": [""] }) as any], false, cssManifest)).toEqual({ health: "healthy", healthMessage: "all artifacts active" });
     });
 });
 

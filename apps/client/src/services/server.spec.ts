@@ -80,16 +80,16 @@ describe("getHeaders", () => {
         expect(headers).not.toHaveProperty("x-empty");
     });
 
-    it("uses null hoisted note id when there is no active context", async () => {
+    it("omits the hoisted note id when there is no active context", async () => {
         (window as any).glob.appContext = { tabManager: { getActiveContext: () => null } };
         const headers = await server.getHeaders();
-        expect(headers["trilium-hoisted-note-id"]).toBeNull();
+        expect(headers).not.toHaveProperty("trilium-hoisted-note-id");
     });
 
-    it("uses null hoisted note id when tabManager is absent", async () => {
+    it("omits the hoisted note id when tabManager is absent", async () => {
         (window as any).glob.appContext = {};
         const headers = await server.getHeaders();
-        expect(headers["trilium-hoisted-note-id"]).toBeNull();
+        expect(headers).not.toHaveProperty("trilium-hoisted-note-id");
     });
 
     it("returns an empty object in share mode", async () => {

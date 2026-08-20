@@ -7,19 +7,20 @@
  * title: Community Packages
  */
 
-declare const api: any;
-declare const window: any;
-
 import { showMessage, triggerCommand } from "trilium:api";
 import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
 
 const SOURCES_LABEL = "packageSources";
+const LEGACY_REGISTRY_URL_LABEL = "packageRegistryUrl";
+const LEGACY_REGISTRY_URLS_LABEL = "packageRegistryUrls";
+const LEGACY_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls";
 const ROOT_LABEL = "communityPackagesRoot";
 const SETTINGS_LABEL = "packageManagerSettings";
 const MANAGED_LABEL = "packageManaged";
 const OWNER_LABEL = "packageOwner";
 const VERSION_LABEL = "packageVersion";
 const ARTIFACT_LABEL = "packageArtifact";
+const MANIFEST_LABEL = "packageManifest";
 const ENABLED_LABEL = "packageEnabled";
 const PINNED_LABEL = "packagePinned";
 const TRANSACTION_LABEL = "packageTransaction";
@@ -329,8 +330,8 @@ export default function CommunityPackages() {
         setBusyPackage(manifest.id);
         setError("");
         try {
-            await replacePackage(manifest, false, allowedSourceHosts, dependencyResolution.packages, packages);
-            showMessage(`${manifest.name} updated disabled. Enable it here when ready.`);
+            await replacePackage(manifest, true, allowedSourceHosts, dependencyResolution.packages, packages);
+            showMessage(`${manifest.name} updated; its previous enabled state was preserved.`);
             await refresh(sources);
         } catch (cause) {
             setError(errorMessage(cause));
@@ -597,7 +598,17 @@ export default function CommunityPackages() {
                                             disabled={Boolean(busyPackage)}
                                         />
                                         {entry ? (
-                                            <Button text="Manage in Plugins" size="small" onClick={openPluginSettings} disabled={Boolean(busyPackage)} />
+                                            updateAvailable ? (
+                                                <Button
+                                                    text={busyPackage === manifest.id ? "Updating…" : "Update"}
+                                                    size="small"
+                                                    kind="primary"
+                                                    onClick={() => update(manifest)}
+                                                    disabled={Boolean(busyPackage)}
+                                                />
+                                            ) : (
+                                                <Button text="Manage in Plugins" size="small" onClick={openPluginSettings} disabled={Boolean(busyPackage)} />
+                                            )
                                         ) : (
                                             <Button
                                                 text={busyPackage === manifest.id ? "Installing…" : "Install"}
@@ -762,7 +773,7 @@ async function readSettings() {
         note = await api.getNote(note.noteId);
     }
     return {
-        sources: parseRegistryUrls(note?.getOwnedLabelValue(SOURCES_LABEL) || ""),
+        sources: parseConfiguredSources(note),
         allowNetworkPackages: note?.getOwnedLabelValue("packageAllowNetwork") === "true",
         checkForUpdates: note?.getOwnedLabelValue(CHECK_UPDATES_LABEL) === "true",
         updateCheckIntervalHours: Math.max(1, Number(note?.getOwnedLabelValue(UPDATE_INTERVAL_LABEL)) || 24),
@@ -780,6 +791,22 @@ function parseRegistryUrls(value) {
         // Legacy and hand-edited values are accepted as newline-separated URLs.
     }
     return String(value).split(/[\r\n]+/).map((url) => url.trim()).filter(Boolean);
+}
+
+function parseConfiguredSources(note) {
+    const values = [
+        note?.getOwnedLabelValue(SOURCES_LABEL),
+        note?.getOwnedLabelValue(LEGACY_REGISTRY_URL_LABEL),
+        note?.getOwnedLabelValue(LEGACY_REGISTRY_URLS_LABEL),
+        note?.getOwnedLabelValue(LEGACY_DIRECT_MANIFEST_URLS_LABEL)
+    ].flatMap(parseRegistryUrls);
+    return [...new Set(values.map((value) => {
+        try {
+            return normalizePluginSourceUrl(value);
+        } catch {
+            return value;
+        }
+    }))];
 }
 
 function normalizeSourceHosts(value) {
@@ -860,12 +887,16 @@ async function ensureRootNote() {
         await moveNoteToParent(existing, "_hidden", (branch) => branch.parentNoteId === "root");
         return existing;
     }
-    return createNote("_hidden", {
+    const root = await createNote("root", {
         title: "Community Packages",
         type: "book",
         content: "Packages installed by the Community Packages manager.",
         attributes: [{ type: "label", name: ROOT_LABEL }]
     });
+    await api.reloadNotes([root.noteId]);
+    const created = await api.getNote(root.noteId);
+    await moveNoteToParent(created, "_hidden", (branch) => branch.parentNoteId === "root");
+    return created;
 }
 
 async function createNote(parentNoteId, options) {
@@ -925,7 +956,7 @@ async function setLauncherVisibility(note, enabled) {
     );
 }
 
-async function moveNoteToParent(note, targetParentNoteId, branchFilter: (branch: any) => boolean = () => true) {
+async function moveNoteToParent(note, targetParentNoteId, branchFilter = () => true) {
     const sourceBranch = note.getParentBranches().find(branchFilter);
     if (!sourceBranch || sourceBranch.parentNoteId === targetParentNoteId) return;
 
@@ -966,8 +997,11 @@ async function replacePackage(manifest, preserveEnabled, allowedSourceHosts, dep
         const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
         await restorePackageSettings(stagedPackageNotes, manifest, previousSettings);
         await restorePackagePinned(stagedPackageNotes, previousPinned);
-        await archiveNotes(previousNotes.filter((note) => !transferredNotes.includes(note)));
         if (preserveEnabled && previousEnabled) await applyEnabledState(stagedPackageNotes, true);
+        await api.reloadNotes(stagedPackageNotes.map((note) => note.noteId));
+        const verifiedPackageNotes = (await Promise.all(stagedPackageNotes.map((note) => api.getNote(note.noteId)))).filter(Boolean);
+        await verifyPackageActivation(verifiedPackageNotes, manifest, preserveEnabled && previousEnabled);
+        await archiveNotes(previousNotes.filter((note) => !transferredNotes.includes(note)));
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
         try {
@@ -1012,6 +1046,10 @@ async function installPackageSafely(manifests, allowedSourceHosts, catalog = [])
             const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
             await restorePackageSettings(stagedPackageNotes, manifest, backup.settings || {});
             await restorePackagePinned(stagedPackageNotes, Boolean(backup.pinned));
+        }
+        for (const manifest of manifests) {
+            const stagedPackageNotes = stagedNotes.filter((note) => note.getOwnedLabelValue(OWNER_LABEL) === manifest.id);
+            await verifyPackageActivation(stagedPackageNotes, manifest, false);
         }
         await clearTransaction(transactionId, stagedNotes);
         await clearPackageMigrations(transactionId, transferredNotes);
@@ -1074,11 +1112,85 @@ async function installPackage(manifest, transactionId = "", allowedSourceHosts =
 
 async function verifyArtifactIntegrity(manifest, artifact, payload) {
     if (!artifact.integrity) throw new Error(`${manifest.name} artifact ${artifact.id} has no integrity hash`);
-    const digest = await crypto.subtle.digest("SHA-256", payload);
+    // WebCrypto is unavailable when Trilium is served over plain HTTP. Keep the
+    // integrity check active there with the small self-contained implementation
+    // below instead of treating an insecure development context as an exception.
+    const digest = globalThis.crypto?.subtle
+        ? await globalThis.crypto.subtle.digest("SHA-256", payload)
+        : sha256Digest(payload);
     const actual = `sha256-${arrayBufferToBase64(digest)}`;
     if (actual !== artifact.integrity) {
         throw new Error(`${manifest.name} artifact ${artifact.id} failed integrity verification (expected ${artifact.integrity}, received ${actual})`);
     }
+}
+
+// Render notes are bundled by Trilium's script service, which only provides
+// the Trilium-specific imports. Keep this fallback dependency-free so package
+// verification also works in a plain-HTTP render-note context.
+function sha256Digest(input) {
+    const roundConstants = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+    const hash = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    const paddedLength = Math.ceil((input.byteLength + 9) / 64) * 64;
+    const padded = new Uint8Array(paddedLength);
+    padded.set(input);
+    padded[input.byteLength] = 0x80;
+    const paddedView = new DataView(padded.buffer);
+    const bitLength = input.byteLength * 8;
+    paddedView.setUint32(paddedLength - 8, Math.floor(bitLength / 0x100000000));
+    paddedView.setUint32(paddedLength - 4, bitLength >>> 0);
+
+    const rotateRight = (value, bits) => (value >>> bits) | (value << (32 - bits));
+    for (let offset = 0; offset < paddedLength; offset += 64) {
+        const words = new Uint32Array(64);
+        for (let index = 0; index < 16; index++) words[index] = paddedView.getUint32(offset + index * 4);
+        for (let index = 16; index < 64; index++) {
+            const value = words[index - 15];
+            const smallSigma0 = rotateRight(value, 7) ^ rotateRight(value, 18) ^ (value >>> 3);
+            const nextValue = words[index - 2];
+            const smallSigma1 = rotateRight(nextValue, 17) ^ rotateRight(nextValue, 19) ^ (nextValue >>> 10);
+            words[index] = (words[index - 16] + smallSigma0 + words[index - 7] + smallSigma1) >>> 0;
+        }
+
+        let [a, b, c, d, e, f, g, h] = hash;
+        for (let index = 0; index < 64; index++) {
+            const bigSigma1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+            const choose = (e & f) ^ (~e & g);
+            const first = (h + bigSigma1 + choose + roundConstants[index] + words[index]) >>> 0;
+            const bigSigma0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+            const majority = (a & b) ^ (a & c) ^ (b & c);
+            const second = (bigSigma0 + majority) >>> 0;
+            h = g;
+            g = f;
+            f = e;
+            e = (d + first) >>> 0;
+            d = c;
+            c = b;
+            b = a;
+            a = (first + second) >>> 0;
+        }
+        hash[0] = (hash[0] + a) >>> 0;
+        hash[1] = (hash[1] + b) >>> 0;
+        hash[2] = (hash[2] + c) >>> 0;
+        hash[3] = (hash[3] + d) >>> 0;
+        hash[4] = (hash[4] + e) >>> 0;
+        hash[5] = (hash[5] + f) >>> 0;
+        hash[6] = (hash[6] + g) >>> 0;
+        hash[7] = (hash[7] + h) >>> 0;
+    }
+
+    const digest = new Uint8Array(32);
+    const digestView = new DataView(digest.buffer);
+    hash.forEach((value, index) => digestView.setUint32(index * 4, value));
+    return digest;
 }
 
 async function downloadArtifact(manifest, artifact, sourceUrl, allowedSourceHosts) {
@@ -1161,9 +1273,14 @@ async function fetchJsonSource(url) {
 }
 
 async function loadCatalogSource(sourceUrl) {
-    const sourceProblem = downloadUrlProblem(sourceUrl, "");
+    let resolvedUrl;
+    try {
+        resolvedUrl = normalizePluginSourceUrl(sourceUrl);
+    } catch {
+        throw new Error(`${sourceUrl} is not a permitted plugin source URL (use HTTPS or a localhost HTTP URL)`);
+    }
+    const sourceProblem = downloadUrlProblem(resolvedUrl, "");
     if (sourceProblem) throw new Error(`${sourceUrl}: ${sourceProblem}`);
-    const resolvedUrl = normalizePluginSourceUrl(sourceUrl);
     try {
         const payload = await fetchJsonSource(resolvedUrl);
         if (Array.isArray(payload?.packages)) return payload.packages.filter(isCatalogEntry);
@@ -1177,14 +1294,20 @@ async function loadCatalogSource(sourceUrl) {
 }
 
 function normalizePluginSourceUrl(source) {
-    const parsed = new URL(source);
-    if (parsed.hostname.toLowerCase() !== "github.com") return source;
+    const trimmedSource = String(source || "").trim();
+    const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
+        ? `https://${trimmedSource}`
+        : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)
+            ? `https://${trimmedSource}`
+            : trimmedSource;
+    const parsed = new URL(normalizedInput);
+    if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "github.com") return normalizedInput;
 
     const segments = parsed.pathname.split("/").filter(Boolean);
-    if (segments.length < 2) return source;
+    if (segments.length < 2) return normalizedInput;
     const owner = segments[0];
     const repository = segments[1].replace(/\.git$/, "");
-    if (!owner || !repository) return source;
+    if (!owner || !repository) return normalizedInput;
 
     if (segments[2] === "blob" && segments[3] && segments.length > 4) {
         return `https://raw.githubusercontent.com/${owner}/${repository}/${segments[3]}/${segments.slice(4).join("/")}`;
@@ -1409,6 +1532,10 @@ async function restorePackageNotes(notes, enabled) {
     }
     await api.reloadNotes(notes.map((note) => note.noteId));
     await applyEnabledState(notes, enabled);
+    await api.reloadNotes(notes.map((note) => note.noteId));
+    const restoredNotes = (await Promise.all(notes.map((note) => api.getNote(note.noteId)))).filter(Boolean);
+    const issues = activationLabelIssues(restoredNotes, enabled);
+    if (issues.length) throw new Error(`Previous package activation restore failed: ${issues.join(", ")}`);
 }
 
 async function restorePackageSettings(notes, manifest, values) {
@@ -1455,6 +1582,51 @@ async function applyEnabledState(notes, enabled) {
         await setLauncherVisibility(note, enabled);
     }
     await api.reloadNotes(notes.map((note) => note.noteId));
+}
+
+async function verifyPackageActivation(notes, manifest, enabled) {
+    const issues = activationLabelIssues(notes, enabled);
+    const manifestNote = notes.find((note) => note.getOwnedLabelValue(ARTIFACT_LABEL) === "manifest");
+    if (!manifestNote || manifestNote.getOwnedLabelValue(ENABLED_LABEL) !== String(enabled)) {
+        issues.push(`manifest ${ENABLED_LABEL}=${enabled}`);
+    }
+
+    const notesByArtifact = new Map(notes.map((note) => [note.getOwnedLabelValue(ARTIFACT_LABEL), note]));
+    for (const artifact of manifest.artifacts || []) {
+        const note = notesByArtifact.get(artifact.id);
+        if (!note) continue;
+        for (const [labelName, expectedValue] of expectedActivationLabels(artifact)) {
+            const active = note.getOwnedLabels(labelName).some((attribute) => attribute.value === expectedValue);
+            const disabled = note.getOwnedLabels(`disabled:${labelName}`).some((attribute) => attribute.value === expectedValue);
+            if (enabled && (!active || disabled)) issues.push(`${artifact.id}:${labelName}`);
+            if (!enabled && (active || !disabled)) issues.push(`${artifact.id}:${labelName}`);
+        }
+    }
+
+    if (issues.length) throw new Error(`${manifest.name} activation verification failed: ${issues.join(", ")}`);
+}
+
+function activationLabelIssues(notes, enabled) {
+    const issues = [];
+    for (const note of notes) {
+        for (const labelName of ACTIVATION_LABELS) {
+            if (enabled && note.getOwnedLabels(`disabled:${labelName}`).length) issues.push(`${note.getOwnedLabelValue(ARTIFACT_LABEL)}:${labelName}`);
+            if (!enabled && note.getOwnedLabels(labelName).length) issues.push(`${note.getOwnedLabelValue(ARTIFACT_LABEL)}:${labelName}`);
+        }
+    }
+    return issues;
+}
+
+function expectedActivationLabels(artifact) {
+    const labels = [];
+    if (artifact.type === "widget") labels.push(["widget", ""]);
+    if (artifact.type === "launcher") labels.push(["launcherType", "customWidget"]);
+    if (artifact.type === "css") labels.push(["appCss", ""]);
+    if (artifact.type === "theme") labels.push(["appTheme", artifact.title || "community"]);
+    if (artifact.activation === "startup") labels.push(["run", artifact.type === "backend" ? "backendStartup" : "frontendStartup"]);
+    if (artifact.activation === "schedule" && artifact.schedule) labels.push(["run", artifact.schedule]);
+    if (artifact.activation === "request" && artifact.route) labels.push(["customRequestHandler", artifact.route]);
+    return labels;
 }
 
 function packageSettingsFromNote(note, manifest) {
@@ -1570,6 +1742,7 @@ function packageAttributes(manifest, artifactId = "manifest", transactionId = ""
         { type: "label", name: OWNER_LABEL, value: manifest.id },
         { type: "label", name: VERSION_LABEL, value: manifest.version },
         { type: "label", name: ARTIFACT_LABEL, value: artifactId },
+        ...(artifactId === "manifest" ? [{ type: "label", name: MANIFEST_LABEL, value: JSON.stringify(manifest) }] : []),
         ...(artifact?.integrity ? [{ type: "label", name: INTEGRITY_LABEL, value: artifact.integrity }] : []),
         ...(transactionId ? [{ type: "label", name: TRANSACTION_LABEL, value: transactionId }] : [])
     ];
@@ -1596,7 +1769,7 @@ async function removeAttribute(note, attribute) {
 }
 
 async function attributeRequest(method, path, body) {
-    const headers: Record<string, string> = {
+    const headers = {
         "x-csrf-token": window.glob.csrfToken || "",
         "trilium-component-id": window.glob.componentId || "",
         ...(body ? { "content-type": "application/json" } : {})
@@ -1877,7 +2050,7 @@ function resolveSource(repository, source) {
 }
 
 function manifestProblems(value) {
-    const errors: string[] = [];
+    const errors = [];
     if (!value || typeof value !== "object") return ["manifest must be an object"];
     if (typeof value.id !== "string" || !/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(value.id)) errors.push("id must use the author/name format");
     if (typeof value.version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.version)) errors.push("version must use semantic versioning");
@@ -1961,7 +2134,7 @@ function isSafePackageSurfaceUrl(value) {
 }
 
 function bundleProblems(value) {
-    const errors: string[] = [];
+    const errors = [];
     if (!value || typeof value !== "object") return ["bundle must be an object"];
     if (value.kind !== "bundle") errors.push("kind must be bundle");
     if (value.schemaVersion !== undefined && value.schemaVersion !== 1) errors.push("schemaVersion must be 1");

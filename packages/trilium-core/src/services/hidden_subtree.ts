@@ -31,6 +31,39 @@ export const LBTPL_CUSTOM_WIDGET = "_lbTplCustomWidget";
  */
 
 let hiddenSubtreeDefinition: HiddenSubtreeItem;
+let communityPackagesManagerSource = "";
+
+export const COMMUNITY_PACKAGES_MANAGER_RENDER_ID = "_sd_community-packages-manager_render";
+export const COMMUNITY_PACKAGES_MANAGER_CODE_ID = "_sd_community-packages-manager";
+
+export function setCommunityPackagesManagerSource(source?: string) {
+    communityPackagesManagerSource = source?.trim() ?? "";
+    hiddenSubtreeDefinition = undefined as unknown as HiddenSubtreeItem;
+}
+
+function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
+    if (!communityPackagesManagerSource) return [];
+    // The code note is a sibling declared *before* the render note rather than its child: siblings
+    // are fully created (note, then attributes) in array order, so the renderNote relation below
+    // always finds its target. Nested, it pointed at a note that did not exist yet the first time
+    // this definition was applied, which rolled back the whole hidden-subtree transaction and made
+    // creating a fresh database impossible. `enforceBranches` relocates the note on instances that
+    // already have it nested, so fresh and upgraded databases end up with the same structure.
+    return [{
+        id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+        title: "Community Packages",
+        type: "code",
+        mime: "text/jsx",
+        content: communityPackagesManagerSource,
+        enforceBranches: true,
+        attributes: [{ type: "label", name: "readOnly" }]
+    }, {
+        id: COMMUNITY_PACKAGES_MANAGER_RENDER_ID,
+        title: "Community Packages",
+        type: "render",
+        attributes: [{ type: "relation", name: "renderNote", value: COMMUNITY_PACKAGES_MANAGER_CODE_ID }]
+    }];
+}
 
 function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenSubtreeItem {
     const launchbarConfig = buildLaunchBarConfig();
@@ -146,6 +179,7 @@ function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenS
                 type: "code",
                 icon: "bx-book"
             },
+            ...buildCommunityPackagesManagerDefinition(),
             {
                 // place for user scripts hidden stuff (scripts should not create notes directly under hidden root)
                 id: "_userHidden",
@@ -306,9 +340,13 @@ function buildHiddenSubtreeDefinition(helpSubtree: HiddenSubtreeItem[]): HiddenS
                     { id: "_optionsSpellcheck", title: t("hidden-subtree.spellcheck-title"), type: "contentWidget", icon: "bx-check-double", attributes: [{ type: "label", name: "electronOnly" }] },
                     { id: "_optionsDesktop", title: t("hidden-subtree.desktop-title"), type: "contentWidget", icon: "bx-desktop", attributes: [{ type: "label", name: "electronOnly" }] },
                     { id: "_optionsSecurity", title: t("hidden-subtree.security-title"), type: "contentWidget", icon: "bx-shield" },
-                    { id: "_optionsPassword", title: t("hidden-subtree.password-title"), type: "contentWidget", icon: "bx-lock" },
+                    // Password and ETAPI both answer to something reaching the instance over HTTP —
+                    // a login to hold a session for, a token for another program to call with. The
+                    // standalone build is the only reader of its own database and is served by no
+                    // one, so neither page has anything to set there.
+                    { id: "_optionsPassword", title: t("hidden-subtree.password-title"), type: "contentWidget", icon: "bx-lock", attributes: [{ type: "label", name: "notInStandalone" }] },
                     { id: "_optionsMFA", title: t("hidden-subtree.multi-factor-authentication-title"), type: "contentWidget", enforceDeleted: true },
-                    { id: "_optionsEtapi", title: t("hidden-subtree.etapi-title"), type: "contentWidget", icon: "bx-extension" },
+                    { id: "_optionsEtapi", title: t("hidden-subtree.etapi-title"), type: "contentWidget", icon: "bx-extension", attributes: [{ type: "label", name: "notInStandalone" }] },
                     { id: "_optionsBackup", title: t("hidden-subtree.backup-title"), type: "contentWidget", icon: "bx-data" },
                     { id: "_optionsSync", title: t("hidden-subtree.sync-title"), type: "contentWidget", icon: "bx-wifi" },
                     { id: "_optionsLlm", title: t("hidden-subtree.llm-title"), type: "contentWidget", icon: "bx-bot" },
@@ -575,6 +613,14 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
+    // Children are created before this note's own attributes are saved, so that a relation
+    // declared here may target a descendant (e.g. a render note pointing at the code note it
+    // renders). Saving attributes first made such a relation throw on the very first run,
+    // because its target did not exist yet.
+    for (const child of item.children || []) {
+        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
+    }
+
     for (const attr of attrs) {
         const attrId = `${note.noteId}_${attr.type.charAt(0)}${attr.name}`;
 
@@ -598,9 +644,6 @@ function checkHiddenSubtreeRecursively(parentNoteId: string, item: HiddenSubtree
         }
     }
 
-    for (const child of item.children || []) {
-        checkHiddenSubtreeRecursively(item.id, child, extraOpts);
-    }
 }
 
 export default {

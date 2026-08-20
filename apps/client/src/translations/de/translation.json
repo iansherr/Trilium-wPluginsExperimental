@@ -45,7 +45,11 @@
       "title": "Benutzerdefiniertes React-Widget konnte nicht dargestellt werden"
     },
     "widget-missing-parent": "Benutzerdefiniertes Widget hat die erforderliche '{{property}}'-Eigenschaft nicht korrekt definiert.\n\nFalls dieses Skript ohne UI-Element ausgeführt werden soll, verwenden Sie stattdessen '#run=frontendStartup'.",
-    "scripting-error": "Die Skriptnotiz konnte nicht ausgeführt werden"
+    "scripting-error": "Die Skriptnotiz konnte nicht ausgeführt werden",
+    "unhandled-error": {
+      "details-button": "Weitere Details anzeigen...",
+      "title": "Eine Hintergrundaufgabe ist fehlgeschlagen"
+    }
   },
   "add_link": {
     "add_link": "Link hinzufügen",
@@ -57,7 +61,9 @@
     "link_title": "Linktitel",
     "button_add_link": "Link hinzufügen",
     "anchor": "Anker (optional)",
-    "anchor_none": "Keine (Link zur Notiz)"
+    "anchor_none": "Keine (Link zur Notiz)",
+    "edit_link": "Link bearbeiten",
+    "button_edit_link": "Link speichern"
   },
   "branch_prefix": {
     "edit_branch_prefix": "Zweigpräfix bearbeiten",
@@ -104,7 +110,9 @@
     "ok": "OK",
     "are_you_sure_remove_note": "Möchten Sie die Notiz „{{title}}“ wirklich von der Relationskarte entfernen? ",
     "if_you_dont_check": "Wenn Sie dies nicht aktivieren, wird die Notiz nur aus der Relationskarte entfernt.",
-    "also_delete_note": "Auch die Notiz löschen"
+    "also_delete_note": "Auch die Notiz löschen",
+    "delete_note_keeps_note_one": "Die Notiz hat {{count}} weiteren Klon, deswegen wird die Notiz selbst behalten.",
+    "delete_note_keeps_note_other": "Die Notiz hat {{count}} weiter Klone, deswegen wird die Notiz selbst behalten."
   },
   "delete_notes": {
     "close": "Schließen",
@@ -1276,7 +1284,6 @@
     "images_section_title": "Bilder",
     "download_images_automatically": "Bilder automatisch herunterladen",
     "download_images_description": "Referenzierte Online-Bilder vom eingefügten HTML-Code herunterladen, damit diese offline zur Verfügung stehen.",
-    "enable_image_compression": "Bildkomprimierung",
     "max_image_dimensions": "Maximale Maße eines Bildes",
     "jpeg_quality_description": "Empfohlener Bereich liegt zwischen 50–85. Niedrige Werte reduzieren die Dateigröße, höhere Werte bewahren Details.",
     "max_image_dimensions_unit": "Pixel",
@@ -1422,7 +1429,6 @@
     "enable_monthly_backup": "Monatliche Sicherung",
     "backup_recommendation": "Es wird empfohlen, die Sicherung aktiviert zu lassen. Dies kann jedoch bei großen Datenbanken und/oder langsamen Speichergeräten den Anwendungsstart verlangsamen.",
     "backup_now": "Jetzt sichern",
-    "backup_database_now": "Jetzt Datenbank sichern",
     "existing_backups": "Vorhandene Sicherungen",
     "date-and-time": "Datum & Uhrzeit",
     "path": "Pfad",
@@ -2664,7 +2670,6 @@
     "base_url_description": "Optional. Greift über einen Proxy oder ein Gateway auf dieselbe API zu. Um ein Modell selbst auszuführen, fügen Sie stattdessen einen Ollama- oder LM-Studio-Anbieter hinzu.",
     "base_url_invalid": "Die Basis-URL muss eine gültige http://- oder https://-URL sein",
     "disabled_placeholder": "KI-Funktionen sind deaktiviert. Aktivieren Sie sie, um Anbieter und MCP zu konfigurieren.",
-    "not_available_in_standalone": "KI/LLM-Funktionen sind in der Standalone-Version von Trilium nicht verfügbar, da LLM-Anbieter keinen direkten Zugriff aus einem Browser erlauben.",
     "edit_provider_title": "{{- name}} bearbeiten",
     "edit_provider": "Bearbeiten",
     "save": "Speichern",

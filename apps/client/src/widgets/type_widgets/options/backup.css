@@ -3,33 +3,61 @@
     --bs-modal-width: 400px;
 }
 
-/* One row per setting: what it is on the leading edge, what switches it on the trailing one. */
-.backup-options-row {
+/* How the backups stand, with the button that makes one taking the end of the same row. */
+.backup-status {
     display: flex;
     align-items: center;
     gap: 8px;
 
-    /* The controls keep their natural width. Left to shrink, a button's nowrap label spills across
-       its own padding and ends up reading as though it had none; the label below gives instead. */
-    > * {
-        flex-shrink: 0;
-    }
-
-    .backup-options-label {
-        display: flex;
+    .backup-status-summary {
         flex: 1 1 auto;
-        flex-direction: column;
-        gap: 2px;
         min-width: 0;
-    }
-
-    .backup-options-description {
-        font-size: .85em;
-        opacity: .7;
+        color: var(--muted-text-color);
+        font-size: .9em;
     }
 
     .btn {
+        flex-shrink: 0;
         white-space: nowrap;
+    }
+}
+
+/* The standalone page is this one block, so the setup form is asked to sit in a page among cards
+   rather than fill a note's pane the way it does where it came from. */
+.options-section.standalone-backup {
+    .setup-form {
+        height: auto;
+        padding-inline: 0;
+    }
+
+    .tn-centered-form {
+        margin-bottom: 0;
+    }
+
+    /* Sized for an empty note pane where it is the only thing on screen; here it shares a dialog
+       with the rest of the settings, and at its own size it would be the settings. */
+    .form-icon {
+        font-size: 80px;
+    }
+
+    h3 {
+        margin-bottom: 4px;
+    }
+
+    p {
+        /* The form centres its children, which leaves a paragraph's own lines ragged. */
+        max-width: 460px;
+        text-align: center;
+        color: var(--muted-text-color);
+    }
+
+    /* The form stacks whatever it is given, so the two actions are handed to it as one thing.
+       They wrap where a phone's dialog cannot hold both. */
+    .standalone-backup-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
     }
 }
 
@@ -66,5 +94,19 @@
         .btn {
             white-space: nowrap;
         }
+    }
+}
+
+/* On a phone the buttons drop below the path rather than standing beside it: their labels do not
+   wrap, so the third column took 143px of 325px and left the path spelling itself down a column
+   81px wide. They keep the text's indent, and wrap between themselves once there are two. */
+body.mobile .backup-location .tn-card-section {
+    grid-template-columns: auto 1fr;
+
+    .backup-location-actions {
+        grid-column: 2;
+        grid-row: auto;
+        flex-wrap: wrap;
+        margin-top: 8px;
     }
 }
