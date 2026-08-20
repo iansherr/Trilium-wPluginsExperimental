@@ -46,7 +46,7 @@ To understand how the Plugin System operates under the hood:
 ## 3. Current State of Play
 
 ### Fork `main` Branch Role
-- **Personal TriliumDEV Binary Source**: The `main` branch on this fork (`iansherr/Trilium`) holds the complete, consolidated working codebase containing all plugin features, UI enhancements, offline metadata fixes, and test suites.
+- **Personal TriliumDEV Binary Source**: The `main` branch on this fork (`iansherr/Trilium-wPluginsExperimental`) holds the complete, consolidated working codebase containing all plugin features, UI enhancements, offline metadata fixes, and test suites.
 - **Build Executable**: Used to compile custom personal **TriliumDEV binaries** via `pnpm desktop:build-binary`.
 
 ### Upstream PR Status (Filed to `TriliumNext/Trilium`)
@@ -152,3 +152,19 @@ Always run these commands to verify code integrity before committing changes:
 | **Manifest Contracts** | `node --test tests/packages/package-manifest.test.mjs` | `10 pass` |
 | **Community Contracts** | `node --test tests/packages/community-packages-contract.test.mjs` | `25 pass` |
 | **Server Operation Lock** | `pnpm --filter server test package_operation_lock` | `1 passed` |
+
+---
+
+## 8. TriliumDEV Companion & Version Detection Plugin Blueprint
+
+To make managing and updating local TriliumDEV builds effortless, the **TriliumDEV Companion Plugin** can be installed directly into Trilium Notes as a native community package note:
+
+### Plugin Package Manifest Schema (`iansherr/triliumdev-companion`)
+- **Manifest ID**: `iansherr/triliumdev-companion`
+- **Permissions**: `["network"]`
+- **Widget Artifact**: Frontend widget checking GitHub API on startup.
+- **Functionality**:
+  1. Reads local running version via `window.glob.triliumVersion` and git commit hash.
+  2. Queries GitHub API: `https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/commits/main`.
+  3. Displays a non-intrusive notification pill in Trilium when new commits or builds exist on `iansherr/Trilium-wPluginsExperimental`.
+  4. Provides a 1-click link to trigger local build (`pnpm desktop:build-binary`) or download latest release artifacts.
