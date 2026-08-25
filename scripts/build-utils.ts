@@ -78,8 +78,13 @@ export default class BuildHelper {
                 // still sees the static string and warns. External marker
                 // suppresses the warning without changing runtime behavior.
                 "@triliumnext/core/src/assets/*",
-                "ckeditor5/ckeditor5-content.css",
-                "file-type"
+                // Same shape: readContentCss() in apps/server only calls
+                // require.resolve("ckeditor5/ckeditor5-content.css") under
+                // isDev, and a packaged build reads the copy at
+                // RESOURCE_DIR instead. Only ever resolved to a path --
+                // entries here must never be modules whose code the bundle
+                // needs, since external turns them into a runtime require().
+                "ckeditor5/ckeditor5-content.css"
             ],
             logOverride: {
                 "direct-eval": "silent"

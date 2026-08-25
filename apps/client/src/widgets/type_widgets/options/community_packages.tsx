@@ -437,8 +437,8 @@ export default function CommunityPackages() {
             <style>{`
                 .community-packages-shell {
                     width: 100%;
-                    max-width: 960px;
-                    margin: 0 auto;
+                    max-width: min(960px, 100%);
+                    margin-inline: auto;
                     box-sizing: border-box;
                     padding: clamp(0.75rem, 3vw, 1.5rem);
                     container-type: inline-size;
@@ -474,9 +474,21 @@ export default function CommunityPackages() {
                 }
                 .community-packages-actions {
                     display: flex;
+                    align-items: center;
                     flex-wrap: wrap;
                     justify-content: flex-end;
                     gap: 0.4em;
+                }
+                .community-packages-shell .option-row:has(.community-packages-actions) {
+                    align-items: flex-start;
+                }
+                .community-packages-shell .option-row:has(.community-packages-actions) .option-row-input {
+                    min-width: 0;
+                }
+                .community-packages-actions .btn {
+                    flex: 0 0 auto;
+                    min-width: max-content;
+                    white-space: nowrap;
                 }
                 @container community-packages (max-width: 700px) {
                     .community-packages-shell {
@@ -495,6 +507,19 @@ export default function CommunityPackages() {
                     }
                     .community-packages-actions {
                         justify-content: center;
+                    }
+                }
+                @container community-packages (max-width: 600px) {
+                    .community-packages-shell .option-row:has(.community-packages-actions) {
+                        flex-direction: column;
+                        align-items: stretch;
+                        gap: 0.5rem;
+                    }
+                    .community-packages-shell .option-row:has(.community-packages-actions) .option-row-input {
+                        width: 100%;
+                    }
+                    .community-packages-actions {
+                        justify-content: flex-start;
                     }
                 }
                 @container community-packages (max-width: 480px) {
@@ -598,7 +623,15 @@ export default function CommunityPackages() {
                                             disabled={Boolean(busyPackage)}
                                         />
                                         {entry ? (
-                                            updateAvailable ? (
+                                            entry.health === "broken" ? (
+                                                <Button
+                                                    text={busyPackage === manifest.id ? "Repairing…" : "Repair"}
+                                                    size="small"
+                                                    kind="primary"
+                                                    onClick={() => repair(manifest)}
+                                                    disabled={Boolean(busyPackage)}
+                                                />
+                                            ) : updateAvailable ? (
                                                 <Button
                                                     text={busyPackage === manifest.id ? "Updating…" : "Update"}
                                                     size="small"
@@ -814,7 +847,15 @@ function normalizeSourceHosts(value) {
 }
 
 async function readInstalledPackages() {
-    const notes = await searchPackageNotes(`#${MANAGED_LABEL}`);
+    let notes = await searchPackageNotes(`#${MANAGED_LABEL}`);
+    // Package operations finish by changing transaction and archive labels.
+    // Refresh the returned notes before deriving the catalog state so the
+    // first post-install render cannot mistake a partially reloaded package
+    // for one with missing artifacts and immediately ask for repair.
+    if (notes.length) {
+        await api.reloadNotes(notes.map((note) => note.noteId));
+        notes = (await Promise.all(notes.map((note) => api.getNote(note.noteId)))).filter(Boolean);
+    }
     const result = {};
     for (const note of notes) {
         if (note.isArchived || isTransactionNote(note)) continue;

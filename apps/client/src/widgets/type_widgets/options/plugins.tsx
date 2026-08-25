@@ -209,9 +209,23 @@ export default function PluginsSettings() {
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
     const [hostDraft, setHostDraft] = useState("");
     const refreshPromiseRef = useRef<Promise<void> | null>(null);
+    const refreshQueuedRef = useRef(false);
 
     const refresh = useCallback(async () => {
-        if (refreshPromiseRef.current) return refreshPromiseRef.current;
+        if (refreshPromiseRef.current) {
+            // Entity reload events can arrive while a refresh is still reading
+            // the old note snapshot. Queue one fresh pass so a just-saved pin,
+            // package setting, or enabled state cannot be painted back from
+            // stale data until the next full page load.
+            refreshQueuedRef.current = true;
+            const activeRefresh = refreshPromiseRef.current;
+            await activeRefresh;
+            if (refreshQueuedRef.current && !refreshPromiseRef.current) {
+                refreshQueuedRef.current = false;
+                await refresh();
+            }
+            return;
+        }
 
         const refreshPromise = (async () => {
             try {
