@@ -5,7 +5,7 @@ import toast from "../services/toast";
 
 import { showOAuthEnrollmentResultToast } from "./startup_checks";
 
-vi.mock("../services/server", () => ({ default: { get: vi.fn() } }));
+vi.mock("../services/server", () => ({ default: { get: vi.fn().mockResolvedValue({}) } }));
 vi.mock("../services/toast", () => ({ default: { showMessage: vi.fn(), showErrorTitleAndMessage: vi.fn() } }));
 // Echo interpolation values so assertions can verify the resolved account/provider.
 vi.mock("../services/i18n", () => ({

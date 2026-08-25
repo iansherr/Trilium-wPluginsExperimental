@@ -12,8 +12,8 @@ const keyboardActionRepo: Record<string, ActionKeyboardShortcut> = {};
 // GET /api/keyboard-actions would 401 (#10589); those screens bind no shortcuts.
 const keyboardActionsLoaded: Promise<ActionKeyboardShortcut[]> = isPreAuthScreen()
     ? Promise.resolve([])
-    : server.get<ActionKeyboardShortcut[]>("keyboard-actions").then((actions) => {
-        actions = actions.filter((a) => !!a.actionName); // filter out separators
+    : Promise.resolve(server.get<ActionKeyboardShortcut[]>("keyboard-actions")).then((actions) => {
+        actions = Array.isArray(actions) ? actions.filter((a) => !!a?.actionName) : []; // filter out separators
 
         for (const action of actions) {
             action.effectiveShortcuts = (action.effectiveShortcuts ?? []).filter((shortcut) => !shortcut.startsWith("global:"));
