@@ -8,6 +8,7 @@ import fs from "fs";
 import { t } from "i18next";
 import path from "path";
 
+import ServerBackupService from "./backup_provider.js";
 import AsyncLocalStorageExecutionContext from "./cls_provider.js";
 import { loadCommunityPackagesManager, loadCoreSchema } from "./core_assets.js";
 import NodejsCryptoProvider from "./crypto_provider.js";
