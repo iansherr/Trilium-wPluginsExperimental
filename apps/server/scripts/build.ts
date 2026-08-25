@@ -3,7 +3,7 @@ import BuildHelper from "../../../scripts/build-utils";
 const build = new BuildHelper("apps/server");
 
 async function main() {
-    await build.buildBackend([ "src/main.ts", "src/docker_healthcheck.ts" ])
+    await build.buildBackend([ "src/main.ts" ]);
     // Its own call so it lands beside the bundle rather than under a `services/` path: the pool
     // looks for it next to whatever is running, and desktop builds it the same way.
     await build.buildBackend([ "src/services/image_worker.ts" ]);
@@ -11,6 +11,8 @@ async function main() {
     // Copy assets
     build.copy("src/assets", "assets/");
     build.copy("/apps/client/src/widgets/type_widgets/options/community_packages.tsx", "assets/community-packages/community-packages.tsx");
+    // The healthcheck docker runs; the Dockerfiles point at it inside the image.
+    build.copy("docker_healthcheck.sh", "docker_healthcheck.sh");
     // schema.sql lives in trilium-core but is loaded at server startup. The
     // bundled main.cjs can't `require.resolve("@triliumnext/core/...")` in
     // Docker (no workspace symlinks in the image), so we copy the file
