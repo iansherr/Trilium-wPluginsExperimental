@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: ./.github/actions/setup-pnpm
       - name: Set up node & dependencies
         uses: actions/setup-node@v7
         with:
