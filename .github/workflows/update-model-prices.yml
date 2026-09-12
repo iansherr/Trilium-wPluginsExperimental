@@ -15,13 +15,13 @@ permissions:
 jobs:
   update-model-prices:
     name: Refresh model_prices.json
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     permissions:
       contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: ./.github/actions/setup-pnpm
       - name: Set up node & dependencies
         uses: actions/setup-node@v7
         with:

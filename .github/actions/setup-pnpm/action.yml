@@ -1,0 +1,16 @@
+name: Set up pnpm
+description: Install native dependencies needed by pnpm on the ephemeral ARC runner, then set up pnpm.
+runs:
+  using: composite
+  steps:
+    - name: Install Linux native dependencies for self-hosted runners
+      if: ${{ runner.os == 'Linux' && runner.environment == 'self-hosted' }}
+      shell: bash
+      run: |
+        if ! ldconfig -p 2>/dev/null | grep -q 'libatomic.so.1'; then
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libatomic1
+        fi
+
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v6

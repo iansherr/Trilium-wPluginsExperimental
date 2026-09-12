@@ -25,7 +25,7 @@ on:
 jobs:
   build-and-deploy:
     name: Build and Deploy App
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     timeout-minutes: 10
 
     # Required permissions for deployment
@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
