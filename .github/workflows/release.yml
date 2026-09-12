@@ -13,7 +13,7 @@ concurrency:
 jobs:
   sanity-check:
     name: Sanity Check
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -129,7 +129,7 @@ jobs:
 
   publish_release:
     name: Publish release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs:
       - make-electron
       - build_server

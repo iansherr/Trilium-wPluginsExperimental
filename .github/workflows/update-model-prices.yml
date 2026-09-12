@@ -15,7 +15,7 @@ permissions:
 jobs:
   update-model-prices:
     name: Refresh model_prices.json
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     permissions:
       contents: write
       pull-requests: write

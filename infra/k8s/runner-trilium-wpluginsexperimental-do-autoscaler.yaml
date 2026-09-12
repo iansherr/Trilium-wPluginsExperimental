@@ -1,0 +1,16 @@
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: HorizontalRunnerAutoscaler
+metadata:
+  name: runner-trilium-wpluginsexperimental-do-autoscaler
+  namespace: arc-system
+spec:
+  scaleTargetRef:
+    kind: RunnerDeployment
+    name: runner-trilium-wpluginsexperimental-do
+  minReplicas: 0
+  maxReplicas: 4
+  scaleDownDelaySecondsAfterScaleOut: 180
+  metrics:
+  - type: TotalNumberOfQueuedAndInProgressWorkflowRuns
+    repositoryNames:
+    - iansherr/Trilium-wPluginsExperimental

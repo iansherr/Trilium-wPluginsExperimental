@@ -30,7 +30,7 @@ jobs:
   # under that package (or the workspace roots) has to trigger both.
   changes:
     name: Detect affected suites
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     outputs:
       server: ${{ steps.filter.outputs.server }}
       standalone: ${{ steps.filter.outputs.standalone }}
@@ -96,7 +96,7 @@ jobs:
 
   test_dev:
     name: Test development
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v7
@@ -275,7 +275,7 @@ jobs:
   # checkout on an unaffected run.
   test_server:
     name: Test server
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs: changes
     env:
       AFFECTED: ${{ needs.changes.outputs.server }}
@@ -330,7 +330,7 @@ jobs:
 
   test_standalone:
     name: Test standalone
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs: changes
     env:
       AFFECTED: ${{ needs.changes.outputs.standalone }}
@@ -386,7 +386,7 @@ jobs:
   # what makes it also a speedup.
   test_ckeditor5:
     name: Test CKEditor 5 (shard ${{ matrix.shard }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs: changes
     strategy:
       fail-fast: false
@@ -455,7 +455,7 @@ jobs:
 
   test_ckeditor5_merge:
     name: CKEditor 5 coverage gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs:
       - changes
       - test_ckeditor5
@@ -524,7 +524,7 @@ jobs:
   # path; the concurrency group above still cancels superseded runs.
   build_docker:
     name: Build Docker image
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -551,7 +551,7 @@ jobs:
           cache-to: type=gha,mode=max
   test_docker:
     name: Check Docker build
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     # Kept: build_docker populates the type=gha buildx cache this job reads. The
     # two together (~4m) still finish well inside the slowest test job, so
     # breaking the chain would buy nothing and would leave both jobs racing to

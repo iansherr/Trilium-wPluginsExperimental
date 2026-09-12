@@ -1,0 +1,43 @@
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: runner-trilium-wpluginsexperimental-do
+  namespace: arc-system
+spec:
+  replicas: 0
+  template:
+    metadata:
+      labels:
+        runner: trilium-wpluginsexperimental-do-runner
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: doks.digitalocean.com/managed
+                operator: In
+                values:
+                - "true"
+      env:
+      - name: RUNNER_ALLOW_RUNASROOT
+        value: "true"
+      ephemeral: true
+      dockerVarRunVolumeSizeLimit: 64Mi
+      image: summerwind/actions-runner:v2.336.0-ubuntu-24.04-a035c5a@sha256:ac52790f2737b2ef1be90a6708280cf2f0b2cf838f421ee7cce42d7511951976
+      imagePullPolicy: IfNotPresent
+      labels:
+      - self-hosted
+      - linux
+      - digitalocean
+      - k8s-runner
+      repository: iansherr/Trilium-wPluginsExperimental
+      resources:
+        limits:
+          cpu: "2"
+          memory: 4Gi
+          ephemeral-storage: 20Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+          ephemeral-storage: 8Gi

@@ -26,7 +26,7 @@ permissions:
 jobs:
   test_docker:
     name: Check Docker build
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     strategy:
       matrix:
         include:
@@ -216,7 +216,7 @@ jobs:
 
   merge:
     name: Merge manifest lists
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     needs:
       - build
     steps:

@@ -120,7 +120,7 @@ jobs:
   nightly-mobile:
     if: ${{ github.repository == vars.REPO_MAIN && github.event_name != 'pull_request' }}
     name: Build mobile nightly
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     steps:
       - uses: actions/checkout@v7
 

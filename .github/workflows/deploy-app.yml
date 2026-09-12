@@ -25,7 +25,7 @@ on:
 jobs:
   build-and-deploy:
     name: Build and Deploy App
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'k8s-runner' }}
     timeout-minutes: 10
 
     # Required permissions for deployment
