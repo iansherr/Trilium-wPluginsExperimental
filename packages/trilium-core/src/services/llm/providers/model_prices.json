@@ -30,6 +30,11 @@
       "output": 50,
       "ctx": 1000000
     },
+    "claude-fable-5-1": {
+      "input": 10,
+      "output": 50,
+      "ctx": 1000000
+    },
     "claude-haiku-4-5": {
       "input": 1,
       "output": 5,
@@ -41,6 +46,11 @@
       "ctx": 200000
     },
     "claude-mythos-5": {
+      "input": 10,
+      "output": 50,
+      "ctx": 1000000
+    },
+    "claude-mythos-5-1": {
       "input": 10,
       "output": 50,
       "ctx": 1000000
@@ -137,14 +147,24 @@
       "output": 0.42,
       "ctx": 131072
     },
+    "deepseek-flash": {
+      "input": 0.3,
+      "output": 1.2,
+      "ctx": 1000000
+    },
     "deepseek-reasoner": {
       "input": 0.28,
       "output": 0.42,
       "ctx": 131072
     },
     "deepseek-v4-flash": {
-      "input": 0.44,
-      "output": 1.32,
+      "input": 0.3,
+      "output": 1.2,
+      "ctx": 1000000
+    },
+    "deepseek-v4-flash-vision-exp": {
+      "input": 0.3,
+      "output": 1.2,
       "ctx": 1000000
     },
     "deepseek-v4-pro": {
@@ -199,21 +219,6 @@
       "output": 0.4,
       "ctx": 1048576
     },
-    "gemini-2.5-flash-native-audio-latest": {
-      "input": 0.3,
-      "output": 2.5,
-      "ctx": 1048576
-    },
-    "gemini-2.5-flash-native-audio-preview-09-2025": {
-      "input": 0.3,
-      "output": 2.5,
-      "ctx": 1048576
-    },
-    "gemini-2.5-flash-native-audio-preview-12-2025": {
-      "input": 0.3,
-      "output": 2.5,
-      "ctx": 1048576
-    },
     "gemini-2.5-flash-preview-09-2025": {
       "input": 0.3,
       "output": 2.5,
@@ -225,8 +230,8 @@
       "ctx": 1048576
     },
     "gemini-2.5-pro-preview-tts": {
-      "input": 1.25,
-      "output": 10,
+      "input": 1,
+      "output": 20,
       "ctx": 1048576
     },
     "gemini-3-flash-preview": {
@@ -248,11 +253,6 @@
       "input": 0.25,
       "output": 1.5,
       "ctx": 1048576
-    },
-    "gemini-3.1-flash-live-preview": {
-      "input": 0.75,
-      "output": 4.5,
-      "ctx": 131072
     },
     "gemini-3.1-pro-preview": {
       "input": 2,
@@ -280,6 +280,11 @@
       "ctx": 1048576
     },
     "gemini-3.7-flash": {
+      "input": 0.75,
+      "output": 3.75,
+      "ctx": 1048576
+    },
+    "gemini-3.8-flash": {
       "input": 0.75,
       "output": 3.75,
       "ctx": 1048576
@@ -634,6 +639,11 @@
     "gpt-5.6-terra": {
       "input": 2,
       "output": 12,
+      "ctx": 922000
+    },
+    "gpt-6-astra": {
+      "input": 10,
+      "output": 50,
       "ctx": 922000
     },
     "gpt-audio": {
