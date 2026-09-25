@@ -14,7 +14,11 @@ import { asNoteService,codeNoteId, deployScript, MIME_BY_EXT, parseScriptMeta, r
 // ── Environment — must be set before any server module is imported ──────────
 const DATA_DIR = resolve(process.env.TRILIUM_DEV_DATA_DIR || resolve(__dirname, "../data"));
 const TOKEN_PATH = join(DATA_DIR, ".etapi-token");
-const PORT = Number(process.env.TRILIUM_DEV_PORT || 37842);
+const rawPort = process.env.TRILIUM_DEV_PORT ?? "37842";
+const PORT = Number(rawPort);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+    throw new Error(`TRILIUM_DEV_PORT must be an integer between 1 and 65535, got "${rawPort}"`);
+}
 
 mkdirSync(DATA_DIR, { recursive: true });
 
@@ -23,63 +27,13 @@ process.env.TRILIUM_PORT = String(PORT);
 process.env.TRILIUM_RESOURCE_DIR = resolve(__dirname, "../../server/src");
 process.env.NODE_ENV = "development";
 process.env.TRILIUM_ENV = "dev";
+// Deploying backend scripts is what this harness is for, and `scripting_guard` refuses to run them
+// unless the instance opts in.
 process.env.TRILIUM_SECURITY_BACKEND_SCRIPTING_ENABLED = "true";
-
 
 // ── Constants ───────────────────────────────────────────────────────────────
 const SCRIPTS_DIR = resolve(process.env.TRILIUM_SCRIPT_SOURCE_DIR || resolve(__dirname, "../scripts"));
 const needsInit = !existsSync(join(DATA_DIR, "document.db"));
-
-async function initializeCoreForDev() {
-    const { initializeCore, options } = await import("@triliumnext/core");
-    const { serverZipExportProviderFactory } = await import("@triliumnext/server/src/services/export/zip/factory.js");
-    const ServerBackupService = (await import("@triliumnext/server/src/backup_provider.js")).default;
-    const ClsHookedExecutionContext = (await import("@triliumnext/server/src/cls_provider.js")).default;
-    const NodejsCryptoProvider = (await import("@triliumnext/server/src/crypto_provider.js")).default;
-    const ServerLogService = (await import("@triliumnext/server/src/log_provider.js")).default;
-    const ServerPlatformProvider = (await import("@triliumnext/server/src/platform_provider.js")).default;
-    const WebSocketMessagingProvider = (await import("@triliumnext/server/src/services/ws_messaging_provider.js")).default;
-    const NodejsZipProvider = (await import("@triliumnext/server/src/zip_provider.js")).default;
-    const BetterSqlite3Provider = (await import("@triliumnext/server/src/sql_provider.js")).default;
-    const { serverImageProvider } = await import("@triliumnext/server/src/services/image_provider.js");
-    const { loadCoreSchema } = await import("@triliumnext/server/src/core_assets.js");
-    const { initializeTranslationsWithParams } = await import("@triliumnext/server/src/services/i18n.js");
-
-    const dbProvider = new BetterSqlite3Provider();
-    dbProvider.loadFromFile(join(DATA_DIR, "document.db"), false);
-    const logService = new ServerLogService();
-
-    await initializeCore({
-        config: {
-            General: { instanceName: "script-deployer", readOnly: false },
-            Sync: { syncServerHost: "", syncServerTimeout: "", syncProxy: "" },
-            Security: { backendScriptingEnabled: true, sqlConsoleEnabled: true, allowLanAccess: true }
-        },
-        dbConfig: {
-            provider: dbProvider,
-            isReadOnly: false,
-            onTransactionCommit() {},
-            onTransactionRollback() {}
-        },
-
-        crypto: new NodejsCryptoProvider(),
-        zip: new NodejsZipProvider(),
-        zipExportProviderFactory: serverZipExportProviderFactory,
-        executionContext: new ClsHookedExecutionContext(),
-        schema: loadCoreSchema(),
-        platform: new ServerPlatformProvider(),
-        messaging: new WebSocketMessagingProvider(),
-        translations: initializeTranslationsWithParams,
-        log: logService,
-        backup: new ServerBackupService(options),
-        image: serverImageProvider,
-    });
-}
-
-async function ensureTranslations() {
-    const i18n = await import("@triliumnext/server/src/services/i18n.js");
-    await i18n.initializeTranslations();
-}
 
 async function ensureDatabase() {
     if (!needsInit) return;
@@ -174,7 +128,9 @@ function watchScripts() {
         if (timers.has(filename)) clearTimeout(timers.get(filename));
         timers.set(filename, setTimeout(() => {
             timers.delete(filename);
-            void syncFile(filename);
+            // A script that fails to transpile rejects here; logging keeps the watcher alive so the
+            // next save can fix it.
+            syncFile(filename).catch((err) => console.error(`  [watch] ${filename}:`, err));
         }, 100));
     });
 
@@ -235,8 +191,10 @@ function watchScripts() {
 }
 
 async function main() {
-    await ensureTranslations();
-    await initializeCoreForDev();
+    // Every step below reaches for `cls` or `becca`, so core has to come up first.
+    const { initializeServerCore } = await import("@triliumnext/server/src/core_init.js");
+    await initializeServerCore();
+
     await ensureDatabase();
     await ensureEtapiToken();
 
