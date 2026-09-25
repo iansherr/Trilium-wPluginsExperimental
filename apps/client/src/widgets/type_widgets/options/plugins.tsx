@@ -605,7 +605,7 @@ export default function PluginsSettings() {
                 {state.packages.map((pkg) => (
                     <div key={pkg.noteId}>
                         <OptionsRow name={`community-package-${pkg.noteId}`} label={pkg.title} description={formatInstalledPackageDescription(pkg)}>
-                            <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                            <span className="plugin-row-actions">
                                 <Button
                                     text={pkg.enabled ? t("plugins.disable") : t("plugins.enable")}
                                     kind={pkg.enabled ? undefined : "primary"}
@@ -668,7 +668,7 @@ export default function PluginsSettings() {
                             label={pkg.title}
                             description={formatInstalledPackageDescription(pkg)}
                         >
-                            <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: "0.4em" }}>
+                            <span className="plugin-row-actions">
                                 <Button
                                     text={t("plugins.restore")}
                                     kind="primary"
