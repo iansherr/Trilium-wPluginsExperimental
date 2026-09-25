@@ -15,9 +15,12 @@ async function startApplication() {
     const startTriliumServer = (await import("./www.js")).default;
     await startTriliumServer();
 
-    sql_init();
-
-    getLog().info(t("server.listening_on_port", { port }));
+    if (!sql_init.isDbInitialized()) {
+        getLog().banner(t("sql_init.db_not_initialized_server", { port }));
+    }
 }
 
-void startApplication();
+startApplication().catch((err) => {
+    console.error("Fatal error during Trilium server startup:", err);
+    process.exit(1);
+});
