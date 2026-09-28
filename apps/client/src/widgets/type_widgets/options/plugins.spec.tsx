@@ -249,6 +249,15 @@ describe("plugin manager state helpers", () => {
             expect(compareVersions("1.0.0", "1.0.0-beta")).toBe(1);
             expect(compareVersions("1.0.0-beta.2", "1.0.0-beta.10")).toBe(-1);
             expect(compareVersions("not-a-version", "0.104.0")).toBeNull();
+            expect(compareVersions("1.0.0-1", "1.0.0-alpha")).toBe(-1);
+            expect(compareVersions("1.0.0-alpha", "1.0.0-1")).toBe(1);
+            expect(compareVersions("1.0.0-2", "1.0.0-10")).toBe(-1);
+            expect(compareVersions("1.0.0-10", "1.0.0-2")).toBe(1);
+            expect(compareVersions("1.0.0-1", "1.0.0-2")).toBe(-1);
+            expect(compareVersions("1.0.0-alpha", "1.0.0-alpha")).toBe(0);
+            expect(compareVersions("1.0.0-alpha.1", "1.0.0-alpha")).toBe(1);
+            expect(compareVersions("1.0.0-alpha", "1.0.0-alpha.1")).toBe(-1);
+            expect(compareVersions("1.0.0-alpha", "1.0.0-beta")).toBe(-1);
             expect(isNewerVersion("1.1.0", "1.0.9")).toBe(true);
             expect(isNewerVersion("1.0.9", "1.1.0")).toBe(false);
             expect(isNewerVersion("1.0.0-beta.2", "1.0.0-beta.1")).toBe(true);
