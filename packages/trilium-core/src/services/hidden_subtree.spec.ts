@@ -4,6 +4,9 @@ import becca from "../becca/becca.js";
 import type BNote from "../becca/entities/bnote.js";
 import { getContext } from "./context.js";
 import hiddenSubtreeService, {
+    COMMUNITY_PACKAGES_MANAGER_CODE_ID,
+    COMMUNITY_PACKAGES_MANAGER_RENDER_ID,
+    setCommunityPackagesManagerSource,
     LBTPL_BASE,
     LBTPL_COMMAND,
     LBTPL_CUSTOM_WIDGET,
@@ -14,6 +17,7 @@ import hiddenSubtreeService, {
     LBTPL_WIDGET
 } from "./hidden_subtree.js";
 import noteService from "./notes.js";
+import { isValidEntityId } from "./utils/index.js";
 
 /**
  * Re-create a deprecated hidden-subtree note under its declared parent so the
@@ -327,6 +331,36 @@ describe("hidden_subtree (real DB)", () => {
                 expect(id.startsWith("_")).toBe(true);
             }
             expect(new Set(ids).size).toBe(ids.length);
+        });
+    });
+
+    describe("community packages manager hidden subtree", () => {
+        it("exported IDs are valid entity IDs and follow the hidden-note underscore convention", () => {
+            for (const id of [COMMUNITY_PACKAGES_MANAGER_CODE_ID, COMMUNITY_PACKAGES_MANAGER_RENDER_ID]) {
+                expect(id.startsWith("_")).toBe(true);
+                expect(isValidEntityId(id)).toBe(true);
+            }
+        });
+
+        it("checkHiddenSubtree succeeds without validation errors when community packages source is provided", () => {
+            try {
+                setCommunityPackagesManagerSource("export default function() { return <div>packages</div>; }");
+                expect(() => checkHiddenSubtree(true)).not.toThrow();
+
+                const codeNote = becca.notes[COMMUNITY_PACKAGES_MANAGER_CODE_ID];
+                const renderNote = becca.notes[COMMUNITY_PACKAGES_MANAGER_RENDER_ID];
+
+                expect(codeNote).toBeDefined();
+                expect(codeNote.type).toBe("code");
+                expect(codeNote.mime).toBe("text/jsx");
+
+                expect(renderNote).toBeDefined();
+                expect(renderNote.type).toBe("render");
+                const renderRel = renderNote.getRelations().find((rel) => rel.name === "renderNote");
+                expect(renderRel?.value).toBe(COMMUNITY_PACKAGES_MANAGER_CODE_ID);
+            } finally {
+                setCommunityPackagesManagerSource("");
+            }
         });
     });
 });

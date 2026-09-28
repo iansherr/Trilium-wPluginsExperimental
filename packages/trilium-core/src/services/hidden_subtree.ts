@@ -33,8 +33,8 @@ export const LBTPL_CUSTOM_WIDGET = "_lbTplCustomWidget";
 let hiddenSubtreeDefinition: HiddenSubtreeItem;
 let communityPackagesManagerSource = "";
 
-export const COMMUNITY_PACKAGES_MANAGER_RENDER_ID = "_sd_community-packages-manager_render";
-export const COMMUNITY_PACKAGES_MANAGER_CODE_ID = "_sd_community-packages-manager";
+export const COMMUNITY_PACKAGES_MANAGER_RENDER_ID = "_sd_community_packages_manager_render";
+export const COMMUNITY_PACKAGES_MANAGER_CODE_ID = "_sd_community_packages_manager";
 
 export function setCommunityPackagesManagerSource(source?: string) {
     communityPackagesManagerSource = source?.trim() ?? "";
@@ -50,6 +50,16 @@ function buildCommunityPackagesManagerDefinition(): HiddenSubtreeItem[] {
     // creating a fresh database impossible. `enforceBranches` relocates the note on instances that
     // already have it nested, so fresh and upgraded databases end up with the same structure.
     return [{
+        id: "_sd_community-packages-manager",
+        title: "Community Packages Legacy Code",
+        type: "doc",
+        enforceDeleted: true
+    }, {
+        id: "_sd_community-packages-manager_render",
+        title: "Community Packages Legacy Render",
+        type: "doc",
+        enforceDeleted: true
+    }, {
         id: COMMUNITY_PACKAGES_MANAGER_CODE_ID,
         title: "Community Packages",
         type: "code",

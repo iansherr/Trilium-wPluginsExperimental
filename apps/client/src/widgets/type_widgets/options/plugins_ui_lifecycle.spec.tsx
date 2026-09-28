@@ -156,7 +156,7 @@ describe("PluginsSettings UI & Lifecycle Procedural Combination Testing", () => 
 
     describe("1. Entry Boxes / Text Boxes / Inputs Testing", () => {
         it("handles source URL input variations (valid, invalid, github shortcuts, whitespace)", async () => {
-            const managerNote = createTestNote("_sd_community-packages-manager_render", "Community Packages", {}, "render");
+            const managerNote = createTestNote("_sd_community_packages_manager_render", "Community Packages", {}, "render");
             const settingsNote = createTestNote("settings-note", "Settings", {
                 packageSources: '["https://example.com/registry.json"]'
             });

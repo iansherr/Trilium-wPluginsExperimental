@@ -24,7 +24,7 @@ import OptionsPageHeader from "./components/OptionsPageHeader";
 import OptionsRow, { OptionsRowWithButton, OptionsRowWithToggle } from "./components/OptionsRow";
 import OptionsSection from "./components/OptionsSection";
 
-const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community-packages-manager_render";
+const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community_packages_manager_render";
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
 const PACKAGE_MANIFEST_LABEL = "packageManifest";
@@ -940,7 +940,8 @@ function buildPackageSummaries(notes: FNote[], archived: boolean): PackageSummar
 }
 
 async function findPackageManager() {
-    const deployedManager = await froca.getNote(COMMUNITY_PACKAGES_MANAGER_NOTE_ID, true);
+    const deployedManager = (await froca.getNote(COMMUNITY_PACKAGES_MANAGER_NOTE_ID, true))
+        ?? (await froca.getNote("_sd_community-packages-manager_render", true));
     if (deployedManager?.type === "render") {
         return deployedManager;
     }
