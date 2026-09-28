@@ -15,6 +15,7 @@ import toast from "../../../services/toast";
 import { randomString } from "../../../services/utils";
 import Button from "../../react/Button";
 import Dropdown from "../../react/Dropdown";
+import FormSelect from "../../react/FormSelect";
 import FormTextBox from "../../react/FormTextBox";
 import { FormListItem } from "../../react/FormList";
 import { useTriliumEvent } from "../../react/hooks";
@@ -1297,11 +1298,17 @@ function PackageSettingEditor({ packageId, setting, value, onChange, disabled }:
         return <OptionsRowWithToggle name={name} label={setting.title} description={setting.description} currentValue={Boolean(value)} onChange={onChange} disabled={disabled} />;
     }
     if (setting.type === "select") {
+        const options = (setting.options || []).map((option) => ({ value: option, title: option }));
         return (
             <OptionsRow name={name} label={setting.title} description={setting.description}>
-                <select value={String(value ?? "")} onChange={(event) => onChange(event.currentTarget.value)} disabled={disabled}>
-                    {(setting.options || []).map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
+                <FormSelect
+                    values={options}
+                    keyProperty="value"
+                    titleProperty="title"
+                    currentValue={String(value ?? "")}
+                    onChange={(newValue) => onChange(newValue)}
+                    disabled={disabled}
+                />
             </OptionsRow>
         );
     }
