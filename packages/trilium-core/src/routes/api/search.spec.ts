@@ -133,6 +133,24 @@ describe("Search API (core)", () => {
         expect(res.body.searchResultNoteIds).not.toContain(hidden.noteId);
     });
 
+    it("includes hidden notes in quick search only when requested via query parameter", async () => {
+        const token = "ZzIncludeHiddenQuickSearchQwerty";
+        const visible = await createTextNote(api, { title: `${token} visible` });
+        const hidden = await createTextNote(api, { parentNoteId: "_lbBookmarks", title: `${token} hidden` });
+
+        const excluded = await api.get<{ searchResultNoteIds: string[] }>(
+            `/api/quick-search/${encodeURIComponent(token)}`
+        );
+        expect(excluded.body.searchResultNoteIds).toContain(visible.noteId);
+        expect(excluded.body.searchResultNoteIds).not.toContain(hidden.noteId);
+
+        const included = await api.get<{ searchResultNoteIds: string[] }>(
+            `/api/quick-search/${encodeURIComponent(token)}?includeHidden=true`
+        );
+        expect(included.body.searchResultNoteIds).toContain(visible.noteId);
+        expect(included.body.searchResultNoteIds).toContain(hidden.noteId);
+    });
+
     it("includes archived notes only when requested", async () => {
         const { noteId } = await createTextNote(api, { title: "Archived search fixture" });
         await api.post(`/api/notes/${noteId}/attributes`, {

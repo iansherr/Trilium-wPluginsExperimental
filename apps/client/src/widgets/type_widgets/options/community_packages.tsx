@@ -980,7 +980,7 @@ async function packageRequest(method, path, body) {
 }
 
 async function searchPackageNotes(searchString) {
-    const response = await packageRequest("GET", `quick-search/${encodeURIComponent(searchString)}`);
+    const response = await packageRequest("GET", `quick-search/${encodeURIComponent(searchString)}?includeHidden=true`);
     if (!response.ok) throw new Error(`Could not search package notes (${response.status})`);
     const result = await response.json();
     const noteIds = Array.isArray(result.searchResultNoteIds) ? result.searchResultNoteIds : [];

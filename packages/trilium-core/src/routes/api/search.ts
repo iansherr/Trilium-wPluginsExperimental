@@ -126,13 +126,13 @@ function lintSearchString(req: Request): SearchLintResponse {
     return { error: searchService.validateSearchQuery(searchString) };
 }
 
-function quickSearch(req: Request<{ searchString: string }>) {
+function quickSearch(req: Request<{ searchString: string }, { includeArchived?: string; includeHidden?: string; includeHiddenNotes?: string }>) {
     const { searchString } = req.params;
 
     const searchContext = new SearchContext({
         fastSearch: false,
         includeArchivedNotes: req.query.includeArchived === "true",
-        includeHiddenNotes: true,
+        includeHiddenNotes: req.query.includeHidden === "true" || req.query.includeHiddenNotes === "true",
         fuzzyAttributeSearch: true,
         ignoreInternalAttributes: true,
         // Quick search covers the subtree the user is looking at, so a hoist into the hidden
