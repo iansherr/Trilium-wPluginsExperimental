@@ -479,6 +479,44 @@ export default function CommunityPackages() {
                     justify-content: flex-end;
                     gap: 0.4em;
                 }
+                /* .option-row and friends normally come from OptionsRow.css, which
+                   only loads for the real Options dialog widget. This note renders
+                   standalone (outside that widget), so its own stylesheet never
+                   reaches it -- without these, rows fall back to unstyled block
+                   layout and every label/button crowds together. Kept as a local,
+                   scoped copy rather than a shared import: this file is seeded as
+                   raw TSX source into a note (see core_assets.ts) and interpreted
+                   by the render-note sandbox, which has no CSS-loader/import
+                   pipeline to resolve an external stylesheet with. */
+                .community-packages-shell .option-row {
+                    border-bottom: 1px solid var(--main-border-color);
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 1rem;
+                    padding: 0.75em 0;
+                }
+                .community-packages-shell .option-row:last-child {
+                    border-bottom: unset;
+                }
+                .community-packages-shell .option-row-label {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .community-packages-shell .option-row-label > label {
+                    margin-bottom: 0 !important;
+                }
+                .community-packages-shell .option-row-input {
+                    flex-shrink: 0;
+                    min-width: 0;
+                    max-width: 100%;
+                }
+                .community-packages-shell .option-row-description {
+                    line-height: 1.3;
+                    margin-top: 0.25em;
+                    color: var(--muted-text-color);
+                }
                 .community-packages-shell .option-row:has(.community-packages-actions) {
                     align-items: flex-start;
                 }
