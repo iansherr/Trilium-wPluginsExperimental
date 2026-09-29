@@ -14,7 +14,7 @@ async function searchForNotes(searchString: string) {
 }
 
 async function searchForNotesIncludingHidden(searchString: string, includeArchived = false) {
-    const query = includeArchived ? "?includeArchived=true" : "";
+    const query = `?includeHidden=true${includeArchived ? "&includeArchived=true" : ""}`;
     const result = await server.get<{ searchResultNoteIds?: string[] }>(`quick-search/${encodeURIComponent(searchString)}${query}`);
     return await froca.getNotes(result.searchResultNoteIds || []);
 }

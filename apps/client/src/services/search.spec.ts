@@ -59,7 +59,7 @@ describe("search service", () => {
 
         const notes = await searchService.searchForNotesIncludingHidden("#packageManaged");
 
-        expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged")}`);
+        expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged")}?includeHidden=true`);
         expect(notes.map((n) => n.noteId)).toEqual([note.noteId]);
     });
 
@@ -70,7 +70,7 @@ describe("search service", () => {
 
         const notes = await searchService.searchForNotesIncludingHidden("#packageManaged #archived", true);
 
-        expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged #archived")}?includeArchived=true`);
+        expect(get).toHaveBeenCalledWith(`quick-search/${encodeURIComponent("#packageManaged #archived")}?includeHidden=true&includeArchived=true`);
         expect(notes.map((n) => n.noteId)).toEqual([note.noteId]);
     });
 });
