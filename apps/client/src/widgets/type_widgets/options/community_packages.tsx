@@ -432,7 +432,12 @@ export default function CommunityPackages() {
         triggerCommand("showOptions", { section: "_optionsPlugins" });
     }
 
+    // The outer div must carry `render-note-scope` itself. render.tsx mounts this component into an
+    // element that already contains a `.render-note-scope` div and wraps every <style> here in
+    // `@scope (.render-note-scope)`; Preact adopts that div for our root and overwrites its class,
+    // which leaves the @scope root missing and makes every rule below match nothing.
     return (
+        <div className="render-note-scope">
         <div className="options community-packages-shell">
             <style>{`
                 .community-packages-shell {
@@ -697,6 +702,7 @@ export default function CommunityPackages() {
                     })}
                 </div>
             </section>
+        </div>
         </div>
     );
 }
