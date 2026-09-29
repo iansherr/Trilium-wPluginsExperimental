@@ -41,6 +41,17 @@ To understand how the Plugin System operates under the hood:
 - **SRI Verification**: SHA-256 integrity hashes are verified before package artifacts are accepted.
 - **Network & Host Gates**: Packages requiring `network` permission require `packageAllowNetwork: "true"`. External artifact downloads require the host to be listed in `packageAllowedSourceHosts`.
 
+### D. System Note ID Conventions & Validation (`isValidEntityId`)
+- **Strict Character Set**: Trilium validates forced note IDs against `/^[A-Za-z0-9_]{4,128}$/`. Hyphens (`-`) are strictly invalid and cause `createNewNote()` to throw a `ValidationError` (HTTP 400).
+- **Canonical IDs**: Always use underscores (`_`) instead of hyphens:
+  - `COMMUNITY_PACKAGES_MANAGER_CODE_ID`: `_sd_community_packages_manager`
+  - `COMMUNITY_PACKAGES_MANAGER_RENDER_ID`: `_sd_community_packages_manager_render`
+  - Legacy hyphenated notes are flagged with `enforceDeleted: true` for automatic cleanup.
+
+### E. QuickSearch & Hidden Note Isolation
+- **Default Isolation**: `/api/quick-search/:searchString` omits hidden notes on unhoisted queries so user searches stay clean.
+- **Hidden Queries**: Package lookups supply `?includeHidden=true` (via `searchPackageNotes()`) to query system-managed extensions without leaking them to the general search dropdown.
+
 ---
 
 ## 3. Current State of Play
@@ -53,22 +64,22 @@ To understand how the Plugin System operates under the hood:
 
 | Upstream PR # | Branch Name | Scope / Purpose | Status |
 | :--- | :--- | :--- | :--- |
-| **#10824** | `iansherr:agent/plugin-manager` | Core plugin settings UI, package metadata validation, and operation coordination locking. | Open (Awaiting maintainer review) |
-| **#10825** | `iansherr:agent/plugin-build` | Multi-architecture native SQLite binary preservation for cross-platform Docker testing. | Open (Awaiting maintainer review) |
-| **#10826** | `iansherr:agent/plugin-dev` | Reproducible developer test harness and script-deployer test overrides. | Open (Awaiting maintainer review) |
+| **#10824** | `iansherr:agent/plugin-manager` | Core plugin settings UI, package metadata validation, and operation coordination locking. | **Open** (`Checks/main` passed, `Greptile Review` passed cleanly with 0 comments, Codecov patch satisfied; awaiting maintainer merge) |
+| **#10825** | `iansherr:agent/plugin-build` | Multi-architecture native SQLite binary preservation for cross-platform Docker testing. | **Closed** (Merged/superseded upstream in `TriliumNext/Trilium`) |
+| **#10826** | `iansherr:agent/plugin-dev` | Reproducible developer test harness and script-deployer test overrides. | **Closed** (Merged/superseded upstream in `TriliumNext/Trilium`) |
 
 ---
 
 ## 4. Upstream PR Submission Queue & Waiting Plan
 
 ### The "Wait for Approval" Directive
-Do NOT submit new PRs upstream to `TriliumNext/Trilium` until PRs #10824, #10825, and #10826 have been reviewed, approved, and merged by the upstream maintainers.
+Do NOT submit new PRs upstream to `TriliumNext/Trilium` until PR #10824 has been reviewed, approved, and merged by the upstream maintainers (PRs #10825 and #10826 have already landed).
 
 ### Queue Sequence
-Once Phase 1 PRs land upstream, pull `upstream/main`, rebase the following micro-branches, and submit them in strict sequential order:
+Once Phase 1 (PR #10824) lands upstream, pull `upstream/main`, rebase the following micro-branches, and submit them in strict sequential order:
 
 ```
-[Phase 1: PRs #10824, #10825, #10826 Merged Upstream]
+[Phase 1: PR #10824 Merged Upstream]
                          │
                          ▼
 [PR 4: fix/plugins-lifecycle-followups]
@@ -85,6 +96,14 @@ Once Phase 1 PRs land upstream, pull `upstream/main`, rebase the following micro
                          ▼
 [PR 7: test/plugins-procedural-matrix]
   ↳ 30-case procedural UI component & failure matrix Vitest suite.
+                         │
+                         ▼
+[PR 8: fix/plugins-community-packages-styling]
+  ↳ Scoped CSS catalog styling without OptionsRow.css leakage.
+                         │
+                         ▼
+[PR 9: feat/plugins-package-pages-list]
+  ↳ Collapsed package pages disclosure & dedicated full settings button.
 ```
 
 ### Modular Topic Branch Index (Merged into Fork `main`, Pushed for Upstream Queue)
@@ -95,6 +114,8 @@ Once Phase 1 PRs land upstream, pull `upstream/main`, rebase the following micro
 | **`fix/plugins-offline-metadata`** | `plugins.tsx` (`|| pkg.cachedManifest` fallback) | Enables detail view, settings, and surfaces for offline/uncataloged extensions. | **Merged into main** |
 | **`feat/plugins-ui-enhancements`** | `StateBadge.tsx`, `StateBadge.css`, `plugins.tsx`, `translation.json` | Visual status pills (`Enabled`/`Disabled`), collapsible archive card, and bulk cleanup. | **Merged into main** |
 | **`test/plugins-procedural-matrix`** | `plugins_ui_lifecycle.spec.tsx` | Exhaustive 30-case Preact unit test suite testing all entry boxes, option boxes, selectors, toggles, buttons, and failure matrices. | **Merged into main** |
+| **`fix/plugins-community-packages-styling`** | `community_packages.tsx`, `community_packages.css` | Scoped catalog row styling decoupled from OptionsRow.css. | **Merged into main** |
+| **`feat/plugins-package-pages-list`** | `plugins.tsx`, `plugins.css`, `plugins.spec.tsx` | Collapsed package pages disclosure, page titles/descriptions, and dedicated full settings button. | **Merged into main** |
 
 ---
 
@@ -163,10 +184,10 @@ Always run these commands to verify code integrity before committing changes:
 | Target | Command | Expected Result |
 | :--- | :--- | :--- |
 | **TypeScript Types** | `pnpm typecheck` | `No errors found.` |
-| **Client Plugin Tests** | `pnpm --filter client test plugins` | `30 passed (30)` |
+| **Client Plugin Tests** | `pnpm --filter client test plugins` | `39 passed (39)` |
 | **Manifest Contracts** | `node --test tests/packages/package-manifest.test.mjs` | `10 pass` |
-| **Community Contracts** | `node --test tests/packages/community-packages-contract.test.mjs` | `25 pass` |
-| **Server Operation Lock** | `pnpm --filter server test package_operation_lock` | `1 passed` |
+| **Community Contracts** | `node --test tests/packages/community-packages-contract.test.mjs` | `23 pass` |
+| **Server Operation Lock** | `pnpm --filter server test package_operation_lock` | `9 passed (9)` |
 
 ---
 
@@ -175,7 +196,7 @@ Always run these commands to verify code integrity before committing changes:
 The **TriliumDEV Companion Plugin** is auto-seeded as a built-in community package directly inside Trilium Notes via `packages/trilium-core/src/services/hidden_subtree.ts`:
 
 ### Key Capabilities & Dual-Mode Architecture:
-1. **Auto-Seeded Built-In Package**: Seeded automatically into hidden system notes (`_sd_triliumdev-companion_manifest`) on database initialization/boot, appearing directly in `Settings → Plugins`.
+1. **Auto-Seeded Built-In Package**: Seeded automatically into hidden system notes (`_sd_triliumdev_companion_manifest`) on database initialization/boot, appearing directly in `Settings → Plugins`.
 2. **End-User / Tester Mode (No local codebase required)**:
    - Queries GitHub API (`https://api.github.com/repos/iansherr/Trilium-wPluginsExperimental/releases/latest`).
    - Compares local version against remote release tags (`v0.104.1-dev.X`).
