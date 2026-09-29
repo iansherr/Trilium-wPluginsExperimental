@@ -82,3 +82,21 @@
         transform: translateY(0);
     }
 }
+
+.community-package-pages .community-package-page-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5em 0;
+    border-bottom: 1px solid var(--main-border-color);
+}
+
+.community-package-pages .community-package-page-item:last-child {
+    border-bottom: unset;
+}
+
+.community-package-pages .community-package-page-item > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}

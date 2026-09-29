@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import i18next from "i18next";
 
 import {
+    buildPackagePages,
     compareVersions,
     compatibilityStatus,
     buildLegacyPluginSourceLabels,
@@ -283,5 +284,46 @@ describe("plugin manager state helpers", () => {
         expect(parseSettingValue('"secret"', { key: "token", type: "secret", title: "Token" })).toBe("secret");
         expect(serializeSetting({ value: 42 })).toBe('{"value":42}');
         expect(settingLabelName("token")).toBe("packageSetting:token");
+    });
+});
+
+describe("package pages list", () => {
+    const render = (noteId: string, title: string) => ({ noteId, title, type: "render" }) as never;
+    const pkg = { artifactNotes: [render("n1", "Ikmal: Today"), render("n2", "Ikmal: Project Dashboard"), { noteId: "n3", title: "Ikmal: Styles", type: "code" }] } as never;
+    const surface = (id: string, type: string, extra = {}) => ({ id, type, title: `Title ${id}`, ...extra }) as never;
+    const noop = () => {};
+
+    it("lists only the declared page surfaces, with their titles and descriptions", () => {
+        const surfaces = [
+            surface("today", "page", { artifact: "today", description: "Your daily page" }),
+            surface("prefs", "settings", { settingKeys: ["a"], artifact: "settings" }),
+            surface("open-docs", "deeplink", { url: "https://example.com" })
+        ];
+
+        const pages = buildPackagePages(pkg, { ...manifest, surfaces } as never, noop, noop);
+
+        // The settings and deeplink surfaces are not pages, and the undeclared Project Dashboard
+        // render note is left out because the manifest says what the destinations are.
+        expect(pages.map((page) => [page.key, page.title, page.description])).toEqual([["today", "Title today", "Your daily page"]]);
+    });
+
+    it("opens a declared page through its surface, not through a note", () => {
+        const opened: string[] = [];
+        const surfaces = [surface("today", "page", { artifact: "today" })];
+
+        const [page] = buildPackagePages(pkg, { ...manifest, surfaces } as never, (s) => opened.push(`surface:${s.id}`), (id) => opened.push(`note:${id}`));
+        page.open();
+
+        expect(opened).toEqual(["surface:today"]);
+    });
+
+    it("falls back to every render note by title when no page is declared", () => {
+        const opened: string[] = [];
+
+        const pages = buildPackagePages(pkg, { ...manifest, surfaces: [surface("prefs", "settings", { settingKeys: ["a"] })] } as never, noop, (id) => opened.push(id));
+        pages[1].open();
+
+        expect(pages.map((page) => page.title)).toEqual(["Ikmal: Today", "Ikmal: Project Dashboard"]);
+        expect(opened).toEqual(["n2"]);
     });
 });

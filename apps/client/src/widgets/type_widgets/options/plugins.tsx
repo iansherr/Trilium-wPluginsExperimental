@@ -14,6 +14,7 @@ import server from "../../../services/server";
 import toast from "../../../services/toast";
 import { randomString } from "../../../services/utils";
 import Button from "../../react/Button";
+import Collapsible from "../../react/Collapsible";
 import Dropdown from "../../react/Dropdown";
 import FormSelect from "../../react/FormSelect";
 import FormTextBox from "../../react/FormTextBox";
@@ -323,7 +324,7 @@ export default function PluginsSettings() {
     }
 
     async function openPackageSurface(pkg: PackageSummary, surface: PackageSurface) {
-        if (surface.type === "page") {
+        if (surface.type === "page" || (surface.type === "settings" && surface.artifact)) {
             const note = pkg.artifactNotes.find((candidate) => candidate.getOwnedLabelValue("packageArtifact") === surface.artifact && candidate.type === "render")
                 || pkg.artifactNotes.find((candidate) => candidate.getOwnedLabelValue("packageArtifact") === surface.artifact);
             if (!note) {
@@ -1197,7 +1198,33 @@ function formatHealthMessage(message: string) {
     return message;
 }
 
+interface PackagePageEntry {
+    key: string;
+    title: string;
+    description?: string;
+    icon?: string;
+    open: () => void;
+}
+
+/**
+ * The pages a package offers, for its "Package pages" list. A manifest that declares `page`
+ * surfaces is the source of truth (titles and descriptions, and pages that are not destinations
+ * -- e.g. one that renders inside another note -- are simply left out). One that declares none
+ * falls back to every render note it installed, by note title.
+ */
+export function buildPackagePages(pkg: PackageSummary, manifest: CatalogPackage, openSurface: (surface: PackageSurface) => void, openArtifact: (noteId: string) => void): PackagePageEntry[] {
+    const declared = manifest.surfaces.filter((surface) => surface.type === "page");
+    if (declared.length > 0) {
+        return declared.map((surface) => ({ key: surface.id, title: surface.title, description: surface.description, icon: surface.icon, open: () => openSurface(surface) }));
+    }
+    return pkg.artifactNotes
+        .filter((note) => note.type === "render")
+        .map((note) => ({ key: note.noteId, title: note.title, open: () => openArtifact(note.noteId) }));
+}
+
 function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange, onRepair, onOpenArtifact, onArchive, onDelete, onOpenSurface, disabled }: { pkg: PackageSummary; manifest?: CatalogPackage; onChange: (key: string, value: unknown) => void; onSave: () => void; onPinChange: (pinned: boolean) => void; onRepair: () => void; onOpenArtifact: (noteId: string) => void; onArchive: () => void; onDelete: () => void; onOpenSurface: (surface: PackageSurface) => void; disabled: boolean }) {
+    const actionSurfaces = manifest?.surfaces.filter((surface) => surface.type === "modal" || surface.type === "deeplink") ?? [];
+    const packagePages = manifest ? buildPackagePages(pkg, manifest, onOpenSurface, onOpenArtifact) : [];
     return (
         <div className="community-package-details options-section-card">
             <h5>{t("plugins.settings_panel_heading")}</h5>
@@ -1214,18 +1241,21 @@ function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange,
                 onClick={onRepair}
             />}
             {manifest ? <>
-                {manifest.surfaces.length > 0 && <OptionsRow name={`community-package-surfaces-${pkg.noteId}`} label={t("plugins.entry_points_label")} description={t("plugins.entry_points_description")} stacked>
+                {actionSurfaces.length > 0 && <OptionsRow name={`community-package-surfaces-${pkg.noteId}`} label={t("plugins.entry_points_label")} description={t("plugins.entry_points_description")} stacked>
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.5em" }}>
-                        {manifest.surfaces.map((surface) => <div key={surface.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75em" }}>
+                        {actionSurfaces.map((surface) => <div key={surface.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75em" }}>
                             <span><strong>{surface.title}</strong>{surface.description && <><br /><small>{surface.description}</small></>}</span>
-                            <Button text={surface.type === "settings" ? t("plugins.open_settings") : t("plugins.open_entry_point")} icon={surface.icon} size="micro" onClick={() => onOpenSurface(surface)} disabled={disabled} />
+                            <Button text={t("plugins.open_entry_point")} icon={surface.icon} size="micro" onClick={() => onOpenSurface(surface)} disabled={disabled} />
                         </div>)}
                     </div>
                 </OptionsRow>}
-                {pkg.artifactNotes.filter((note) => note.type === "render").length > 0 && <OptionsRow name={`community-package-pages-${pkg.noteId}`} label="Open package pages" description="Open a package dashboard or standalone render page in a Trilium tab.">
-                    <div className="community-package-page-links">
-                        {pkg.artifactNotes.filter((note) => note.type === "render").map((note) => <Button key={note.noteId} text={note.title} size="micro" onClick={() => onOpenArtifact(note.noteId)} />)}
-                    </div>
+                {packagePages.length > 0 && <OptionsRow name={`community-package-pages-${pkg.noteId}`} label={t("plugins.package_pages_label")} description={t("plugins.package_pages_description")} stacked>
+                    <Collapsible title={translateText("plugins.package_pages_toggle", { count: packagePages.length })} className="community-package-pages">
+                        {packagePages.map((page) => <div key={page.key} className="community-package-page-item">
+                            <span><strong>{page.title}</strong>{page.description && <><br /><small className="text-muted">{page.description}</small></>}</span>
+                            <Button text={t("plugins.open_entry_point")} icon={page.icon} size="micro" onClick={page.open} disabled={disabled} />
+                        </div>)}
+                    </Collapsible>
                 </OptionsRow>}
                 <OptionsRow name={`community-package-maintenance-${pkg.noteId}`} label={t("plugins.registry_status_label")} description={t("plugins.registry_status_description")}>
                     <span>{[manifestStatus(manifest), manifest.maintainer && translateText("plugins.maintainer", { maintainer: manifest.maintainer }), manifest.license && translateText("plugins.license", { license: manifest.license })].filter(Boolean).join(" · ") || t("plugins.no_registry_metadata")}</span>
@@ -1241,6 +1271,7 @@ function InstalledPackageDetails({ pkg, manifest, onChange, onSave, onPinChange,
                 </OptionsRow>}
                 {manifest.surfaces.filter((surface) => surface.type === "settings").map((surface) => <OptionsRow key={surface.id} name={`community-package-surface-settings-${pkg.noteId}-${surface.id}`} label={surface.title} description={surface.description} stacked>
                     <div>
+                        {surface.artifact && <p><Button text={t("plugins.open_full_settings")} icon="bx bx-slider-alt" size="micro" onClick={() => onOpenSurface(surface)} disabled={disabled} /></p>}
                         {surface.settingKeys?.map((key) => manifest.settings.find((setting) => setting.key === key)).filter(Boolean).map((setting) => <PackageSettingEditor
                             key={setting!.key}
                             packageId={pkg.id}
