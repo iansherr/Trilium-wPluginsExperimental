@@ -129,15 +129,19 @@ function lintSearchString(req: Request): SearchLintResponse {
 function quickSearch(req: Request<{ searchString: string }, { includeArchived?: string; includeHidden?: string; includeHiddenNotes?: string }>) {
     const { searchString } = req.params;
 
+    const includeHidden = req.query.includeHidden === "true" || req.query.includeHiddenNotes === "true";
+
     const searchContext = new SearchContext({
         fastSearch: false,
         includeArchivedNotes: req.query.includeArchived === "true",
-        includeHiddenNotes: req.query.includeHidden === "true" || req.query.includeHiddenNotes === "true",
+        includeHiddenNotes: includeHidden,
         fuzzyAttributeSearch: true,
         ignoreInternalAttributes: true,
         // Quick search covers the subtree the user is looking at, so a hoist into the hidden
         // subtree scopes it there too. Only link autocomplete widens to root, for link targets.
-        ancestorNoteId: hoistedNoteService.getHoistedNoteId()
+        // A caller that opts in to hidden notes is looking something up by identity (package and
+        // script lookups), not browsing, so which tab happens to be active must not narrow it.
+        ...(includeHidden ? { ignoreHoistedNote: true } : { ancestorNoteId: hoistedNoteService.getHoistedNoteId() })
     });
 
     const trimmed = searchService.findResultsWithQuery(searchString, searchContext).slice(0, 200);

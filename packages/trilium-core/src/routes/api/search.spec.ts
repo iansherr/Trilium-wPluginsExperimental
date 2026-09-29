@@ -151,6 +151,26 @@ describe("Search API (core)", () => {
         expect(included.body.searchResultNoteIds).toContain(hidden.noteId);
     });
 
+    it("does not scope an includeHidden quick search to the hoisted subtree", async () => {
+        // Package-manager and script lookups opt in to hidden notes to find things wherever they
+        // live; the active tab's hoist (e.g. a note the catalog is open in) must not narrow them.
+        const token = "ZzIncludeHiddenHoistQwerty";
+        const workspace = await createTextNote(api, { title: "Hoisted workspace" });
+        const outside = await createTextNote(api, { title: `${token} outside` });
+        const hidden = await createTextNote(api, { parentNoteId: "_lbBookmarks", title: `${token} hidden` });
+
+        const hoisted = await api.get<{ searchResultNoteIds: string[] }>(
+            `/api/quick-search/${encodeURIComponent(token)}?includeHidden=true`,
+            { headers: { "trilium-hoisted-note-id": workspace.noteId } }
+        );
+        expect(hoisted.body.searchResultNoteIds).toContain(outside.noteId);
+        expect(hoisted.body.searchResultNoteIds).toContain(hidden.noteId);
+
+        // Without the opt-in the hoist still confines the search, as the search box expects.
+        const plain = await quickSearch(token, workspace.noteId);
+        expect(plain.body.searchResultNoteIds).not.toContain(outside.noteId);
+    });
+
     it("includes archived notes only when requested", async () => {
         const { noteId } = await createTextNote(api, { title: "Archived search fixture" });
         await api.post(`/api/notes/${noteId}/attributes`, {
