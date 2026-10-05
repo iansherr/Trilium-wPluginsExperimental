@@ -184,7 +184,7 @@ Always run these commands to verify code integrity before committing changes:
 | Target | Command | Expected Result |
 | :--- | :--- | :--- |
 | **TypeScript Types** | `pnpm typecheck` | `No errors found.` |
-| **Client Plugin Tests** | `pnpm --filter client test plugins` | `39 passed (39)` |
+| **Client Plugin Tests** | `pnpm --filter client test plugins` | `44 passed (44)` |
 | **Manifest Contracts** | `node --test tests/packages/package-manifest.test.mjs` | `10 pass` |
 | **Community Contracts** | `node --test tests/packages/community-packages-contract.test.mjs` | `23 pass` |
 | **Server Operation Lock** | `pnpm --filter server test package_operation_lock` | `9 passed (9)` |
