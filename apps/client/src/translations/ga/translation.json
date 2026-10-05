@@ -317,8 +317,7 @@
     "copy_to_clipboard": "Cóipeáil chuig an ghearrthaisce"
   },
   "jump_to_note": {
-    "search_placeholder": "Cuardaigh nóta de réir a ainm nó a chineáil > le haghaidh orduithe...",
-    "search_button": "Cuardaigh sa téacs iomlán"
+    "search_placeholder": "Cuardaigh nóta de réir a ainm nó a chineáil > le haghaidh orduithe..."
   },
   "markdown_import": {
     "dialog_title": "Allmhairiú marcála síos",
@@ -1296,7 +1295,6 @@
     "label_rock_or_pop": "ní mór ach ceann amháin de na lipéid a bheith i láthair",
     "label_year_comparison": "comparáid uimhriúil (chomh maith >, >=, <).",
     "label_date_created": "nótaí a cruthaíodh sa mhí seo caite",
-    "error": "Earráid chuardaigh: {{error}}",
     "search_prefix": "Cuardaigh:",
     "hints": {
       "title": "Teaghrán cuardaigh",
@@ -2138,7 +2136,6 @@
     "placeholder": "Cuardach tapa",
     "searching": "Ag cuardach...",
     "no-results": "Níor aimsíodh aon torthaí",
-    "more-results": "... agus {{number}} torthaí eile.",
     "show-in-full-search": "Taispeáin sa chuardach iomlán"
   },
   "note_tree": {
@@ -2388,12 +2385,9 @@
     "zoom-factor": "Fachtóir súmála"
   },
   "note_autocomplete": {
-    "search-for": "Cuardaigh \"{{term}}\"",
     "create-note": "Cruthaigh nóta \"{{term}}\"",
     "insert-external-link": "Cuir nasc seachtrach chuig \"{{term}}\" isteach",
     "clear-text-field": "Glan réimse téacs",
-    "show-recent-notes": "Taispeáin nótaí le déanaí",
-    "full-text-search": "Cuardach téacs iomlán",
     "create-note-into": "Cruthaigh nóta \"{{term}}\" i {{parentTitle}}",
     "create-note-into-day-note": "Cruthaigh an nóta \"{{term}}\" i nóta an lae inniu",
     "create-note-into-root": "Cruthaigh an nóta \"{{term}}\" ag an leibhéal uachtarach",
@@ -2864,9 +2858,7 @@
   },
   "server": {
     "unknown_http_error_title": "Earráid chumarsáide leis an bhfreastalaí",
-    "unknown_http_error_content": "Cód stádais: {{statusCode}}\nURL: {{method}} {{url}}\nTeachtaireacht: {{message}}",
-    "reverse_proxy_blocked_title": "Iarratais blocáilte ag seachfhreastalaí droim ar ais",
-    "reverse_proxy_blocked_message": "Diúltaíodh do roinnt iarratais (HTTP 400) sular shroich siad Trilium, is dóichí gur seachfhreastalaí droim ar ais a chuireann bac ar charachtair atá ionchódaithe de réir céatadáin in URLanna.\n\nDéanann leaganacha 3.6.4 go 3.6.6 de Traefik é seo de réir réamhshocraithe: uasghrádaigh go Traefik 3.6.7 nó níos nuaí, nó ceadaigh carachtair ionchódaithe ina chumraíocht."
+    "unknown_http_error_content": "Cód stádais: {{statusCode}}\nURL: {{method}} {{url}}\nTeachtaireacht: {{message}}"
   },
   "tab_history_navigation_buttons": {
     "go-back": "Téigh ar ais go dtí an nóta roimhe seo",
@@ -3181,7 +3173,6 @@
     "edit_index": "Cuir in eagar {{index}} de {{total}}",
     "retry": "Déan iarracht eile",
     "web_search_unavailable_gemini": "Ní bheidh sé ar fáil ar mhúnlaí Gemini agus rochtain nótaí ar siúl — ní cheadaíonn API Google an dá rud a chomhcheangal. Díchumasaigh rochtain nótaí nó aistrigh chuig soláthraí difriúil chun cuardach gréasáin a úsáid.",
-    "input_streaming": "Ionchur (sruthú…)",
     "attach_file": "Ceangail íomhá, PDF, nó comhad téacs",
     "remove_attachment": "Bain an ceangaltán",
     "attachment_upload_failed": "Theip ar \"{{name}}\" a uaslódáil.",
@@ -3311,9 +3302,6 @@
   },
   "llm": {
     "add_provider": "Cuir Soláthraí leis",
-    "add_provider_title": "Cuir Soláthraí AI leis",
-    "configured_providers": "Soláthraithe Cumraithe",
-    "no_providers_configured": "Níl aon soláthraithe cumraithe fós.",
     "provider_name": "Ainm",
     "actions": "Gníomhartha",
     "delete_provider": "Scrios",
@@ -3370,11 +3358,6 @@
     "models_select_all": "Roghnaigh gach rud",
     "models_select_none": "Roghnaigh aon cheann",
     "models_reset_defaults": "Athshocraigh go dtí na socruithe réamhshocraithe",
-    "provider_model_count_one": "{{count}} samhail",
-    "provider_model_count_two": "{{count}} samhlacha",
-    "provider_model_count_few": "{{count}} samhlacha",
-    "provider_model_count_many": "{{count}} samhlacha",
-    "provider_model_count_other": "{{count}} samhlacha",
     "beta": "Béite",
     "claude_agent_description": "Úsáideann sé do shíntiús Claude Pro/Max trí Claude Code, mar sin níl aon eochair API ag teastáil. Ní mór Claude Code a shuiteáil ar an meaisín ina bhfuil Trilium ag rith (an freastalaí nuair a dhéantar féinóstáil, nó an ríomhaire seo ar dheasc); sínigh isteach uair amháin trí \"claude /login\" a rith ansin.",
     "add_provider_title_named": "Cuir {{- name}} leis",
@@ -3501,7 +3484,6 @@
     "page_size": "Méid leathanaigh",
     "scale": "Scála",
     "margins": "Imill",
-    "render_error": "Ní féidir PDF a rindreáil leis na socruithe reatha. Seiceáil na corrlaigh agus an scála le do thoil.",
     "margins_default": "Réamhshocrú",
     "margins_none": "Dada",
     "margins_minimum": "Íosmhéid",
@@ -3722,8 +3704,6 @@
       "insert-a-table": "Cuir tábla isteach.",
       "insert-date-time": "Cuir isteach dáta/am",
       "insert-footnote-0": "Cuir nóta coise %0 isteach",
-      "insert-math": "Cuir matamaitic isteach",
-      "insert-mermaid-diagram": "Cuir isteach léaráid Maighdeann Mhara",
       "insert-mermaid-source-code": "Cuir isteach cód foinse Mermaid",
       "insert-paragraph-after-code-block": "Cuir mír isteach i ndiaidh bhloc cóid",
       "insert-paragraph-before-code-block": "Cuir mír isteach roimh bhloc cóid",
@@ -3788,7 +3768,6 @@
       "working": "Ag obair…",
       "upload-an-image-from-your-device": "Uaslódáil íomhá ó do ghléas.",
       "upload-image": "Uaslódáil íomhá",
-      "insert-icon": "Cuir isteach deilbhín",
       "icon": "Deilbhín",
       "insert-an-icon-from-an-installed-icon-pack": "Cuir isteach deilbhín ó phacáiste deilbhíní atá suiteáilte",
       "transform-icon": "Deilbhín claochlaithe",

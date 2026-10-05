@@ -280,7 +280,6 @@
     "copy_to_clipboard": "Copiar al portapapeles"
   },
   "jump_to_note": {
-    "search_button": "Buscar en texto completo",
     "search_placeholder": "Busque nota por su nombre o escriba > para comandos..."
   },
   "markdown_import": {
@@ -1280,7 +1279,6 @@
     "label_rock_or_pop": "sólo una de las etiquetas debe estar presente",
     "label_year_comparison": "comparación numérica (también >, >=, <).",
     "label_date_created": "notas creadas en el último mes",
-    "error": "Error de búsqueda: {{error}}",
     "search_prefix": "Buscar:",
     "hints": {
       "title": "Cadena de búsqueda",
@@ -2089,7 +2087,6 @@
     "placeholder": "Búsqueda rápida",
     "searching": "Buscando...",
     "no-results": "No se encontraron resultados",
-    "more-results": "... y {{number}} resultados más.",
     "show-in-full-search": "Mostrar en búsqueda completa"
   },
   "note_tree": {
@@ -2333,12 +2330,9 @@
     "zoom-factor": "Factor de zoom"
   },
   "note_autocomplete": {
-    "search-for": "Buscar por \"{{term}}\"",
     "create-note": "Crear y enlazar subnota \"{{term}}\"",
     "insert-external-link": "Insertar enlace externo a \"{{term}}\"",
     "clear-text-field": "Limpiar campo de texto",
-    "show-recent-notes": "Mostrar notas recientes",
-    "full-text-search": "Búsqueda de texto completo",
     "create-note-into": "Crear nota \"{{term}}\" en {{parentTitle}}",
     "create-note-into-day-note": "Crear nota \"{{term}}\" en la nota del día de hoy",
     "create-note-into-root": "Crear nota \"{{term}}\" en el nivel superior",
@@ -2877,9 +2871,7 @@
   },
   "server": {
     "unknown_http_error_title": "Error de comunicación con el servidor",
-    "unknown_http_error_content": "Código de estado: {{statusCode}}\nURL: {{method}} {{url}}\nMensaje: {{message}}",
-    "reverse_proxy_blocked_title": "Solicitudes bloqueadas por un proxy inverso",
-    "reverse_proxy_blocked_message": "Algunas solicitudes se rechazaron (HTTP 400) antes de llegar a Trilium, probablemente por un proxy inverso que bloquea caracteres codificados con porcentaje en las URL.\n\nTraefik, en las versiones 3.6.4 a 3.6.6, lo hace de forma predeterminada: actualice a Traefik 3.6.7 o posterior, o permita caracteres codificados en su configuración."
+    "unknown_http_error_content": "Código de estado: {{statusCode}}\nURL: {{method}} {{url}}\nMensaje: {{message}}"
   },
   "tab_history_navigation_buttons": {
     "go-back": "Volver a la nota anterior",
@@ -3220,7 +3212,6 @@
     "no_models_selected": "No hay modelos seleccionados: haga clic en el lápiz para elegir",
     "no_model_selected": "Seleccione un modelo",
     "edit_models": "Editar modelos",
-    "input_streaming": "Entrada (transmitiendo…)",
     "edit_index": "Edición {{index}} de {{total}}",
     "free": "Gratis",
     "retry": "Reintentar",
@@ -3333,7 +3324,6 @@
     "page_size": "Tamaño de página",
     "scale": "Escala",
     "margins": "Márgenes",
-    "render_error": "No se puede generar el PDF con la configuración actual. Comprueba los márgenes y la escala.",
     "margins_default": "Predeterminados",
     "margins_none": "Sin márgenes",
     "margins_minimum": "Mínimos",
@@ -3411,9 +3401,6 @@
   "llm": {
     "feature_not_enabled": "Active la función experimental LLM en Ajustes → Avanzado → Funciones experimentales para usar integraciones de IA.",
     "add_provider": "Añadir proveedor",
-    "add_provider_title": "Añadir proveedor de IA",
-    "configured_providers": "Proveedores configurados",
-    "no_providers_configured": "Aún no hay proveedores configurados.",
     "provider_name": "Nombre",
     "actions": "Acciones",
     "delete_provider": "Eliminar",
@@ -3466,9 +3453,6 @@
     "models_select_all": "Seleccionar todo",
     "models_select_none": "Seleccionar ninguno",
     "models_reset_defaults": "Restablecer valores predeterminados",
-    "provider_model_count_one": "{{count}} modelo",
-    "provider_model_count_many": "",
-    "provider_model_count_other": "{{count}} modelos",
     "beta": "Beta",
     "base_url": "URL base",
     "base_url_description": "Opcional. Accede a la misma API a través de un proxy o puerta de enlace. Para ejecutar un modelo usted mismo, añada en su lugar un proveedor Ollama o LM Studio.",
@@ -3943,8 +3927,6 @@
       "insert-a-table": "Insertar una tabla.",
       "insert-date-time": "Insertar fecha/hora",
       "insert-footnote-0": "Insertar nota al pie %0",
-      "insert-math": "Insertar matemática",
-      "insert-mermaid-diagram": "Insertar diagrama Mermaid",
       "insert-mermaid-source-code": "Insertar código fuente Mermaid",
       "insert-paragraph-after-code-block": "Insertar párrafo después del bloque de código",
       "insert-paragraph-before-code-block": "Insertar párrafo antes del bloque de código",
@@ -4005,7 +3987,6 @@
       "upload-an-image-from-your-device": "Suba una imagen desde su dispositivo.",
       "upload-image": "Subir imagen",
       "working": "Trabajando…",
-      "insert-icon": "Insertar icono",
       "icon": "Icono",
       "insert-an-icon-from-an-installed-icon-pack": "Insertar un icono de un paquete de iconos instalado",
       "transform-icon": "Transformar icono",

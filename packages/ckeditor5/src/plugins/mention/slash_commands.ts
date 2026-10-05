@@ -1,5 +1,3 @@
-import "../../theme/slash_commands.css";
-
 import {
     IconAlignCenter,
     IconAlignJustify,
@@ -18,6 +16,7 @@ import {
     IconNumberedList,
     IconOutdent,
     IconPageBreak,
+    IconPaperClip,
     IconParagraph,
     IconQuote,
     IconTable,
@@ -31,6 +30,7 @@ import bxError from "boxicons/svg/regular/bx-error.svg?raw";
 import bxErrorCircle from "boxicons/svg/regular/bx-error-circle.svg?raw";
 import bxInfoCircle from "boxicons/svg/regular/bx-info-circle.svg?raw";
 import bxNetworkChart from "boxicons/svg/regular/bx-network-chart.svg?raw";
+import bxPen from "boxicons/svg/regular/bx-pen.svg?raw";
 import bxSticker from "boxicons/svg/regular/bx-sticker.svg?raw";
 import { BookmarkUI, type Editor, type MentionFeedObjectItem, Plugin } from "ckeditor5";
 
@@ -44,7 +44,8 @@ import internalLinkIcon from "../../icons/trilium.svg?raw";
 import { ADMONITION_TYPE_NAMES, type AdmonitionType } from "../admonition/admonition_command.js";
 import { getAdmonitionTitle } from "../admonition/admonition_ui.js";
 import aiIcon from "../ai_assistant/theme/icons/ai.svg?raw";
-import { COMMAND_NAME as INCLUDE_NOTE_COMMAND } from "../includenote.js";
+import { COMMAND_NAME as CONTENT_EMBED_COMMAND } from "../content_embed/content_embed.js";
+import { insertDrawingCanvas } from "../file_upload/file_upload_ui.js";
 import { INSERT_ICON_COMMAND } from "../inline_icon/inline_icon_editing.js";
 import InlineIconUI from "../inline_icon/inline_icon_ui.js";
 import InsertDateTimePlugin, { COMMAND_NAME as INSERT_DATE_TIME_COMMAND, getDateTimeFormatOptions } from "../insert_date_time.js";
@@ -54,7 +55,8 @@ import MathUI from "../math/math_ui.js";
 import { INSERT_MERMAID_COMMAND } from "../mermaid/insert_mermaid_command.js";
 import type { MermaidSample } from "../mermaid/mermaid_ui.js";
 import SnippetsEditing from "../snippets/snippetsediting.js";
-import { registerMentionFeed } from "./register_feed.js";
+import { registerHostedMentionFeed } from "./register_feed.js";
+import type { MentionHostedList } from "./types.js";
 
 export const SLASH_MARKER = "/";
 
@@ -92,12 +94,19 @@ export interface SlashCommandDefinition {
 
 export interface SlashCommandConfig {
     removeCommands?: string[];
-    /** How many entries the palette shows at once. Unlimited by default, as premium's was. */
-    dropdownLimit?: number;
+    /**
+     * The host's list of the palette, which lists {@link TriliumSlashCommands.search} for the query
+     * and commits the entry picked as a {@link SlashCommandItem}. Without it there is no palette.
+     */
+    list?: ( editor: Editor ) => MentionHostedList;
 }
 
+/** What a palette's list commits for the entry picked. */
+export type SlashCommandItem = MentionFeedObjectItem & { definition: SlashCommandDefinition };
+
 /**
- * The `/` command palette, hosted on {@link TriliumMentionUI}.
+ * The `/` command palette: its catalog, its matcher and what an entry runs, for the list the host
+ * draws in `slashCommand.list`, which {@link TriliumMentionUI} runs as a hosted feed.
  *
  * This replaces premium `SlashCommand`, which was the only remaining plugin forcing the `Mention`
  * façade — and therefore upstream's `MentionUI` — into the text editor alongside ours. Two mention
@@ -106,8 +115,7 @@ export interface SlashCommandConfig {
  * next keystroke.
  *
  * CKEditor built the premium plugin on `Mention` themselves, so hosting `/` on a mention feed is
- * not a workaround but the same architecture. What is reimplemented here is the palette: the
- * catalog, the matcher and the row rendering.
+ * not a workaround but the same architecture.
  */
 export default class TriliumSlashCommands extends Plugin {
 
@@ -118,20 +126,26 @@ export default class TriliumSlashCommands extends Plugin {
     constructor(editor: Editor) {
         super(editor);
 
-        registerMentionFeed(editor, {
+        const list = editor.config.get("slashCommand.list");
+        if (!list) {
+            return;
+        }
+
+        registerHostedMentionFeed(editor, {
             marker: SLASH_MARKER,
             // A bare `/` opens the full palette, as the premium plugin did.
             minimumCharacters: 0,
-            // Premium defaulted this to `Infinity` and let the panel scroll. Capping it would hide
-            // entries the user cannot then reach, since the query only narrows the list.
-            dropdownLimit: (editor.config.get("slashCommand.dropdownLimit") as number | undefined) ?? Infinity,
-            feed: (query: string) => matchSlashCommands(this._catalog(), query).map(toFeedItem),
-            itemRenderer: (item) => renderRow(item as SlashCommandItem),
+            list,
             // The catalog gates on `isEnabled` at query time, but an entry can go stale while the
-            // panel is open; re-check here so a no-op commit never costs the user their `/query`.
+            // list is open; re-check here so a no-op commit never costs the user their `/query`.
             canCommit: (editorInstance, item) => isSlashCommandEnabled(editorInstance, (item as SlashCommandItem).definition),
             commit: (editorInstance, item) => runSlashCommand(editorInstance, (item as SlashCommandItem).definition)
         });
+    }
+
+    /** The entries for what was typed after the `/`, best match first. */
+    search(query: string): SlashCommandDefinition[] {
+        return matchSlashCommands(this._catalog(), query);
     }
 
     /**
@@ -182,13 +196,6 @@ export function isSlashCommandEnabled(editor: Editor, definition: SlashCommandDe
     }
 
     return editor.commands.get(definition.commandName)?.isEnabled ?? false;
-}
-
-type SlashCommandItem = MentionFeedObjectItem & { definition: SlashCommandDefinition };
-
-function toFeedItem(definition: SlashCommandDefinition): SlashCommandItem {
-    // Upstream requires a feed item's `id` to start with the marker.
-    return { id: `${SLASH_MARKER}${definition.id}`, text: definition.title, definition };
 }
 
 function runSlashCommand(editor: Editor, definition: SlashCommandDefinition) {
@@ -325,6 +332,16 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
         ...buildListSlashCommands(editor),
         ...buildAlignmentSlashCommands(editor),
         ...buildAdmonitionSlashCommands(editor),
+        {
+            id: "drawing-canvas",
+            title: t("Drawing canvas"),
+            description: t("Insert a canvas to draw on."),
+            aliases: [ "excalidraw", "sketch", "whiteboard" ],
+            icon: bxPen,
+            commandName: "fileUpload",
+            isEnabled: canEmbedFiles,
+            execute: insertDrawingCanvas
+        },
         ...buildMermaidSlashCommands(editor),
         {
             id: "ai-assistant",
@@ -362,6 +379,31 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
             commandName: INTERNAL_LINK_COMMAND
         },
         {
+            id: "attach-file",
+            title: t("Attach file as a link"),
+            description: t("Upload files as attachments and insert links."),
+            aliases: [ "attachment", "upload" ],
+            icon: IconPaperClip,
+            commandName: "fileUpload",
+            execute: (target: Editor) => pickFiles("", (files) => {
+                target.execute("fileUpload", { file: files });
+                target.editing.view.focus();
+            })
+        },
+        {
+            id: "attach-and-embed-file",
+            title: t("Attach and embed file"),
+            description: t("Upload files as attachments and insert embeds."),
+            aliases: [ "attachment", "upload", "embed" ],
+            icon: IconPaperClip,
+            commandName: "fileUpload",
+            isEnabled: canEmbedFiles,
+            execute: (target: Editor) => pickFiles("", (files) => {
+                target.execute("fileUpload", { file: files, asEmbed: true });
+                target.editing.view.focus();
+            })
+        },
+        {
             id: "math",
             title: t("Math equation"),
             description: t("Insert a math equation"),
@@ -370,11 +412,11 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
             execute: (target: Editor) => target.plugins.get(MathUI)._showUI()
         },
         {
-            id: "include-note",
+            id: "content-embed",
             title: t("Include note"),
             description: t("Display the content of another note in this note"),
             icon: noteIcon,
-            commandName: INCLUDE_NOTE_COMMAND
+            commandName: CONTENT_EMBED_COMMAND
         },
         {
             id: "page-break",
@@ -696,30 +738,47 @@ function buildImageUploadCommand(editor: Editor): SlashCommandDefinition {
         execute(target) {
             const imageTypes = target.config.get("image.upload.types") ?? [];
             const imageTypesRegExp = createImageTypeRegExp(imageTypes);
-            const input = document.createElement("input");
+            const accept = imageTypes.map((type) => `image/${type}`).join(",");
 
-            input.type = "file";
-            input.accept = imageTypes.map((type) => `image/${type}`).join(",");
-            input.multiple = true;
-            input.style.display = "none";
-
-            input.addEventListener("change", () => {
-                /* v8 ignore next -- `files` is only null on an input that is not of type `file` */
-                const imagesToUpload = Array.from(input.files ?? [])
-                    .filter((file) => imageTypesRegExp.test(file.type));
+            pickFiles(accept, (files) => {
+                const imagesToUpload = files.filter((file) => imageTypesRegExp.test(file.type));
 
                 if (imagesToUpload.length) {
                     target.execute("uploadImage", { file: imagesToUpload });
                     target.editing.view.focus();
                 }
-
-                input.remove();
-            }, { once: true });
-
-            document.body.appendChild(input);
-            input.click();
+            });
         }
     };
+}
+
+/** Whether files can be embedded at the selection: wherever "Include note" can insert an embed. */
+function canEmbedFiles(target: Editor) {
+    return !!target.commands.get("fileUpload")?.isEnabled
+        && !!target.commands.get(CONTENT_EMBED_COMMAND)?.isEnabled;
+}
+
+/**
+ * Opens the browser's file picker and passes the picked files to `onPick`.
+ *
+ * @param accept the `accept` attribute of the file input, empty for any type.
+ */
+function pickFiles(accept: string, onPick: (files: File[]) => void) {
+    const input = document.createElement("input");
+
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = true;
+    input.style.display = "none";
+
+    input.addEventListener("change", () => {
+        /* v8 ignore next -- `files` is only null on an input that is not of type `file` */
+        onPick(Array.from(input.files ?? []));
+        input.remove();
+    }, { once: true });
+
+    document.body.appendChild(input);
+    input.click();
 }
 
 // Source: https://github.com/ckeditor/ckeditor5/blob/master/packages/ckeditor5-image/src/imageupload/utils.ts
@@ -728,62 +787,4 @@ function createImageTypeRegExp(types: string[]): RegExp {
     const regExpSafeNames = types.map((type) => type.replace("+", "\\+"));
 
     return new RegExp(`^image\\/(${regExpSafeNames.join("|")})$`);
-}
-
-/**
- * Renders one palette row: icon, title and description. The class names match premium's, so the
- * overrides Trilium already carries in `style.css` and the Next theme keep applying unchanged.
- */
-function renderRow(item: SlashCommandItem): HTMLElement {
-    const { definition } = item;
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.tabIndex = -1;
-    // `ck-button_with-text` is load-bearing, not cosmetic: the base button styles hide
-    // `.ck-button__label` outright without it, which leaves the row showing its description and no
-    // title at all.
-    button.classList.add("ck", "ck-button", "ck-button_with-text", "ck-slash-command-button");
-
-    const icon = document.createElement("span");
-    icon.classList.add("ck", "ck-icon");
-
-    if (definition.iconClass) {
-        // A snippet note's font icon: the same chip, painted by icon-font classes instead of SVG.
-        // The glyph lives on an inner span: core sizes the chip box in em against the chip's own
-    // font-size, so enlarging the glyph's font on the chip itself would inflate the chip too.
-        icon.classList.add("ck-slash-command-button__note-icon");
-        const glyph = document.createElement("span");
-        for (const classList of [ definition.iconClass, definition.iconColorClass ]) {
-            if (classList) {
-                glyph.classList.add(...classList.split(/\s+/).filter(Boolean));
-            }
-        }
-        icon.append(glyph);
-    } else if (definition.icon) {
-        // `ck-icon_inherit-color` opts into core's `*:not([fill]) { fill: currentColor }` rule, as
-        // `IconView` does — without it the glyphs keep SVG's default black fill on dark themes.
-        icon.classList.add("ck-icon_inherit-color");
-        icon.innerHTML = definition.icon;
-    }
-
-    button.append(icon);
-
-    const textPart = document.createElement("span");
-    textPart.classList.add("ck", "ck-slash-command-button__text-part");
-
-    const label = document.createElement("span");
-    label.classList.add("ck", "ck-button__label");
-    label.textContent = definition.title;
-    textPart.append(label);
-
-    if (definition.description) {
-        const description = document.createElement("span");
-        description.classList.add("ck", "ck-slash-command-button__description");
-        description.textContent = definition.description;
-        textPart.append(description);
-    }
-
-    button.append(textPart);
-    return button;
 }

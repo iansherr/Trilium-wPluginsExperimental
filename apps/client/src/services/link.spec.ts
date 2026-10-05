@@ -152,6 +152,14 @@ describe("parseNavigationStateFromUrl", () => {
         expect((card as any).viewScope).toMatchObject({ card: "card00000001" });
     });
 
+    it("carries a PDF reference through, for the page and for an annotation on it", () => {
+        const page = parseNavigationStateFromUrl("#root/aaaaaaaaaaaa?page=5");
+        expect((page as any).viewScope).toMatchObject({ page: "5" });
+
+        const annotation = parseNavigationStateFromUrl("#root/aaaaaaaaaaaa?page=5&annotation=12R");
+        expect((annotation as any).viewScope).toMatchObject({ page: "5", annotation: "12R" });
+    });
+
     it("returns empty object when the note path does not match the id pattern", () => {
         // hash present at index 0, but the path is too short to be a valid note id
         expect(parseNavigationStateFromUrl("#ab")).toStrictEqual({});
@@ -231,6 +239,17 @@ describe("calculateHash", () => {
 
         expect(calculateHash({ notePath: "root/abc", viewScope: { card: "card00000001" } } as any))
             .toBe("#root/abc?card=card00000001");
+    });
+
+    it("writes a PDF reference back into the hash it was read from", () => {
+        const hash = calculateHash({
+            notePath: "root/abc",
+            viewScope: { page: "5", annotation: "12R" }
+        } as any);
+        expect(hash).toBe("#root/abc?page=5&annotation=12R");
+        const read = `http://localhost:8080/#root/aaaaaaaaaaaa${hash.slice("#root/abc".length)}`;
+        expect(parseNavigationStateFromUrl(read))
+            .toMatchObject({ viewScope: { page: "5", annotation: "12R" } });
     });
 
     it("omits params that are at their defaults", () => {
@@ -826,18 +845,27 @@ describe("getReferenceLinkTitle / getReferenceLinkTitleSync", () => {
         expect(await linkService.getReferenceLinkTitle(`#root/${note.noteId}`)).toBe("Referenced");
     });
 
-    it("getReferenceLinkTitle resolves attachment titles", async () => {
+    it("getReferenceLinkTitle resolves an attachment among those of the linked note", async () => {
         const note = buildNote({ title: "WithAtt" });
-        note.getAttachmentById = vi.fn(async () => ({ title: "Att" }) as any);
-        const title = await linkService.getReferenceLinkTitle(`#root/${note.noteId}?viewMode=attachments&attachmentId=a1`);
+        note.attachments = [];
+        const getAttachmentOfNote = vi.spyOn(froca, "getAttachmentOfNote")
+            .mockResolvedValue({ title: "Att" } as any);
+        const title = await linkService.getReferenceLinkTitle(
+            `#root/${note.noteId}?viewMode=attachments&attachmentId=a1`
+        );
         expect(title).toBe("Att");
+        expect(getAttachmentOfNote).toHaveBeenCalledWith(note.noteId, "a1");
+        getAttachmentOfNote.mockRestore();
     });
 
     it("getReferenceLinkTitle returns [missing attachment] when attachment not found", async () => {
         const note = buildNote({ title: "WithAtt2" });
-        note.getAttachmentById = vi.fn(async () => null as any);
-        const title = await linkService.getReferenceLinkTitle(`#root/${note.noteId}?viewMode=attachments&attachmentId=a2`);
+        const getAttachmentOfNote = vi.spyOn(froca, "getAttachmentOfNote").mockResolvedValue(null);
+        const title = await linkService.getReferenceLinkTitle(
+            `#root/${note.noteId}?viewMode=attachments&attachmentId=a2`
+        );
         expect(title).toBe("[missing attachment]");
+        getAttachmentOfNote.mockRestore();
     });
 
     it("getReferenceLinkTitleSync covers missing note, attachments and bookmark variants", () => {
@@ -880,6 +908,16 @@ describe("getReferenceLinkTitle / getReferenceLinkTitleSync", () => {
         // The link body is the board, so the column shows only where a suffix can be drawn.
         expect(await linkService.getReferenceLinkTitle(href)).toBe("Board");
         expect(linkService.getReferenceLinkTitleSync(href)).toBe("Board: To Do");
+    });
+
+    it("names the PDF a reference points at, and the page or the annotation after it", async () => {
+        const pdf = buildNote({ title: "Paper" });
+        const href = `#root/${pdf.noteId}?page=5&annotation=12R`;
+
+        expect(await linkService.getReferenceLinkTitle(href)).toBe("Paper");
+        expect(linkService.getReferenceLinkTitleSync(href)).toBe("Paper - pdf.annotation_reference");
+        expect(linkService.getReferenceLinkTitleSync(`#root/${pdf.noteId}?page=5`))
+            .toBe("Paper - pdf.page_reference");
     });
 
     it("getReferenceLinkTitleSync returns [missing note] when the note is not in cache", () => {
@@ -968,6 +1006,20 @@ describe("loadReferenceLinkTitle", () => {
         expect($column.text()).toBe(" To Do");
         expect($column.children("span").hasClass("bx-star")).toBe(true);
         expect($column.hasClass("color-FF8800")).toBe(true);
+    });
+
+    it("appends the page a PDF reference points at, or says it is an annotation on it", async () => {
+        const pdf = buildNote({ title: "Paper" });
+        const $page = $("<span>");
+        const $annotation = $("<span>");
+
+        await linkService.loadReferenceLinkTitle($page, `#root/${pdf.noteId}?page=5`);
+        await linkService.loadReferenceLinkTitle($annotation, `#root/${pdf.noteId}?page=5&annotation=12R`);
+
+        expect($page.text()).toBe("Paperpdf.page_reference");
+        expect($page.find("small span").hasClass("bx-file")).toBe(true);
+        expect($annotation.text()).toBe("Paperpdf.annotation_reference");
+        expect($annotation.find("small span").hasClass("bx-comment-detail")).toBe(true);
     });
 
     it("falls back to a column glyph for a reference carrying no icon of its own", async () => {

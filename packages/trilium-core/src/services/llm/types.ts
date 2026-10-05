@@ -4,8 +4,10 @@
  * should be imported from @triliumnext/commons.
  */
 
-import type { LlmChatConfig, LlmMessage, LlmReasoningEffort, LlmStreamChunk } from "@triliumnext/commons";
+import type { LlmAttachmentKind, LlmChatConfig, LlmMessage, LlmReasoningEffort, LlmStreamChunk } from "@triliumnext/commons";
 import type { streamText } from "ai";
+
+import type { WebSearchSetup } from "./web_search.js";
 
 /**
  * Extended provider config with server-specific options.
@@ -13,6 +15,11 @@ import type { streamText } from "ai";
 export interface LlmProviderConfig extends LlmChatConfig {
     maxTokens?: number;
     temperature?: number;
+    /**
+     * The search provider named by {@link LlmChatConfig.webSearchProviderId}, resolved by
+     * `runChat()`. When set, web search goes through it instead of the model's built-in search.
+     */
+    webSearch?: WebSearchSetup;
 }
 
 /**
@@ -60,6 +67,8 @@ export interface ModelInfo {
     reasoningEfforts?: LlmReasoningEffort[];
     /** The effort used when a chat has not chosen one. */
     defaultReasoningEffort?: LlmReasoningEffort;
+    /** The attachment kinds the model reads natively; see `LlmModelInfo`. */
+    attachmentKinds?: LlmAttachmentKind[];
 }
 
 export interface LlmProvider {
@@ -68,10 +77,13 @@ export interface LlmProvider {
     /**
      * Create a streaming chat completion.
      * Returns the AI SDK StreamResult which is provider-agnostic.
+     *
+     * @param signal stops the completion and any tool call in progress when the user stops the turn
      */
     chat(
         messages: LlmMessage[],
-        config: LlmProviderConfig
+        config: LlmProviderConfig,
+        signal?: AbortSignal
     ): StreamResult;
 
     /**

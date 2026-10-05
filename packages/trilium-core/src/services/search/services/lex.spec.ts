@@ -63,8 +63,44 @@ describe("Lexer fulltext", () => {
         expect(lex("# abc+=-def**-+d").expressionTokens.map((t) => t.token)).toEqual(["#", "abc", "+=-", "def", "**-+", "d"]);
     });
 
+    it("a parenthesis that opens a word starting an expression opens the expression part", () => {
+        const tokens = (query: string) => lex(query).expressionTokens.map((t) => t.token);
+
+        expect(tokens("(#a)")).toEqual([ "(", "#a", ")" ]);
+        expect(tokens("((#a))")).toEqual([ "(", "(", "#a", ")", ")" ]);
+        expect(tokens("( #a)")).toEqual([ "(", "#a", ")" ]);
+        expect(tokens("(~rel)")).toEqual([ "(", "~rel", ")" ]);
+        expect(tokens("(#a) and (#b)")).toEqual([ "(", "#a", ")", "and", "(", "#b", ")" ]);
+        expect(tokens("(note.title=x)")).toEqual([ "(", "note", ".", "title", "=", "x", ")" ]);
+
+        const afterText = lex("towers (#a)");
+        expect(afterText.fulltextTokens.map((t) => t.token)).toEqual([ "towers" ]);
+        expect(afterText.expressionTokens.map((t) => t.token)).toEqual([ "(", "#a", ")" ]);
+
+        // Brackets around plain words, and escaped ones, stay full text.
+        const fulltext = (query: string) => lex(query).fulltextTokens.map((t) => t.token);
+        expect(fulltext("(hello world)")).toEqual([ "(hello", "world)" ]);
+        expect(fulltext("(notebook)")).toEqual([ "(notebook)" ]);
+        expect(fulltext("foo(#a)")).toEqual([ "foo(#a)" ]);
+        expect(fulltext("\\(#a")).toEqual([ "(#a" ]);
+        expect(lex("\\(#a").expressionTokens).toEqual([]);
+    });
+
     it("escaping special characters", () => {
         expect(lex("hello \\#\\~\\'").fulltextTokens.map((t) => t.token)).toEqual(["hello", "#~'"]);
+    });
+
+    it("# and ~ inside a word are literal characters", () => {
+        const towers = lex("towers#book");
+        expect(towers.fulltextTokens.map((t) => t.token)).toEqual(["towers#book"]);
+        expect(towers.expressionTokens).toEqual([]);
+
+        expect(lex("learn c# and f#").fulltextTokens.map((t) => t.token)).toEqual(["learn", "c#", "and", "f#"]);
+        expect(lex("issue#42 a~b").fulltextTokens.map((t) => t.token)).toEqual(["issue#42", "a~b"]);
+
+        const spaced = lex("towers #book");
+        expect(spaced.fulltextTokens.map((t) => t.token)).toEqual(["towers"]);
+        expect(spaced.expressionTokens.map((t) => t.token)).toEqual(["#book"]);
     });
 
     it("recognizes leading = operator for exact match", () => {

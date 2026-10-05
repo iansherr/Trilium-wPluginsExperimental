@@ -10,8 +10,10 @@ vi.mock("../../../services/llm_chat.js", () => ({
 // The chat picker now reads the user's selected models straight from the
 // `llmProviders` option (no server fetch), so stub that service.
 const optionsGetJsonMock = vi.hoisted(() => vi.fn());
+/** The `llmWebSearchProvider` option, unset unless a test picks a search provider. */
+const webSearchProvider = vi.hoisted(() => ({ id: undefined as string | undefined }));
 vi.mock("../../../services/options.js", () => ({
-    default: { getJson: optionsGetJsonMock }
+    default: { getJson: optionsGetJsonMock, get: () => webSearchProvider.id }
 }));
 
 // useTriliumEvent subscribes to the app-wide event bus; stub it so the hook
@@ -86,6 +88,7 @@ describe("useLlmChat", () => {
     });
 
     afterEach(() => {
+        webSearchProvider.id = undefined;
         if (host) {
             render(null, host);
             host.remove();
@@ -94,6 +97,21 @@ describe("useLlmChat", () => {
         captured = undefined;
         optionsGetJsonMock.mockReset();
         streamChatCompletionMock.mockReset();
+    });
+
+    it("focuses the input at once when it is ready, or as soon as it registers", async () => {
+        await mountChat();
+        const early = { appendBlockQuote: vi.fn(), focus: vi.fn() };
+        api().focusInput();
+        api().registerInputEditor(early);
+        expect(early.focus).toHaveBeenCalledOnce();
+
+        // The request is spent: registering again does not steal the focus a second time.
+        const ready = { appendBlockQuote: vi.fn(), focus: vi.fn() };
+        api().registerInputEditor(ready);
+        expect(ready.focus).not.toHaveBeenCalled();
+        api().focusInput();
+        expect(ready.focus).toHaveBeenCalledOnce();
     });
 
     it("selects the default model with its provider and annotates model costs", async () => {
@@ -145,6 +163,58 @@ describe("useLlmChat", () => {
         expect(options.model).toBe("sonnet");
         expect(options.provider).toBe("claude-agent");
         expect(options.providerId).toBe("ca_1");
+    });
+
+    it("sends the chosen search provider, unless the model runs its own agent loop", async () => {
+        optionsGetJsonMock.mockReturnValue([ ...PROVIDERS, { id: "s1", name: "Tavily", provider: "tavily", kind: "search" } ]);
+        webSearchProvider.id = "s1";
+        await mountChat();
+        const send = async () => {
+            await act(async () => {
+                api().setInput("hello");
+            });
+            await act(async () => {
+                await api().handleSubmit(new Event("submit"));
+            });
+            return streamChatCompletionMock.mock.calls.at(-1)?.[1];
+        };
+
+        // The default model is Claude Code, which searches with its own tools.
+        expect(await send()).toMatchObject({ enableWebSearch: false, webSearchProviderId: undefined });
+
+        await act(async () => {
+            api().setSelectedModel("llama3.2", "ollama", "ol_1");
+        });
+        expect(await send()).toMatchObject({ enableWebSearch: true, webSearchProviderId: "s1" });
+    });
+
+    it("holds back a message whose attachments the model cannot read, until the model changes", async () => {
+        optionsGetJsonMock.mockReturnValue([
+            { id: "ds_1", name: "DeepSeek", provider: "deepseek", selectedModels: [
+                { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", isDefault: true, attachmentKinds: [] }
+            ] },
+            { id: "a_1", name: "Anthropic", provider: "anthropic", selectedModels: [{ id: "opus", name: "Opus" }] }
+        ]);
+        await mountChat();
+        expect(api().selectedModel).toBe("deepseek-v4-pro");
+        await act(async () => {
+            api().setInput("Summarize this");
+            api().addPendingAttachment({ type: "file", attachmentId: "pdf1", mime: "application/pdf", title: "report.pdf", url: "#" });
+        });
+
+        await act(async () => {
+            await api().handleSubmit(new Event("submit"));
+        });
+        expect(streamChatCompletionMock).not.toHaveBeenCalled();
+        expect(api().pendingAttachments).toHaveLength(1);
+
+        await act(async () => {
+            api().setSelectedModel("opus", "anthropic", "a_1");
+        });
+        await act(async () => {
+            await api().handleSubmit(new Event("submit"));
+        });
+        expect(streamChatCompletionMock).toHaveBeenCalledOnce();
     });
 
     it("resolves the provider by model ID for chats saved before selectedProvider existed", async () => {
@@ -300,6 +370,53 @@ describe("useLlmChat", () => {
             api().setSelectedModel("mini", "openai", "o_1");
         });
         expect(api().getContent()).toMatchObject({ selectedModel: "mini", selectedProvider: "openai", selectedProviderId: "o_1" });
+    });
+
+    it("keeps thoughts in stream order inside the reply, and never sends them back", async () => {
+        streamChatCompletionMock.mockImplementationOnce(async (_messages, _options, cb) => {
+            cb.onThinking("**Reading** the ");
+            cb.onThinking("hostname");
+            cb.onToolUse("c1", "shell", {});
+            cb.onToolResult("c1", "shell", "pc", false);
+            cb.onThinking("Got it.");
+            cb.onChunk("Your PC is pc.");
+            cb.onDone();
+        });
+        await mountChat();
+        await act(async () => {
+            api().loadFromContent({
+                version: 1,
+                messages: [
+                    { id: "m1", role: "user", content: "hi", createdAt: "2026-01-01T00:00:00.000Z" },
+                    { id: "m2", role: "assistant", type: "thinking", content: "old thoughts", createdAt: "2026-01-01T00:00:01.000Z" },
+                    { id: "m3", role: "assistant", content: "hello", createdAt: "2026-01-01T00:00:02.000Z" }
+                ]
+            });
+        });
+
+        for (const text of ["name?", "thanks"]) {
+            await act(async () => {
+                api().setInput(text);
+            });
+            await act(async () => {
+                await api().handleSubmit(new Event("submit"));
+            });
+        }
+
+        expect(api().messages[4]).toMatchObject({
+            role: "assistant",
+            content: [
+                { type: "thinking", content: "**Reading** the hostname" },
+                { type: "tool_call", toolCall: { id: "c1", result: "pc" } },
+                { type: "thinking", content: "Got it." },
+                { type: "text", content: "Your PC is pc." }
+            ]
+        });
+        expect(api().messages.filter(m => m.type === "thinking").map(m => m.id)).toEqual(["m2"]);
+
+        const sent = (call: number) => (streamChatCompletionMock.mock.calls[call][0] as { content: unknown }[]).map(m => m.content);
+        expect(sent(0)).toEqual(["hi", "hello", "name?"]);
+        expect(sent(1)).toEqual(["hi", "hello", "name?", "Your PC is pc.", "thanks"]);
     });
 
     it("keeps what a turn waits on until the turn ends", async () => {

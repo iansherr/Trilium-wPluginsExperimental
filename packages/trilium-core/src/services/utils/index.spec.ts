@@ -303,6 +303,11 @@ describe("#isStringNote", () => {
             "w/ 'undefined' note type and the InkML mime type, it should return true",
             [ undefined, "application/inkml+xml" ],
             true
+        ],
+        [
+            "w/ 'undefined' note type and the mime type of a canvas drawing, it should return true",
+            [ undefined, "application/vnd.excalidraw+json" ],
+            true
         ]
     ];
 
@@ -759,6 +764,21 @@ describe("#normalizeUrl", () => {
             const result = utils.normalizeUrl(...fnParams);
             expect(result).toStrictEqual(expected);
         });
+    });
+});
+
+describe("#trimTrailingSlashes", () => {
+    it("removes every trailing slash and nothing else", () => {
+        expect(utils.trimTrailingSlashes("http://localhost:8888///")).toBe("http://localhost:8888");
+        expect(utils.trimTrailingSlashes("https://example.com/a//b")).toBe("https://example.com/a//b");
+        expect(utils.trimTrailingSlashes("///")).toBe("");
+        expect(utils.trimTrailingSlashes("")).toBe("");
+    });
+
+    it("stays linear on a long run of slashes", () => {
+        const start = performance.now();
+        utils.trimTrailingSlashes(`${"/".repeat(100_000)}x`);
+        expect(performance.now() - start).toBeLessThan(100);
     });
 });
 

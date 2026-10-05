@@ -1,4 +1,5 @@
 import { isFontMimeType } from "@triliumnext/commons/src/lib/font_mimes.js";
+import { CANVAS_ATTACHMENT_MIME } from "@triliumnext/commons/src/lib/notes.js";
 
 import { getCrypto } from "../encryption/crypto";
 import { getPlatform } from "../platform";
@@ -18,7 +19,10 @@ export function isLinux() { return getPlatform().isLinux; }
 
 // render and book are string note in the sense that they are expected to contain empty string
 const STRING_NOTE_TYPES = new Set(["text", "code", "relationMap", "search", "render", "book", "mermaid", "canvas", "webView"]);
-const STRING_MIME_TYPES = new Set(["application/javascript", "application/x-javascript", "application/json", "application/x-sql", "image/svg+xml", "application/inkml+xml"]);
+const STRING_MIME_TYPES = new Set([
+    "application/javascript", "application/x-javascript", "application/json", "application/x-sql",
+    "image/svg+xml", "application/inkml+xml", CANVAS_ATTACHMENT_MIME
+]);
 
 export function hash(text: string) {
     return encodeBase64(getCrypto().createHash("sha1", text.normalize()));
@@ -113,6 +117,20 @@ export function normalizePreservingLength(str: string) {
     }
 
     return result;
+}
+
+/**
+ * Removes every trailing `/` from `str`.
+ *
+ * Written as an index scan rather than `replace(/\/+$/, "")`: that pattern backtracks
+ * polynomially on a value with many slashes (CodeQL js/polynomial-redos).
+ */
+export function trimTrailingSlashes(str: string) {
+    let end = str.length;
+    while (end > 0 && str.charAt(end - 1) === "/") {
+        end--;
+    }
+    return str.slice(0, end);
 }
 
 /**

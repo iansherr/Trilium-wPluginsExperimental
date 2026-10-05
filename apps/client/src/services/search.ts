@@ -1,10 +1,13 @@
 import type { SearchWithTokensResponse } from "@triliumnext/commons";
 
+import type Component from "../components/component.js";
 import froca from "./froca.js";
 import server from "./server.js";
+import toast from "./toast.js";
+import { getErrorMessage } from "./utils.js";
 
 async function searchForNoteIds(searchString: string) {
-    return await server.get<string[]>(`search/${encodeURIComponent(searchString)}`);
+    return await server.get<string[]>(`search?searchString=${encodeURIComponent(searchString)}`);
 }
 
 async function searchForNotes(searchString: string) {
@@ -14,8 +17,8 @@ async function searchForNotes(searchString: string) {
 }
 
 async function searchForNotesIncludingHidden(searchString: string, includeArchived = false) {
-    const query = `?includeHidden=true${includeArchived ? "&includeArchived=true" : ""}`;
-    const result = await server.get<{ searchResultNoteIds?: string[] }>(`quick-search/${encodeURIComponent(searchString)}${query}`);
+    const query = `?searchString=${encodeURIComponent(searchString)}&includeHidden=true${includeArchived ? "&includeArchived=true" : ""}`;
+    const result = await server.get<{ searchResultNoteIds?: string[] }>(`quick-search${query}`);
     return await froca.getNotes(result.searchResultNoteIds || []);
 }
 
@@ -25,13 +28,30 @@ async function searchForNotesIncludingHidden(searchString: string, includeArchiv
  */
 async function searchInSubtree(searchString: string, ancestorNoteId: string) {
     return await server.get<SearchWithTokensResponse>(
-        `search/${encodeURIComponent(searchString)}`
-        + `?ancestorNoteId=${encodeURIComponent(ancestorNoteId)}&includeTokens=true`);
+        `search?searchString=${encodeURIComponent(searchString)}`
+        + `&ancestorNoteId=${encodeURIComponent(ancestorNoteId)}&includeTokens=true`);
+}
+
+/**
+ * Runs a saved search and triggers `searchRefreshed` so the tab shows its results. Returns the
+ * query's error for the caller to show, or `undefined` after showing a failed request as a toast.
+ */
+async function runSearchNote(component: Component | null | undefined, noteId: string, ntxId: string | null | undefined) {
+    let result: { error: string | undefined } | undefined;
+    try {
+        result = { error: (await froca.loadSearchNote(noteId))?.error ?? undefined };
+    } catch (e: unknown) {
+        toast.showError(getErrorMessage(e));
+    }
+
+    component?.triggerEvent("searchRefreshed", { ntxId });
+    return result;
 }
 
 export default {
     searchForNoteIds,
     searchForNotes,
     searchForNotesIncludingHidden,
-    searchInSubtree
+    searchInSubtree,
+    runSearchNote
 };

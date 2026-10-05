@@ -97,6 +97,11 @@ export interface LlmChatConfig {
     systemPrompt?: string;
     /** Enable web search tool */
     enableWebSearch?: boolean;
+    /**
+     * The config id of the search provider that answers {@link enableWebSearch}, in place of the
+     * model's built-in search. Absent, or naming no configured search provider, means built-in.
+     */
+    webSearchProviderId?: string;
     /** Enable note tools (search and read notes) */
     enableNoteTools?: boolean;
     /** Enable extended thinking for deeper reasoning */
@@ -123,6 +128,17 @@ export interface LlmModelPricing {
     input: number;
     /** Cost per million output tokens in USD */
     output: number;
+}
+
+/**
+ * What a configuration in the `llmProviders` option provides: chat models (`"llm"`) or web
+ * search (`"search"`). A configuration without a `kind` is `"llm"`.
+ */
+export type LlmProviderKind = "llm" | "search";
+
+/** Whether a stored provider configuration is of `kind`, treating a missing `kind` as `"llm"`. */
+export function isProviderOfKind(config: { kind?: LlmProviderKind }, kind: LlmProviderKind): boolean {
+    return (config.kind ?? "llm") === kind;
 }
 
 /**
@@ -158,7 +174,17 @@ export interface LlmModelInfo {
     reasoningEfforts?: LlmReasoningEffort[];
     /** The effort used when a chat has not chosen one. One of {@link reasoningEfforts}. */
     defaultReasoningEffort?: LlmReasoningEffort;
+    /**
+     * The attachment kinds the model reads natively. Absent means every kind; text attachments
+     * are inlined as text for every model and never listed.
+     */
+    attachmentKinds?: LlmAttachmentKind[];
 }
+
+/** An attachment a model reads natively: an image, or a file such as a PDF. */
+export const LLM_ATTACHMENT_KINDS = [ "image", "file" ] as const;
+
+export type LlmAttachmentKind = (typeof LLM_ATTACHMENT_KINDS)[number];
 
 /**
  * Token usage information from the LLM response.
@@ -206,6 +232,22 @@ export interface LlmErrorDetails {
  *   - `starting_agent`: a subscription agent's CLI is being started.
  */
 export type LlmStreamStatus = "starting_agent";
+
+/**
+ * Whether a tool result is the `{ error }` object the note tools return on failure. Takes the object
+ * itself or its JSON, as a `tool_result` chunk carries it.
+ */
+export function isToolErrorResult(result: unknown): boolean {
+    let value = result;
+    if (typeof value === "string") {
+        try {
+            value = JSON.parse(value);
+        } catch {
+            return false;
+        }
+    }
+    return typeof value === "object" && value !== null && !Array.isArray(value) && "error" in value;
+}
 
 /**
  * Stream chunk types for real-time SSE updates.
