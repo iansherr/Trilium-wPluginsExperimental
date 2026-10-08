@@ -24,6 +24,8 @@ export interface SetNoteOpts {
     viewScope?: ViewScope;
     /** If true, skip closing the currently active dialog. Used when opening a note into a stackable popup (e.g. quick-edit) that must not dismiss the dialog it was launched from. */
     keepActiveDialog?: boolean;
+    /** If true, the note is not added to the recent notes, as for an included note being edited. */
+    skipRecentNotes?: boolean;
 }
 
 export type GetTextEditorCallback = (editor: CKTextEditor) => void;
@@ -160,8 +162,11 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
     /** @returns the note context that ended up showing the note: usually `this`, or a new tab when a pinned tab redirected the navigation. `undefined` if nothing was navigated. */
     async setNote(inputNotePath: string | undefined, opts: SetNoteOpts = {}): Promise<NoteContext | undefined> {
         opts.triggerSwitchEvent = opts.triggerSwitchEvent !== undefined ? opts.triggerSwitchEvent : true;
-        opts.viewScope = opts.viewScope || {};
-        opts.viewScope.viewMode = opts.viewScope.viewMode || "default";
+        // Readers like `revealBlockReference()` change the scope, so the context keeps a copy.
+        const viewScope: ViewScope = {
+            ...opts.viewScope,
+            viewMode: opts.viewScope?.viewMode || "default"
+        };
 
         if (!inputNotePath) {
             return;
@@ -173,7 +178,8 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
             return;
         }
 
-        if (this.notePath === resolvedNotePath && utils.areObjectsEqual(this.viewScope, opts.viewScope)) {
+        const isSameView = utils.areObjectsEqual(this.viewScope, viewScope);
+        if (this.notePath === resolvedNotePath && isSameView) {
             return this;
         }
 
@@ -182,7 +188,7 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
         if (shouldRedirectPinnedNavigation(this.pinned, this.noteId, targetNoteId)) {
             return appContext.tabManager.openContextWithNote(resolvedNotePath, {
                 activate: true,
-                viewScope: opts.viewScope,
+                viewScope,
                 hoistedNoteId: this.hoistedNoteId
             });
         }
@@ -196,7 +202,7 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
         const previousNoteId = this.noteId;
 
         this.notePath = resolvedNotePath;
-        this.viewScope = opts.viewScope;
+        this.viewScope = viewScope;
         ({ noteId: this.noteId, parentNoteId: this.parentNoteId } = treeService.getNoteIdAndParentIdFromUrl(resolvedNotePath));
 
         // Clear context data only when actually switching to a different note.
@@ -214,7 +220,9 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
             }
         }
 
-        this.saveToRecentNotes(resolvedNotePath);
+        if (!opts.skipRecentNotes) {
+            this.saveToRecentNotes(resolvedNotePath);
+        }
 
         protectedSessionHolder.touchProtectedSessionIfNecessary(this.note);
 
@@ -331,6 +339,11 @@ class NoteContext extends Component implements EventListener<"entitiesReloaded">
 
     isActive() {
         return appContext.tabManager.activeNtxId === this.ntxId;
+    }
+
+    /** Whether a command with the given `ntxId` targets this context: `ntxId` is this context's, or is empty while this context is active. */
+    isCommandTarget(ntxId: string | null | undefined) {
+        return ntxId ? ntxId === this.ntxId : this.isActive();
     }
 
     getPojoState() {

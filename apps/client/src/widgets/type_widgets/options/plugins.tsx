@@ -885,8 +885,6 @@ function EditablePluginList({ values, editingIndex, draftValue, inputType, input
                         iconAction
                         buttonClassName="bx bx-dots-vertical-rounded"
                         hideToggleArrow
-                        noDropdownListStyle
-                        portalToBody
                         title={menuLabel}
                         buttonProps={{ "aria-label": menuLabel }}
                     >

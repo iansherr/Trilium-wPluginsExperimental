@@ -9,16 +9,19 @@ import {
     type FileUploadEvent,
     SnippetDefinition
 } from "@triliumnext/ckeditor5";
-import { deferred } from "@triliumnext/commons";
+import { deferred, formatBlockRange, parseBlockRange } from "@triliumnext/commons";
 import { createPortal } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import appContext from "../../../components/app_context";
+import {
+    consumeBlockReference, copyBlockReference, copyTabReference, openBlockHandleMenu
+} from "../../../services/block_reference";
 import { consumeBookmark } from "../../../services/bookmark_jump";
 import { getUploadBoxSize } from "../../../services/content_renderer";
 import dialog from "../../../services/dialog";
 import { t } from "../../../services/i18n";
-import link, { parseNavigationStateFromUrl } from "../../../services/link";
+import link, { parseNavigationStateFromUrl, type ViewScope } from "../../../services/link";
 import type LoadResults from "../../../services/load_results";
 import note_create from "../../../services/note_create";
 import options from "../../../services/options";
@@ -26,13 +29,17 @@ import { consumeSearchTerms } from "../../../services/search_jump";
 import toast from "../../../services/toast";
 import utils, { isMobile } from "../../../services/utils";
 import type { IconPickerOpts } from "../../dialogs/icon_picker";
-import { useEditorSpacedUpdate, useLegacyImperativeHandlers, useNoteLabel, useSearchTermsConsumer, useTriliumEvent, useTriliumOption, useTriliumOptionBool } from "../../react/hooks";
+import {
+    useEditorSpacedUpdate, useLegacyImperativeHandlers, useNoteLabel, useSameNoteSwitch,
+    useSearchTermsConsumer, useTriliumEvent, useTriliumOption, useTriliumOptionBool
+} from "../../react/hooks";
 import IconPicker from "../../react/IconPicker";
 import { setEditorNoteId } from "../../react/NoteStore";
 import { TypeWidgetProps } from "../type_widget";
-import AttachmentSaves from "./attachment_saves";
+import AttachmentSaves, { useNoteEditor } from "./attachment_saves";
 import CKEditorWithWatchdog, { CKEditorApi, NotificationEventData, NotificationEventInfo } from "./CKEditorWithWatchdog";
 import { getContentEmbedTools } from "./content_embed_tools";
+import { useEmbedEditors } from "./editable_embed";
 import getTemplates, { updateTemplateCache } from "./snippets.js";
 import linkEmbedService from "../../../services/link_embed";
 import { usesClassicToolbar } from "./toolbar";
@@ -52,7 +59,16 @@ import {
  * - Ballon block mode, in which there is a floating toolbar for the selected text, but another floating button for the entire block (i.e. paragraph).
  * - Decoupled mode, in which the editing toolbar is actually added on the client side (in {@link ClassicEditorToolbar}), see https://ckeditor.com/docs/ckeditor5/latest/examples/framework/bottom-toolbar-editor.html for an example on how the decoupled editor works.
  */
-export default function EditableText({ note, parentComponent, ntxId, noteContext }: TypeWidgetProps) {
+interface EditableTextProps extends TypeWidgetProps {
+    /** The blocks of the note to edit instead of the whole note, a `block` link parameter. */
+    block?: string;
+    /** Receives the blocks that the editor of `block` holds, each time they change. */
+    onBlockChange?: (block: string) => void;
+}
+
+export default function EditableText({
+    note, parentComponent, ntxId, noteContext, isVisible, block, onBlockChange
+}: EditableTextProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<string>("");
     /** The note `contentRef` holds the content of, so a restarted editor can be marked as holding it. */
@@ -75,12 +91,19 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
         textNoteEditorType
     });
     const initialized = useRef(deferred<void>());
+    const [ reportBlocks ] = useState(() => (block !== undefined && onBlockChange
+        ? watchEditorBlocks(block, onBlockChange)
+        : undefined));
     const [ attachmentSaves ] = useState(() =>
         new AttachmentSaves(() => spacedUpdate.scheduleUpdate()));
+    const noteEditor = useNoteEditor(noteContext);
+    const { noteEditor: embedNoteEditor, attachmentEditor: embedAttachmentEditor } =
+        useEmbedEditors({ noteEditor, attachmentEditor: attachmentSaves });
     const spacedUpdate = useEditorSpacedUpdate({
         note,
         noteContext,
         noteType: "text",
+        block,
         getData() {
             const editor = watchdogRef.current?.editor;
             if (!editor) {
@@ -88,14 +111,18 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
                 return;
             }
 
-            const content = editor.getData() ?? "";
             const attachments = attachmentSaves.collect();
+            const savedAttachments = attachments.length ? { attachments } : {};
+            if (block !== undefined) {
+                return { ...getBlockData(editor as CKTextEditor, block), ...savedAttachments };
+            }
 
+            const content = editor.getData() ?? "";
             // if content is only tags/whitespace (typically <p>&nbsp;</p>), then just make it empty,
             // this is important when setting a new note to code
             return {
                 content: utils.isHtmlEmpty(content) ? "" : content,
-                ...(attachments.length ? { attachments } : {})
+                ...savedAttachments
             };
         },
         onContentChange(newContent) {
@@ -115,13 +142,10 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
             // Jump to the first search match when navigated from search results.
             consumeSearchTerms(noteContext, ntxId, initialized.current);
 
-            // Scroll to bookmark anchor if navigated with ?bookmark=...
-            const viewScope = noteContext?.viewScope;
-            if (viewScope?.bookmark) {
-                requestAnimationFrame(() => {
-                    consumeBookmark(watchdogRef.current?.editor?.editing.view.getDomRoot(), viewScope);
-                });
-            }
+            // Scroll to the bookmark or the blocks a link points at.
+            revealLinkTargetWhenReady(
+                noteContext?.viewScope, initialized.current, revealLinkTarget
+            );
         },
         dataSaved(savedData) {
             // Store back the saved data in order to retrieve it in case the CKEditor crashes.
@@ -133,6 +157,28 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
     const templates = useTemplates();
 
     useSearchTermsConsumer(note, noteContext, ntxId);
+    // A hidden widget leaves the link target to the one on display.
+    useSameNoteSwitch(note, ntxId, () => {
+        if (isVisible !== false && contentNoteIdRef.current === note?.noteId) {
+            revealLinkTarget();
+        }
+    });
+
+    function revealLinkTarget() {
+        const root = watchdogRef.current?.editor?.editing.view.getDomRoot();
+        consumeBookmark(root, noteContext?.viewScope);
+        consumeBlockReference(root, noteContext?.viewScope);
+    }
+
+    async function copyReference(copy = copyBlockReference) {
+        const editor = watchdogRef.current?.editor as CKTextEditor | undefined;
+        if (!editor) return;
+
+        const notePath = noteContext?.notePath ?? `root/${note.noteId}`;
+        await copy(editor, notePath, note.title);
+        // Saved now, so that the link resolves in other notes at once.
+        spacedUpdate.updateNowIfNecessary();
+    }
 
     useTriliumEvent("scrollToEnd", () => {
         const editor = watchdogRef.current?.editor;
@@ -201,14 +247,26 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
                 editorApi: editorApiRef.current,
             });
         },
-        loadEmbeddedNote,
+        loadEmbeddedNote(
+            noteId: string,
+            $el: JQuery<HTMLElement>,
+            boxSize?: string,
+            embedBlock?: string,
+            onBlockChange?: (block: string) => void
+        ) {
+            return loadEmbeddedNote(noteId, $el, boxSize, {
+                noteEditor: embedNoteEditor,
+                block: embedBlock,
+                onBlockChange
+            });
+        },
         loadEmbeddedAttachment(attachmentId: string, $el: JQuery<HTMLElement>, boxSize?: string) {
             const isFocused = focusedAttachmentIdRef.current === attachmentId;
             if (isFocused) {
                 focusedAttachmentIdRef.current = undefined;
             }
             return loadEmbeddedAttachment(attachmentId, $el, boxSize, {
-                attachmentEditor: attachmentSaves,
+                attachmentEditor: embedAttachmentEditor,
                 isFocused
             });
         },
@@ -221,6 +279,11 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
         },
         getEmbedBoxSize: getUploadBoxSize,
         openContentEmbedMenu,
+        openBlockHandleMenu(event: MouseEvent, count: number) {
+            openBlockHandleMenu(event, count, () => void copyReference());
+        },
+        copyBlockReference: () => copyReference(),
+        copyTabReference: () => void copyReference(copyTabReference),
         getContentEmbedTools,
         // Link preview functionality. The insert flow itself lives in the editor (a balloon form),
         // so the host only has to supply the metadata and the rendering.
@@ -298,7 +361,7 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
 
     useTriliumEvent("refreshEmbeddedNote", ({ noteId }) => {
         if (!containerRef.current) return;
-        refreshEmbeddedNote(containerRef.current, noteId);
+        refreshEmbeddedNote(containerRef.current, noteId, { noteEditor: embedNoteEditor });
     });
 
     useEffect(() => () => stopWatchingEmbedsRef.current?.(), []);
@@ -540,7 +603,13 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
                 onNotificationWarning={onNotificationWarning}
                 onNotificationInfo={onNotificationInfo}
                 onWatchdogStateChange={onWatchdogStateChange}
-                onChange={() => spacedUpdate.scheduleUpdate()}
+                onChange={() => {
+                    spacedUpdate.scheduleUpdate();
+                    const editor = watchdogRef.current?.editor;
+                    if (editor) {
+                        reportBlocks?.(editor as CKTextEditor);
+                    }
+                }}
                 onEditorInitialized={(editor) => {
                     if (containerRef.current) {
                         setupImageOpening(containerRef.current, false);
@@ -554,6 +623,9 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
                     editor.plugins.get("FileUploadEditing")
                         .on<FileUploadEvent>("upload", showFileUploadProgress);
 
+                    if (block !== undefined) {
+                        editor.plugins.get("BlockReferenceEditing").editRange();
+                    }
                     initialized.current.resolve();
                     // Restore the data, either on the first render or if the editor crashes.
                     // We are not using CKEditor's built-in watch dog content, instead we are using the data we store regularly in the spaced update (see `dataSaved`).
@@ -576,6 +648,56 @@ export default function EditableText({ note, parentComponent, ntxId, noteContext
             )}
         </>
     );
+}
+
+/**
+ * The content of an editor of the blocks of a note that `block` points at, and the blocks it holds
+ * now. An empty editor still holds a block, whose id keeps the place of the blocks in the note.
+ */
+export function getBlockData(editor: CKTextEditor, block: string) {
+    return {
+        content: editor.getData({ trim: "none" }),
+        block: getEditorBlocks(editor, block)
+    };
+}
+
+/**
+ * Calls `onBlockChange()` with the blocks that an editor of the blocks `block` holds, each time
+ * they differ from the blocks it reported last.
+ *
+ * Exported for testing.
+ */
+export function watchEditorBlocks(block: string, onBlockChange: (block: string) => void) {
+    let reportedBlock = block;
+    return (editor: CKTextEditor) => {
+        const editorBlock = getEditorBlocks(editor, block);
+        if (editorBlock && editorBlock !== reportedBlock) {
+            reportedBlock = editorBlock;
+            onBlockChange(editorBlock);
+        }
+    };
+}
+
+/**
+ * Calls `reveal()` to scroll to the bookmark or the blocks that `viewScope` points at, once
+ * `ready` resolves. The editor of a new tab can still be starting when the content arrives.
+ *
+ * Exported for testing.
+ */
+export function revealLinkTargetWhenReady(
+    viewScope: ViewScope | undefined,
+    ready: Promise<unknown>,
+    reveal: () => void
+) {
+    if (viewScope?.bookmark || viewScope?.block) {
+        void ready.then(() => requestAnimationFrame(reveal));
+    }
+}
+
+/** The blocks that an editor of the blocks `block` holds, preferring the ids of `block`. */
+function getEditorBlocks(editor: CKTextEditor, block: string) {
+    const range = editor.plugins.get("BlockReferenceEditing").getRange(parseBlockRange(block));
+    return range ? formatBlockRange(range) : undefined;
 }
 
 /** The number of icons per row of the picker in the editor's balloon. */

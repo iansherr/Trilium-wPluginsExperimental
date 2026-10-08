@@ -13,6 +13,9 @@
   as one added from the button does.</p>
 <p>An <a href="#root/_help_0vhv7lsOLy82">attachment</a> can be included the
   same way, from the context menu of a link to it (see <em>Embedding an attachment</em> there).</p>
+<p>A link to blocks of a text note is converted the same way, with <em>Convert link to note excerpt</em>,
+  and the include then shows only those blocks. See <a class="reference-link"
+  href="#root/_help_klC3ilXa9kUE">Block references</a>.</p>
 <h2>Box sizes</h2>
 <p>The box size sets how much of the included note is shown.</p>
 <ul>
@@ -33,7 +36,8 @@
   <li><em>Tiny</em> for a note or an attachment that has no preview, such as
     a relation map or an archive.</li>
   <li><em>Small</em> for audio.</li>
-  <li><em>Full</em> for a code note.</li>
+  <li><em>Full</em> for a code note or a code file, such as a <code>.js</code>, <code>.py</code> or <code>.txt</code> attachment,
+    and for an excerpt of the blocks of a text note.</li>
   <li><em>Medium</em> for anything else.</li>
 </ul>
 <p>The dialog that includes a note selects that size once the note is picked,
@@ -100,12 +104,16 @@
 <p>In a note being edited, the menu also has the commands of the include's
   toolbar: the <em>Size</em> submenu, <em>Show title</em> and <em>Show caption</em>,
   each checked while it is in effect, and <em>Convert to link</em> at the end.
-  A drawing canvas also has <em>Editable</em>, above <em>Size</em>. For an
-  embedded attachment they follow its first group of actions; for an included
-  note they end the menu.</p>
+  A drawing canvas, an included text or code note and an embedded code file
+  also have <em>Editable</em>, above <em>Size</em>. For an embedded attachment
+  they follow its first group of actions; for an included note they end the
+  menu.</p>
 <p>To show an include of size <em>Medium</em> or <em>Full</em> on the whole screen,
   press the <span class="tn-icon bx bx-fullscreen"></span>  <em>Fullscreen</em> button
-  at the end of its title. To return, press <span class="tn-icon bx bx-exit"></span>  <em>Exit fullscreen</em> in
+  at the end of its title. An excerpt of the blocks of a note has an <span
+  class="tn-icon bx bx-pencil"></span>  <em>Edit excerpt</em> button there instead;
+  see <a class="reference-link" href="#root/_help_klC3ilXa9kUE">Block references</a>.
+  To return, press <span class="tn-icon bx bx-exit"></span>  <em>Exit fullscreen</em> in
   the top-right corner, or <kbd>Esc</kbd>.</p>
 <p>A <em>Tiny</em> include has these buttons instead, followed by the same <em>More actions</em> button:</p>
 <ul>
@@ -159,6 +167,27 @@
 </ul>
 <p>In a <em>Small</em> or <em>Medium</em> box, the image is scaled down to fit
   the height of the box. In fullscreen, it fits the screen.</p>
+<h2>Editing an include in place</h2>
+<p>An included text note, an included code note and an embedded code file
+  such as a <code>.js</code>, <code>.py</code> or <code>.txt</code> attachment
+  can be edited without leaving the note that includes them. A code note
+  or file is shown with syntax highlighting until then.</p>
+<ul>
+  <li>To edit, select the include and turn on the <span class="tn-icon bx bx-edit-alt"></span>  <em>Editable</em> button
+    at the start of its toolbar, or check <em>Editable</em> in its <span class="tn-icon cke cke-three-vertical-dots"></span>  <em>More actions</em> menu.
+    Turn <em>Editable</em> off to return to the preview.</li>
+  <li>While an included text note has the focus, the formatting toolbar applies
+    to it. The notes it includes in turn stay read-only.</li>
+  <li>Code is edited in the same code editor as a <a class="reference-link" href="#root/_help_6f9hih2hXXZk">Code</a> note,
+    with its theme, indentation and line wrapping settings.</li>
+  <li>The changes are saved as you type, to the included note or to the attachment,
+    as they would be in its own tab.</li>
+  <li>An include of <a class="reference-link" href="#root/_help_klC3ilXa9kUE">Block references</a> edits
+    only the referenced blocks.</li>
+  <li>Editing is not available in a <a href="#root/_help_CoFPLs3dRlXc">read-only note</a>,
+    for an included note marked <code>#readOnly</code>, or for an attachment
+    of another note.</li>
+</ul>
 <h2>Drawing canvases</h2>
 <p>A drawing canvas is an Excalidraw canvas, like the one of a <a class="reference-link"
   href="#root/_help_grjYqerjn243">Canvas</a> note, drawn directly in the text

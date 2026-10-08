@@ -21,6 +21,7 @@ import TriliumMentionUI from "./plugins/mention/trilium_mention_ui.js";
 import TriliumSlashCommands from "./plugins/mention/slash_commands.js";
 import TriliumFormatPainter from "./plugins/format_painter/format_painter.js";
 import ContentEmbed from "./plugins/content_embed/content_embed.js";
+import BlockReference from "./plugins/block_reference/block_reference.js";
 import InlineIcon from "./plugins/inline_icon/inline_icon.js";
 import LinkEmbed from "./plugins/link_embed/link_embed.js";
 import Uploadfileplugin from "./plugins/file_upload/uploadfileplugin.js";
@@ -30,6 +31,7 @@ import Kbd from "./plugins/keyboard_marker/keyboard_marker.js";
 import Mermaid from "./plugins/mermaid/mermaid.js";
 import Admonition from "./plugins/admonition/admonition.js";
 import Collapsible from "./plugins/collapsible/collapsible.js";
+import Tabs from "./plugins/tabs/tabs.js";
 import Footnotes from "./plugins/footnotes/footnotes.js";
 import Math from "./plugins/math/math.js";
 import AutoformatMath from "./plugins/math/autoformat_math.js";
@@ -68,6 +70,7 @@ import TableSort from "./plugins/table_sort.js";
 import TableInsertUI from "./plugins/table_insert/table_insert_ui.js";
 import TableToolbarDropdowns from "./plugins/table_toolbar_dropdowns.js";
 import ToolbarGroupMenu from "./plugins/toolbar_group_menu.js";
+import BlockDragHandle from "./plugins/block_drag_handle.js";
 
 /**
  * Plugins that are specific to Trilium and not part of the CKEditor 5 core, included in both text editors but not in the attribute editor.
@@ -83,6 +86,7 @@ const TRILIUM_PLUGINS: typeof Plugin[] = [
     IndentBlockShortcutPlugin,
     MarkdownImportPlugin,
     ContentEmbed,
+    BlockReference,
     InlineIcon,
     LinkEmbed,
     Uploadfileplugin,
@@ -131,6 +135,7 @@ const EXTERNAL_PLUGINS: typeof Plugin[] = [
     Mermaid,
     Admonition,
     Collapsible,
+    Tabs,
     Footnotes,
     Math,
 	AutoformatMath
@@ -270,6 +275,15 @@ export const COMMON_PLUGINS: typeof Plugin[] = [
 
     ...TRILIUM_PLUGINS,
     ...EXTERNAL_PLUGINS
+];
+
+/**
+ * The set of plugins specific to the fixed toolbar mode. `BlockDragHandle` gives it the block drag
+ * handle that the popup editor gets from `BlockToolbar`.
+ */
+export const CLASSIC_EDITOR_PLUGINS: typeof Plugin[] = [
+    ...COMMON_PLUGINS,
+    BlockDragHandle,
 ];
 
 /**

@@ -224,7 +224,7 @@ export default function CKEditorWithWatchdog({ containerRef: externalContainerRe
 
     useLegacyImperativeHandlers({
         async loadReferenceLinkTitle($el: JQuery<HTMLElement>, href: string | null = null) {
-            await link.loadReferenceLinkTitle($el, href);
+            await link.loadReferenceLinkTitle($el, href, note?.noteId);
         },
         async fetchLinkMetadata(url: string) {
             // The preview's pictures are stored as attachments of the note being edited, so there
@@ -351,6 +351,20 @@ export default function CKEditorWithWatchdog({ containerRef: externalContainerRe
         customReplacements, defaultContentLanguage, htmlSupportEnabled, allowedHtmlTags,
         aiEnabled, llmProviders
     ]);
+
+    // Destroys the editor when the component goes away, after a build still in progress.
+    useEffect(() => () => {
+        buildQueueRef.current = buildQueueRef.current
+            .then(async () => {
+                const watchdog = watchdogRef.current;
+                watchdogRef.current = null;
+                externalWatchdogRef.current = null;
+                await watchdog?.destroy();
+            })
+            .catch((e) => {
+                console.warn("Watchdog destroy failed", e);
+            });
+    }, []);
 
     // Push snippet ("template") definitions into the live editor instead of rebuilding it. The premium
     // Template plugin read its definitions once at init; TriliumSnippets keeps them in a live

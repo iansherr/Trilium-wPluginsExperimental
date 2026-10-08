@@ -452,6 +452,18 @@ describe("notes service (real DB)", () => {
             expect(relation!.value).toBe(target.note.noteId);
         });
 
+        it("creates internal-link relations for links to a part of a note", () => {
+            const target = createNote("root", { title: "spec-part-target" });
+            const source = createNote("root", { title: "spec-part-source" });
+
+            const content = `<a href="#root/${target.note.noteId}?block=a1:b2">x</a>`
+                + `<a href="#root/${target.note.noteId}?bookmark=heading">y</a>`;
+            getContext().init(() => saveLinks(source.note, content));
+
+            const relations = source.note.getRelations().filter((r) => r.name === "internalLink");
+            expect(relations.map((r) => r.value)).toEqual([ target.note.noteId ]);
+        });
+
         it("removes link relations that are no longer present in the content", () => {
             const target = createNote("root", { title: "spec-unused-target" });
             const source = createNote("root", { title: "spec-unused-source" });
@@ -670,6 +682,28 @@ describe("notes service (real DB)", () => {
             expect(dupChildren).toHaveLength(1);
             expect(dupNote.getRelationValue("myRel")).toBe(dupChildren[0].noteId);
             expect(dupChildren[0].noteId).not.toBe(child.note.noteId);
+        });
+
+        it("duplicates only the note when withChildren is false, keeping references to the original children", () => {
+            const parent = createNote("root", { title: "spec-dup-only" });
+            const child = createNote(parent.note.noteId, { title: "spec-dup-only-child" });
+            getContext().init(() => {
+                parent.note.setLabel("iconClass", "bx bx-star");
+                parent.note.setRelation("selfRel", parent.note.noteId);
+                parent.note.setRelation("childRel", child.note.noteId);
+                parent.note.setContent(`<p><a href="#root/${child.note.noteId}">child</a></p>`);
+            });
+
+            const { note: dupNote } = getContext().init(() =>
+                noteService.duplicateSubtree(parent.note.noteId, "root", { withChildren: false }));
+
+            expect(dupNote.noteId).not.toBe(parent.note.noteId);
+            expect(dupNote.getChildNotes()).toHaveLength(0);
+            expect(parent.note.getChildNotes().map((n) => n.noteId)).toStrictEqual([ child.note.noteId ]);
+            expect(dupNote.getLabelValue("iconClass")).toBe("bx bx-star");
+            expect(dupNote.getRelationValue("selfRel")).toBe(dupNote.noteId);
+            expect(dupNote.getRelationValue("childRel")).toBe(child.note.noteId);
+            expect(dupNote.getContent()).toContain(child.note.noteId);
         });
 
         it("refuses to duplicate the root note", () => {

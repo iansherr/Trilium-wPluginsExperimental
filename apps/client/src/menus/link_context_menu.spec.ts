@@ -27,7 +27,10 @@ vi.mock("./text_editor_context_menu", () => ({
     getTextEditorContaining: mocks.getTextEditorContaining
 }));
 
-vi.mock("../services/content_renderer", () => ({ getEmbedBoxSize: mocks.getEmbedBoxSize }));
+vi.mock("../services/content_renderer", () => ({
+    EXCERPT_BOX_SIZE: "full",
+    getEmbedBoxSize: mocks.getEmbedBoxSize
+}));
 
 vi.mock("./context_menu", () => ({ default: { show: mocks.show } }));
 
@@ -379,6 +382,38 @@ describe("openContextMenu", () => {
         expect(mocks.show.mock.calls[1][0].items).toHaveLength(4);
     });
 
+    it("offers converting a link to blocks of a note to an excerpt of full size", async () => {
+        const execute = vi.fn();
+        mocks.getNote.mockResolvedValue({ noteId: "n1" });
+        mocks.getEmbedBoxSize.mockReturnValue("medium");
+        mocks.getTextEditorContaining.mockResolvedValue({
+            commands: { get: () => ({ isEnabled: true }) },
+            plugins: { get: () => ({ canConvertLinkToEmbed: () => true }) },
+            execute
+        });
+        const editable = document.createElement("div");
+        editable.className = "ck-editor__editable";
+        editable.setAttribute("contenteditable", "true");
+        editable.innerHTML = `<p><a class="reference-link" href="#root/n1?block=b1">Note</a></p>`;
+        const link = editable.querySelector("a");
+        expect(link).not.toBeNull();
+
+        await linkContextMenu.openContextMenu(
+            "root/n1", contextMenuEvent(link ?? undefined), { block: "b1" }
+        );
+
+        const item = mocks.show.mock.calls[0][0].items.at(-1);
+        expect(item).toMatchObject({
+            title: "link_context_menu.convert_link_to_note_excerpt",
+            uiIcon: "bx bx-window-alt"
+        });
+        item.handler();
+        expect(execute).toHaveBeenCalledWith("convertLinkToEmbed", {
+            domElement: link,
+            boxSize: "full"
+        });
+    });
+
     describe("opened on an embed in a note being edited", () => {
         const CHECK = "bx bx-check";
         const execute = vi.fn();
@@ -475,13 +510,13 @@ describe("openContextMenu", () => {
                         title: "link_context_menu.show_title",
                         uiIcon: "bx bx-window-alt",
                         enabled: true,
-                        trailingIcon: undefined
+                        checked: false
                     },
                     {
                         title: "link_context_menu.show_caption",
                         uiIcon: "bx bx-captions",
                         enabled: true,
-                        trailingIcon: CHECK
+                        checked: true
                     },
                     { kind: "separator" },
                     { title: "Rename" },
@@ -515,7 +550,7 @@ describe("openContextMenu", () => {
                 {
                     title: "link_context_menu.editable",
                     uiIcon: "bx bx-edit-alt",
-                    trailingIcon: CHECK
+                    checked: true
                 },
                 { title: "link_context_menu.include_size" }
             ]);
@@ -524,7 +559,7 @@ describe("openContextMenu", () => {
 
             state = { ...state, isEditable: false };
             expect((await openOn(editable.querySelector("a")))[7])
-                .toMatchObject({ title: "link_context_menu.editable", trailingIcon: undefined });
+                .toMatchObject({ title: "link_context_menu.editable", checked: false });
         });
 
         it("appends the commands of an embedded note, its conversion in a group of its own", async () => {
@@ -554,8 +589,8 @@ describe("openContextMenu", () => {
             expect((await openOn(editable.querySelector("a"), {})).slice(4)).toMatchObject([
                 { kind: "separator" },
                 { title: "link_context_menu.include_size" },
-                { title: "link_context_menu.show_title", enabled: false, trailingIcon: CHECK },
-                { title: "link_context_menu.show_caption", enabled: false, trailingIcon: undefined }
+                { title: "link_context_menu.show_title", enabled: false, checked: true },
+                { title: "link_context_menu.show_caption", enabled: false, checked: false }
             ]);
 
             // A link in the embedded content, an embed the editor does not know, and an editor
