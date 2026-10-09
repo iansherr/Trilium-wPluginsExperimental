@@ -115,6 +115,11 @@ const IMAGE_MIME_MAPPINGS: Record<string, string> = {
 export const GEO_LOCATION_ATTRIBUTE = "geolocation";
 export const GEO_SHAPE_ATTRIBUTE = "geoShape";
 
+/** The same two labels on a map drawn over an image, in the map's own coordinates rather than
+ *  degrees. */
+export const MAP_POSITION_ATTRIBUTE = "mapPosition";
+export const MAP_SHAPE_ATTRIBUTE = "mapShape";
+
 /** The icon a note on a geo map is drawn under where it has none of its own. */
 export const GEO_MARKER_ICON = "bx bx-pin";
 
@@ -132,9 +137,10 @@ export const GEO_SHAPE_ICONS: Record<string, string> = {
  * The icon a note is drawn under: its own `#iconClass` where it has one, and a default read off
  * what the note is otherwise.
  *
- * A note carrying a non-empty `#geolocation` is drawn as a pin, and one carrying a `#geoShape` as
- * the shape it names, where neither has anything more specific. The geo map therefore writes no
- * `#iconClass` onto a marker or a shape it creates, so an icon it hands down through
+ * A note carrying a non-empty `#geolocation` or `#mapPosition` is drawn as a pin, and one carrying
+ * a `#geoShape` or `#mapShape` as the shape it names, where neither has anything more specific.
+ * The geo map therefore writes no `#iconClass` onto a marker or a shape it creates, so an icon it
+ * hands down through
  * `#child:iconClass` or a template still applies, and redrawing a shape as another kind changes the
  * icon with it. `iconClass` stays an argument rather than being read here because the share tree
  * narrows it to the prefixes an icon pack supplies.
@@ -163,10 +169,10 @@ export function getNoteIcon({
     } else if (type === "text") {
         // A place on a map is written onto a note deliberately, so it outranks the folder icon the
         // note picks up from having children.
-        if (getLabelValue(GEO_LOCATION_ATTRIBUTE)) {
+        if (getLabelValue(GEO_LOCATION_ATTRIBUTE) || getLabelValue(MAP_POSITION_ATTRIBUTE)) {
             return GEO_MARKER_ICON;
         }
-        const shape = getLabelValue(GEO_SHAPE_ATTRIBUTE);
+        const shape = getLabelValue(GEO_SHAPE_ATTRIBUTE) || getLabelValue(MAP_SHAPE_ATTRIBUTE);
         if (shape) {
             return GEO_SHAPE_ICONS[shape.split(":", 1)[0]] ?? GEO_SHAPE_ICONS.line;
         }
@@ -207,6 +213,24 @@ export function getMimeIcon(mime: string | undefined | null): string {
 export function getCodeLanguageIcon(language: Pick<MimeTypeDefinition, "icon"> | undefined): string {
     return language?.icon ?? NOTE_TYPE_ICONS.code;
 }
+
+/**
+ * Whether a note of `type` and `mime` always takes the full width of the content, whatever its
+ * `#fullContentWidth` label says: canvas-like types, and files shown in a viewer (PDF, video, audio).
+ */
+export function isFullWidthNoteType(type: string, mime: string) {
+    if (FULL_WIDTH_NOTE_TYPES.includes(type)) {
+        return true;
+    }
+
+    return type === "file"
+        && (mime === "application/pdf" || mime.startsWith("video/") || mime.startsWith("audio/"));
+}
+
+const FULL_WIDTH_NOTE_TYPES = [
+    "code", "image", "mermaid", "book", "render", "canvas", "webView", "noteMap", "relationMap",
+    "mindMap", "spreadsheet"
+];
 
 function getFileMimeIcon(mime: string): string {
     if (mime.startsWith("video/")) return "bx bx-video";

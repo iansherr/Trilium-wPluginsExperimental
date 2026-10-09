@@ -41,6 +41,7 @@ async function main() {
     // glibc/musl variants so a macOS build is still usable by Docker Desktop.
     build.trimBetterSqlite3({ includeAllLinuxArchitectures: true });
     build.copy("/node_modules/ckeditor5/dist/ckeditor5-content.css", "ckeditor5-content.css");
+    build.copy("/packages/ckeditor5/src/theme/multicolumn.css", "ckeditor5-multicolumn.css");
 
     build.buildFrontend();
 }

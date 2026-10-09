@@ -29,7 +29,6 @@ class SNote extends AbstractShacaEntity {
     children: SNote[];
     ownedAttributes: SAttribute[];
     private __attributeCache: SAttribute[] | null;
-    private __inheritableAttributeCache: SAttribute[] | null;
     targetRelations: SAttribute[];
     attachments: SAttachment[];
 
@@ -50,7 +49,6 @@ class SNote extends AbstractShacaEntity {
         this.ownedAttributes = [];
 
         this.__attributeCache = null;
-        this.__inheritableAttributeCache = null;
 
         this.targetRelations = [];
         this.attachments = [];
@@ -87,7 +85,7 @@ class SNote extends AbstractShacaEntity {
     }
 
     hasChildren() {
-        return this.children && this.children.length > 0;
+        return this.children.length > 0;
     }
 
     hasVisibleChildren() {
@@ -181,14 +179,6 @@ class SNote extends AbstractShacaEntity {
                     this.__attributeCache.push(attr);
                 }
             }
-
-            this.__inheritableAttributeCache = [];
-
-            for (const attr of this.__attributeCache) {
-                if (attr.isInheritable) {
-                    this.__inheritableAttributeCache.push(attr);
-                }
-            }
         }
 
         return this.__attributeCache;
@@ -199,11 +189,7 @@ class SNote extends AbstractShacaEntity {
             return [];
         }
 
-        if (!this.__inheritableAttributeCache) {
-            this.__getAttributes(path); // will refresh also this.__inheritableAttributeCache
-        }
-
-        return this.__inheritableAttributeCache || [];
+        return this.__getAttributes(path).filter((attr) => attr.isInheritable);
     }
 
     /**
@@ -496,9 +482,10 @@ class SNote extends AbstractShacaEntity {
             return "";
         }
 
-        const sharedAlias = this.getOwnedLabelValue("shareAlias");
-
-        return sharedAlias || this.noteId;
+        // Of notes sharing an alias, `/share/<alias>` opens one; the others link by their ID.
+        const sharedAlias = this.getOwnedLabelValue("shareAlias")?.trim();
+        const ownsAlias = sharedAlias && this.shaca.aliasToNote[sharedAlias] === this;
+        return ownsAlias ? sharedAlias : this.noteId;
     }
 
     get escapedTitle() {
