@@ -57,7 +57,7 @@
     "dev:linter-check": "cross-env NODE_OPTIONS=--max_old_space_size=4096 eslint .",
     "dev:linter-fix": "cross-env NODE_OPTIONS=--max_old_space_size=4096 eslint . --fix",
     "postinstall": "pnpm prepare",
-    "prepare": "pnpm run --filter pdfjs-viewer --filter share-theme build && pnpm run --filter web-clipper postinstall",
+    "prepare": "pnpm run --filter pdfjs-viewer build && pnpm run --filter web-clipper postinstall",
     "update-contributors": "tsx ./scripts/update-contributors.ts"
   },
   "private": true,
@@ -88,7 +88,7 @@
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1",
-    "vite": "8.3.2",
+    "vite": "8.3.3",
     "vitest": "5.0.3"
   },
   "license": "AGPL-3.0-only",
@@ -105,5 +105,5 @@
     "url": "https://github.com/TriliumNext/Trilium/issues"
   },
   "homepage": "https://triliumnotes.org",
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.10.1"
 }
