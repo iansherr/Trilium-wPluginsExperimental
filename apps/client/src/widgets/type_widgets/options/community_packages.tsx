@@ -1054,7 +1054,7 @@ async function moveNoteToParent(note, targetParentNoteId, branchFilter = () => t
     const targetParentBranch = targetParentNote?.getParentBranches()[0];
     if (!targetParentBranch) throw new Error(`Could not find the parent branch for ${targetParentNoteId}`);
 
-    const response = await packageRequest("PUT", `branches/${sourceBranch.branchId}/move-to/${targetParentBranch.branchId}`);
+    const response = await packageRequest("PUT", `branches/move-to/${targetParentBranch.branchId}`, { branchIds: [sourceBranch.branchId] });
     if (!response.ok) throw new Error(`Could not move ${note.title} (${response.status})`);
     await api.reloadNotes([note.noteId]);
 }

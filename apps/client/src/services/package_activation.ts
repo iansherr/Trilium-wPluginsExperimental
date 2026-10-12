@@ -110,6 +110,6 @@ async function setLauncherVisibility(note: FNote, enabled: boolean) {
     const targetParent = await froca.getNote(targetParentNoteId, true);
     const targetBranch = targetParent?.getParentBranches()[0];
     if (!targetBranch) throw new Error(`Could not find the parent branch for ${targetParentNoteId}`);
-    await server.put(`branches/${sourceBranch.branchId}/move-to/${targetBranch.branchId}`);
+    await server.put(`branches/move-to/${targetBranch.branchId}`, { branchIds: [sourceBranch.branchId] });
     return true;
 }
