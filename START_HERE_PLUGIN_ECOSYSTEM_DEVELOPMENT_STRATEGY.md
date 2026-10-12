@@ -49,8 +49,16 @@ To understand how the Plugin System operates under the hood:
   - Legacy hyphenated notes are flagged with `enforceDeleted: true` for automatic cleanup.
 
 ### E. QuickSearch & Hidden Note Isolation
-- **Default Isolation**: `/api/quick-search/:searchString` omits hidden notes on unhoisted queries so user searches stay clean.
-- **Hidden Queries**: Package lookups supply `?includeHidden=true` (via `searchPackageNotes()`) to query system-managed extensions without leaking them to the general search dropdown.
+- **Route shape**: `GET /api/quick-search?searchString=<query>` is the only registered form. The path-parameter form (`/api/quick-search/:searchString`) was removed (`c3c62108c0`) and now 404s.
+- **Default Isolation**: it omits hidden notes on unhoisted queries so user searches stay clean.
+- **Hidden Queries**: Package lookups add `&includeHidden=true` (via `searchPackageNotes()` in `community_packages.tsx` and `search.searchForNotesIncludingHidden()`) to query system-managed extensions without leaking them to the general search dropdown.
+- **Failure mode to remember**: `community_packages.tsx` runs as a deployed script note, so an old build keeps calling whatever route it was written for. A 404 here used to leave the manager's spinner up forever; `initialize()` now catches and shows the error.
+
+### F. Package-Owned Launchers (Launch Bar)
+- **Ownership stamp**: a package's startup script creates launchers with `api.createOrUpdateLauncher`. Those `al_*` notes must carry `#packageOwner=<author>/<package-id>` or disable/archive (which search `#packageOwner="<id>"`) never sees them and they stay on the launch bar after uninstall. The Ikmal Tools launcher script reads the label from its own script note and stamps every launcher it creates (quick-capture, Today, macro buttons). Nothing is stamped when the script was not installed through the package manager.
+- **Only artifacts are force-restored**: `reconcileEnabledPackageActivations()` moves a launcher back to visible only if it has `#packageArtifact`. An owner-stamped launcher without it belongs to the user's launch bar, so a launcher they hid is not undone on every refresh.
+- **Moving launchers**: disable/archive/enable move launchers between `_lbVisibleLaunchers` and `_lbAvailableLaunchers` with `PUT /api/branches/move-to/:parentBranchId` and body `{ branchIds: [...] }`. The old `PUT /api/branches/:branchId/move-to/:parentBranchId` no longer exists ("Router not found"); `plugins.tsx`, `package_activation.ts` and `community_packages.tsx` all use the batch form.
+- **Mobile**: `#run=frontendStartup` does not run on mobile; a script that must run there also needs `#run=mobileStartup`. Desktop launchers never appear on the mobile bar (`_lbMobileVisibleLaunchers`).
 
 ---
 
@@ -67,6 +75,18 @@ To understand how the Plugin System operates under the hood:
 | **#10824** | `iansherr:agent/plugin-manager` | Core plugin settings UI, package metadata validation, and operation coordination locking. | **Open** (`Checks/main` passed, `Greptile Review` passed cleanly with 0 comments, Codecov patch satisfied; awaiting maintainer merge) |
 | **#10825** | `iansherr:agent/plugin-build` | Multi-architecture native SQLite binary preservation for cross-platform Docker testing. | **Closed** (Merged/superseded upstream in `TriliumNext/Trilium`) |
 | **#10826** | `iansherr:agent/plugin-dev` | Reproducible developer test harness and script-deployer test overrides. | **Closed** (Merged/superseded upstream in `TriliumNext/Trilium`) |
+
+### Fork PRs (Filed to `iansherr/Trilium-wPluginsExperimental`)
+
+Fixes found while installing Ikmal Tools end to end. These target the fork's `main` and are not part of the upstream queue below; they are stacked, so retarget #5 and #6 to `main` after the one beneath merges.
+
+| Fork PR # | Branch Name | Scope / Purpose | Status |
+| :--- | :--- | :--- | :--- |
+| **#4** | `fix/community-packages-search-route` | Manager searches with the query-string `quick-search` route; `initialize()` failures show an error instead of an endless spinner. | **Open** |
+| **#5** | `fix/package-owner-launchers` | Reconcile no longer forces owner-stamped (non-artifact) launchers visible. Based on #4. | **Open** |
+| **#6** | `fix/package-launcher-move-route` | Launcher moves use the batch `branches/move-to` route. Based on #5. | **Open** |
+
+Your desktop app only picks these up after #4-#6 are merged and the binary is rebuilt (`pnpm dev:binary`). Until then an installed build still shows the endless spinner on the catalog page and cannot take launchers off the bar on disable.
 
 ---
 
