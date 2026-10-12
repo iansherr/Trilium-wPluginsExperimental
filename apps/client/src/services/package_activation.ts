@@ -53,7 +53,12 @@ export async function reconcileEnabledPackageActivations(): Promise<PackageActiv
                     for (const value of valuesToRestore) await setLabel(note.noteId, labelName, value);
                     repaired = true;
                 }
-                if (note.type === "launcher") repaired = await setLauncherVisibility(note, true) || repaired;
+                // Only launchers that are package artifacts are managed here. A launcher that is merely
+                // stamped with #packageOwner (so uninstall can find it) belongs to the user's launch bar:
+                // forcing it visible on every refresh would undo a launcher they chose to hide.
+                if (note.type === "launcher" && note.getOwnedLabelValue("packageArtifact")) {
+                    repaired = await setLauncherVisibility(note, true) || repaired;
+                }
                 if (repaired) repairedNoteIds.push(note.noteId);
             }
 
