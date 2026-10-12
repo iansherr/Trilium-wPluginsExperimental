@@ -136,7 +136,12 @@ export default function CommunityPackages() {
     const [storageSummary, setStorageSummary] = useState(null);
 
     useEffect(() => {
-        void initialize();
+        // initialize() reads settings before refresh() can clear `loading`; without this catch a failed
+        // request leaves the spinner up forever with no message.
+        initialize().catch((cause) => {
+            setError(errorMessage(cause));
+            setLoading(false);
+        });
     }, []);
 
     useEffect(() => {
@@ -1024,7 +1029,7 @@ async function packageRequest(method, path, body) {
 }
 
 async function searchPackageNotes(searchString) {
-    const response = await packageRequest("GET", `quick-search/${encodeURIComponent(searchString)}?includeHidden=true`);
+    const response = await packageRequest("GET", `quick-search?searchString=${encodeURIComponent(searchString)}&includeHidden=true`);
     if (!response.ok) throw new Error(`Could not search package notes (${response.status})`);
     const result = await response.json();
     const noteIds = Array.isArray(result.searchResultNoteIds) ? result.searchResultNoteIds : [];
