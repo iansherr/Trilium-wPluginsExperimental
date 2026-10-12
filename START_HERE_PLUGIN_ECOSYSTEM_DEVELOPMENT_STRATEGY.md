@@ -78,15 +78,15 @@ To understand how the Plugin System operates under the hood:
 
 ### Fork PRs (Filed to `iansherr/Trilium-wPluginsExperimental`)
 
-Fixes found while installing Ikmal Tools end to end. These target the fork's `main` and are not part of the upstream queue below; they are stacked, so retarget #5 and #6 to `main` after the one beneath merges.
+Fixes found while installing Ikmal Tools end to end. These target the fork's `main` and are not part of the upstream queue below. They were stacked; each was retargeted to `main` and merged in order, without deleting the branches.
 
 | Fork PR # | Branch Name | Scope / Purpose | Status |
 | :--- | :--- | :--- | :--- |
-| **#4** | `fix/community-packages-search-route` | Manager searches with the query-string `quick-search` route; `initialize()` failures show an error instead of an endless spinner. | **Open** |
-| **#5** | `fix/package-owner-launchers` | Reconcile no longer forces owner-stamped (non-artifact) launchers visible. Based on #4. | **Open** |
-| **#6** | `fix/package-launcher-move-route` | Launcher moves use the batch `branches/move-to` route. Based on #5. | **Open** |
+| **#4** | `fix/community-packages-search-route` | Manager searches with the query-string `quick-search` route; `initialize()` failures show an error instead of an endless spinner. | **Merged into main** |
+| **#5** | `fix/package-owner-launchers` | Reconcile no longer forces owner-stamped (non-artifact) launchers visible. Based on #4. | **Merged into main** |
+| **#6** | `fix/package-launcher-move-route` | Launcher moves use the batch `branches/move-to` route. Based on #5. | **Merged into main** |
 
-Your desktop app only picks these up after #4-#6 are merged and the binary is rebuilt (`pnpm dev:binary`). Until then an installed build still shows the endless spinner on the catalog page and cannot take launchers off the bar on disable.
+These are in the binary built from `main`. A binary built before them still shows the endless spinner on the catalog page and cannot take launchers off the bar on disable, so relaunch after a rebuild (`pnpm dev:binary`).
 
 ---
 
