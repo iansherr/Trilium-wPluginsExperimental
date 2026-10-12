@@ -49,7 +49,7 @@ describe("reconcileEnabledPackageActivations launchers", () => {
 
         const repairs = await reconcileEnabledPackageActivations();
 
-        expect(put).toHaveBeenCalledWith("branches/art_b/move-to/_lbVisibleLaunchers_branch");
+        expect(put).toHaveBeenCalledWith("branches/move-to/_lbVisibleLaunchers_branch", { branchIds: ["art_b"] });
         expect(repairs).toEqual([{ packageId: "pkg", repairedNoteIds: ["art"] }]);
     });
 });
