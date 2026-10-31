@@ -63,6 +63,25 @@ test("catalog exposes repair for broken installed packages", () => {
     assert.match(managerSource, /onClick=\{\(\) => repair\(entry\)\}/);
 });
 
+test("local folder installs use in-memory files, reject path traversal, and retain the manifest", () => {
+    assert.match(managerSource, /setAttribute\("webkitdirectory", ""\)/);
+    assert.match(managerSource, /readLocalPackageDirectory\(files\)/);
+    assert.match(managerSource, /resolveLocalPackageArtifact\(artifact\.source, manifest\._localPackageFiles\)/);
+    assert.match(managerSource, /verifyArtifactIntegrity\(manifest, artifact, payload\)/);
+    assert.match(managerSource, /name: "packageManifest", value: JSON\.stringify\(manifest\)/);
+    assert.match(managerSource, /parent directory segments/);
+    assert.doesNotMatch(managerSource, /readFileSync|node:fs|path\.resolve/);
+});
+
+test("plugin settings autosave after edits while explicit save remains available", () => {
+    assert.match(pluginsSource, /settingsAutosave\.current\.schedule\(\(\) => void saveSettings\(false\)\)/);
+    assert.match(pluginsSource, /createDebouncedSave\(450\)/);
+    assert.match(pluginsSource, /packageSaveTimers\.current/);
+    assert.match(pluginsSource, /updateGlobalSettings\(\(current\) => \(\{ \.\.\.current, allowNetworkPackages: value \}\)\)/);
+    assert.match(pluginsSource, /onClick=\{\(\) => void saveSettings\(\)\}/);
+    assert.match(pluginsSource, /onClick=\{onSave\}/);
+});
+
 test("interrupted stages surface recovery and keep incomplete notes recoverable", () => {
     assert.match(managerSource, /const \[interruptedTransactions, setInterruptedTransactions\]/);
     assert.match(managerSource, /Interrupted package operation detected\./);

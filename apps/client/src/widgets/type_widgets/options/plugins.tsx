@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { createDebouncedSave, type DebouncedSave } from "./debounced_save";
 
 import "./plugins.css";
 
@@ -48,6 +49,7 @@ export interface PackageSummary {
     health: "healthy" | "broken" | "unknown";
     healthMessage: string;
     settings: Record<string, unknown>;
+    cachedManifest?: CatalogPackage;
 }
 
 type PackageSettingType = "boolean" | "number" | "string" | "secret" | "select";
@@ -160,12 +162,22 @@ const EMPTY_STATE: PluginsState = {
 export default function PluginsSettings() {
     const [state, setState] = useState<PluginsState>(EMPTY_STATE);
     const [savingSettings, setSavingSettings] = useState(false);
+    const [settingsDirty, setSettingsDirty] = useState(false);
+    const [dirtyPackageIds, setDirtyPackageIds] = useState<string[]>([]);
     const [savingPackage, setSavingPackage] = useState("");
     const [configuredPackage, setConfiguredPackage] = useState("");
     const [editingSourceIndex, setEditingSourceIndex] = useState<number | null>(null);
     const [sourceDraft, setSourceDraft] = useState("");
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
     const [hostDraft, setHostDraft] = useState("");
+    const settingsRevision = useRef(0);
+    const settingsSaveQueue = useRef(Promise.resolve());
+    const settingsAutosave = useRef(createDebouncedSave(450));
+    const packageSaveTimers = useRef(new Map<string, DebouncedSave>());
+    const packageSaveRevisions = useRef(new Map<string, number>());
+    const packageSaveQueues = useRef(new Map<string, Promise<void>>());
+    const packagesRef = useRef(state.packages);
+    packagesRef.current = state.packages;
 
     const refresh = useCallback(async () => {
         try {
@@ -205,14 +217,21 @@ export default function PluginsSettings() {
                     artifactIds: artifactIdsByPackage.get(note.getOwnedLabelValue("packageOwner") || note.noteId) || [],
                     health: "unknown" as const,
                     healthMessage: "not checked",
-                    settings: {}
+                    settings: {},
+                    cachedManifest: parseCachedPackageManifest(note.getOwnedLabelValue("packageManifest"))
                 }))
                 .sort((left, right) => left.title.localeCompare(right.title));
 
-            const { catalog, updateCount, registryError } = await loadCatalog(sources, packages, includeDeprecatedPackages);
+            const loadedCatalog = await loadCatalog(sources, packages, includeDeprecatedPackages);
+            const catalogById = new Map<string, CatalogPackage>(loadedCatalog.catalog.map((manifest) => [manifest.id, manifest] as const));
+            for (const pkg of packages) {
+                if (pkg.cachedManifest && !catalogById.has(pkg.id)) catalogById.set(pkg.id, pkg.cachedManifest);
+            }
+            const catalog = [...catalogById.values()];
+            const { updateCount, registryError } = loadedCatalog;
             const packagesWithSettings = packages.map((pkg) => {
                 const note = packageNotes.find((candidate) => candidate.noteId === pkg.noteId);
-                const manifest = catalog.find((candidate) => candidate.id === pkg.id);
+                const manifest = catalog.find((candidate) => candidate.id === pkg.id) || pkg.cachedManifest;
                 return { ...pkg, ...packageHealth(pkg.artifactIds, manifest), settings: note && manifest ? readPackageSettings(note, manifest) : {} };
             });
             const interruptedTransactionCount = new Set(transactionNotes
@@ -228,6 +247,30 @@ export default function PluginsSettings() {
     useEffect(() => {
         void refresh();
     }, [refresh]);
+
+    useEffect(() => {
+        if (!settingsDirty || state.loading || !state.settings) return;
+        settingsAutosave.current.schedule(() => void saveSettings(false));
+    }, [settingsDirty, state.loading, state.settings?.noteId, state.sources, state.allowNetworkPackages, state.allowedSourceHosts, state.checkForUpdates, state.updateCheckIntervalHours, state.includeDeprecatedPackages]);
+
+    useEffect(() => {
+        for (const packageId of dirtyPackageIds) {
+            let autosave = packageSaveTimers.current.get(packageId);
+            if (!autosave) {
+                autosave = createDebouncedSave(450);
+                packageSaveTimers.current.set(packageId, autosave);
+            }
+            autosave.schedule(() => {
+                const pkg = packagesRef.current.find((candidate) => candidate.id === packageId);
+                if (pkg) void savePackageSettings(pkg, false);
+            });
+        }
+    }, [dirtyPackageIds, state.packages]);
+
+    useEffect(() => () => {
+        settingsAutosave.current.flush();
+        for (const autosave of packageSaveTimers.current.values()) autosave.flush();
+    }, []);
 
     useTriliumEvent("entitiesReloaded", useCallback(() => {
         void refresh();
@@ -247,24 +290,44 @@ export default function PluginsSettings() {
         }
     }
 
-    async function saveSettings() {
+    function updateGlobalSettings(update: (current: PluginsState) => PluginsState) {
+        settingsRevision.current++;
+        setSettingsDirty(true);
+        setState(update);
+    }
+
+    async function saveSettings(manual = true) {
+        if (manual) settingsAutosave.current.cancel();
         if (!state.settings) {
             await openCatalog();
             return;
         }
 
+        const revision = settingsRevision.current;
+        const settings = state.settings;
+        const sources = normalizePluginSources(state.sources);
+        const hosts = normalizeSourceHosts(state.allowedSourceHosts.join("\n"));
+        const settingsSnapshot = {
+            allowNetworkPackages: state.allowNetworkPackages,
+            checkForUpdates: state.checkForUpdates,
+            updateCheckIntervalHours: state.updateCheckIntervalHours,
+            includeDeprecatedPackages: state.includeDeprecatedPackages
+        };
         setSavingSettings(true);
         try {
-            const sources = normalizePluginSources(state.sources);
-            await setLabel(state.settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
-            await setLabel(state.settings.noteId, "packageAllowNetwork", state.allowNetworkPackages ? "true" : "false");
-            await setLabel(state.settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, normalizeSourceHosts(state.allowedSourceHosts.join("\n")));
-            await setLabel(state.settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, state.checkForUpdates ? "true" : "false");
-            await setLabel(state.settings.noteId, PACKAGE_UPDATE_INTERVAL_LABEL, String(Math.max(1, state.updateCheckIntervalHours || 24)));
-            await setLabel(state.settings.noteId, PACKAGE_INCLUDE_DEPRECATED_LABEL, state.includeDeprecatedPackages ? "true" : "false");
-            await froca.reloadNotes([state.settings.noteId]);
-            toast.showMessage(t("plugins.package_settings_saved"));
-            await refresh();
+            const write = settingsSaveQueue.current.then(async () => {
+                await setLabel(settings.noteId, PACKAGE_SOURCES_LABEL, JSON.stringify(sources));
+                await setLabel(settings.noteId, "packageAllowNetwork", settingsSnapshot.allowNetworkPackages ? "true" : "false");
+                await setLabel(settings.noteId, PACKAGE_ALLOWED_SOURCE_HOSTS_LABEL, hosts);
+                await setLabel(settings.noteId, PACKAGE_CHECK_UPDATES_LABEL, settingsSnapshot.checkForUpdates ? "true" : "false");
+                await setLabel(settings.noteId, PACKAGE_UPDATE_INTERVAL_LABEL, String(Math.max(1, settingsSnapshot.updateCheckIntervalHours || 24)));
+                await setLabel(settings.noteId, PACKAGE_INCLUDE_DEPRECATED_LABEL, settingsSnapshot.includeDeprecatedPackages ? "true" : "false");
+                await froca.reloadNotes([settings.noteId]);
+            });
+            settingsSaveQueue.current = write.catch(() => undefined);
+            await write;
+            if (revision === settingsRevision.current) setSettingsDirty(false);
+            if (manual) toast.showMessage(t("plugins.package_settings_saved"));
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
         } finally {
@@ -272,18 +335,28 @@ export default function PluginsSettings() {
         }
     }
 
-    async function savePackageSettings(pkg: PackageSummary) {
+    async function savePackageSettings(pkg: PackageSummary, manual = true) {
         const manifest = state.catalog.find((candidate) => candidate.id === pkg.id);
         if (!manifest || !manifest.settings.length) return;
 
-        setSavingPackage(pkg.id);
-        try {
+        packageSaveTimers.current.get(pkg.id)?.cancel();
+        const revision = packageSaveRevisions.current.get(pkg.id) || 0;
+        const writePackage = async () => {
             for (const setting of manifest.settings) {
                 await setLabel(pkg.noteId, settingLabelName(setting.key), serializeSetting(pkg.settings[setting.key]));
             }
             await froca.reloadNotes([pkg.noteId]);
-            toast.showMessage(translateText("plugins.plugin_settings_saved", { title: pkg.title }));
-            await refresh();
+        };
+        setSavingPackage(pkg.id);
+        try {
+            const previous = packageSaveQueues.current.get(pkg.id) || Promise.resolve();
+            const write = previous.then(writePackage);
+            packageSaveQueues.current.set(pkg.id, write.catch(() => undefined));
+            await write;
+            if (revision === (packageSaveRevisions.current.get(pkg.id) || 0)) {
+                setDirtyPackageIds((current) => current.filter((id) => id !== pkg.id));
+            }
+            if (manual) toast.showMessage(translateText("plugins.plugin_settings_saved", { title: pkg.title }));
         } catch (error) {
             toast.showError(error instanceof Error ? error.message : String(error));
         } finally {
@@ -354,6 +427,9 @@ export default function PluginsSettings() {
     }
 
     function updatePackageSetting(packageId: string, key: string, value: unknown) {
+        const revision = (packageSaveRevisions.current.get(packageId) || 0) + 1;
+        packageSaveRevisions.current.set(packageId, revision);
+        setDirtyPackageIds((current) => current.includes(packageId) ? current : [...current, packageId]);
         setState((current) => ({
             ...current,
             packages: current.packages.map((pkg) => pkg.id === packageId
@@ -495,7 +571,7 @@ export default function PluginsSettings() {
                                 setSourceDraft(state.sources[index] || "");
                             }}
                             onDelete={(index) => {
-                                setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
+                                updateGlobalSettings((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
                                 setEditingSourceIndex(null);
                                 setSourceDraft("");
                             }}
@@ -505,9 +581,9 @@ export default function PluginsSettings() {
                                 const index = editingSourceIndex;
                                 const value = sourceDraft.trim();
                                 if (!value) {
-                                    setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
+                                    updateGlobalSettings((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
                                 } else {
-                                    setState((current) => ({ ...current, sources: current.sources.map((source, currentIndex) => currentIndex === index ? value : source) }));
+                                    updateGlobalSettings((current) => ({ ...current, sources: current.sources.map((source, currentIndex) => currentIndex === index ? value : source) }));
                                 }
                                 setEditingSourceIndex(null);
                                 setSourceDraft("");
@@ -546,7 +622,7 @@ export default function PluginsSettings() {
                                 setHostDraft(state.allowedSourceHosts[index] || "");
                             }}
                             onDelete={(index) => {
-                                setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
+                                updateGlobalSettings((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
                                 setEditingHostIndex(null);
                                 setHostDraft("");
                             }}
@@ -556,9 +632,9 @@ export default function PluginsSettings() {
                                 const index = editingHostIndex;
                                 const value = hostDraft.trim();
                                 if (!value) {
-                                    setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
+                                    updateGlobalSettings((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.filter((_, currentIndex) => currentIndex !== index) }));
                                 } else {
-                                    setState((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.map((host, currentIndex) => currentIndex === index ? value : host) }));
+                                    updateGlobalSettings((current) => ({ ...current, allowedSourceHosts: current.allowedSourceHosts.map((host, currentIndex) => currentIndex === index ? value : host) }));
                                 }
                                 setEditingHostIndex(null);
                                 setHostDraft("");
@@ -577,27 +653,27 @@ export default function PluginsSettings() {
                         label={t("plugins.network_label")}
                         description={t("plugins.network_description")}
                         currentValue={state.allowNetworkPackages}
-                        onChange={(value) => setState((current) => ({ ...current, allowNetworkPackages: value }))}
+                        onChange={(value) => updateGlobalSettings((current) => ({ ...current, allowNetworkPackages: value }))}
                     />
                     <OptionsRowWithToggle
                         name="community-package-check-updates"
                         label={t("plugins.check_updates_label")}
                         description={t("plugins.check_updates_description")}
                         currentValue={state.checkForUpdates}
-                        onChange={(value) => setState((current) => ({ ...current, checkForUpdates: value }))}
+                        onChange={(value) => updateGlobalSettings((current) => ({ ...current, checkForUpdates: value }))}
                     />
                     <OptionsRowWithToggle
                         name="community-package-include-deprecated"
                         label={t("plugins.include_deprecated_label")}
                         description={t("plugins.include_deprecated_description")}
                         currentValue={state.includeDeprecatedPackages}
-                        onChange={(value) => setState((current) => ({ ...current, includeDeprecatedPackages: value }))}
+                        onChange={(value) => updateGlobalSettings((current) => ({ ...current, includeDeprecatedPackages: value }))}
                     />
                     <OptionsRow name="community-package-update-interval" label={t("plugins.interval_label")} description={t("plugins.interval_description")}>
                         <FormTextBox
                             type="number"
                             currentValue={String(state.updateCheckIntervalHours)}
-                            onChange={(value) => setState((current) => ({ ...current, updateCheckIntervalHours: Math.max(1, Number(value) || 24) }))}
+                            onChange={(value) => updateGlobalSettings((current) => ({ ...current, updateCheckIntervalHours: Math.max(1, Number(value) || 24) }))}
                         />
                     </OptionsRow>
                     <OptionsRowWithButton
@@ -772,6 +848,36 @@ export function parseRegistryUrls(value: string | null | undefined) {
 
 export function normalizePluginSources(sources: string[]) {
     return [...new Set(sources.map((source) => source.trim()).filter(Boolean))];
+}
+
+export function parseCachedPackageManifest(value: string | null | undefined): CatalogPackage | undefined {
+    if (!value) return undefined;
+    try {
+        const entry = JSON.parse(value) as RawCatalogPackage;
+        if (!isCatalogPackageEntry(entry)) return undefined;
+        return {
+            id: entry.id!,
+            name: entry.name!,
+            description: entry.description || "",
+            version: entry.version!,
+            permissions: Array.isArray(entry.permissions) ? entry.permissions.filter((permission): permission is string => typeof permission === "string") : [],
+            settings: Array.isArray(entry.settings) ? entry.settings.filter(isPackageSettingDefinition) : [],
+            artifacts: Array.isArray(entry.artifacts) ? entry.artifacts.filter(isPackageArtifact) : [],
+            dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.filter(isPackageDependency) : [],
+            compatibility: isPackageCompatibility(entry.compatibility) ? entry.compatibility : null,
+            author: entry.author,
+            maintainer: entry.maintainer,
+            homepage: entry.homepage,
+            license: entry.license,
+            deprecated: entry.deprecated,
+            deprecationMessage: entry.deprecationMessage,
+            maintenance: entry.maintenance,
+            securityStatus: entry.securityStatus,
+            lastValidatedAt: entry.lastValidatedAt
+        };
+    } catch {
+        return undefined;
+    }
 }
 
 export function parseSourceHosts(value: string | null | undefined) {

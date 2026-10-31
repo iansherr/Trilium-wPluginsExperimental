@@ -1,5 +1,6 @@
 import { BBranch, becca, becca_easy_mocking } from "@triliumnext/core";
 import { cls } from "@triliumnext/core";
+import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { buildNote } = becca_easy_mocking;
@@ -140,6 +141,16 @@ describe("transpile", () => {
     it("passes .js files through unchanged", () => {
         const source = `const x = 1;`;
         expect(transpile(source, "test.js")).toBe(source);
+    });
+
+    it("keeps local folder installation self-contained when deploying the Render Note", async () => {
+        const source = await readFile(new URL("../../client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
+        const deployed = transpile(source, "community-packages.tsx");
+
+        expect(deployed).toContain("Install from local folder");
+        expect(deployed).toContain("function readLocalPackageDirectory(files)");
+        expect(deployed).toContain("resolveLocalPackageArtifact(artifact.source, manifest._localPackageFiles)");
+        expect(deployed).not.toContain("./local_package_files.js");
     });
 });
 
