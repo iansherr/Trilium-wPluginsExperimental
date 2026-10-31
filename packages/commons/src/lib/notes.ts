@@ -62,6 +62,15 @@ export const CANVAS_ATTACHMENT_MIME = "application/vnd.excalidraw+json";
 /** The title of the attachment a new canvas drawing is saved in. */
 export const CANVAS_ATTACHMENT_TITLE = "Canvas.excalidraw";
 
+/**
+ * The title of the SVG image attachment that holds the picture of the canvas drawing saved in
+ * attachment `attachmentId`. The note that owns the drawing owns the picture, and shared pages show
+ * the picture in place of the drawing.
+ */
+export function getDrawingPictureTitle(attachmentId: string) {
+    return `${attachmentId}.svg`;
+}
+
 /** The content of a new, empty canvas drawing. */
 export const EMPTY_CANVAS_CONTENT = JSON.stringify({
     type: "excalidraw",
@@ -70,6 +79,23 @@ export const EMPTY_CANVAS_CONTENT = JSON.stringify({
     files: {},
     appState: {}
 });
+
+/** The media type of a Mermaid diagram saved in an attachment, such as one in a text note. */
+export const MERMAID_ATTACHMENT_MIME = "text/vnd.mermaid";
+
+/** The title of the attachment a new Mermaid diagram is saved in. */
+export const MERMAID_ATTACHMENT_TITLE = "Diagram.mmd";
+
+/** The content of a new Mermaid diagram. */
+export const NEW_MERMAID_CONTENT = "flowchart LR\n    A --> B\n";
+
+/**
+ * The media type of a file attached under `fileName`: {@link CANVAS_ATTACHMENT_MIME} for an
+ * Excalidraw file, so that it shows as a canvas drawing, else `mime`.
+ */
+export function getAttachedFileMime(fileName: string, mime: string) {
+    return fileName.toLowerCase().endsWith(".excalidraw") ? CANVAS_ATTACHMENT_MIME : mime;
+}
 
 /**
  * The note a mind map node's link points at, or `null` where it points somewhere else entirely.
@@ -105,7 +131,8 @@ const FILE_MIME_MAPPINGS: Record<string, string> = {
     "application/vnd.oasis.opendocument.spreadsheet": "bx bx-spreadsheet",
     "application/vnd.ms-excel": "bx bx-spreadsheet",
     "text/csv": "bx bx-spreadsheet",
-    [CANVAS_ATTACHMENT_MIME]: NOTE_TYPE_ICONS.canvas
+    [CANVAS_ATTACHMENT_MIME]: NOTE_TYPE_ICONS.canvas,
+    [MERMAID_ATTACHMENT_MIME]: NOTE_TYPE_ICONS.mermaid
 };
 
 const IMAGE_MIME_MAPPINGS: Record<string, string> = {
@@ -135,6 +162,27 @@ export const GEO_SHAPE_ICONS: Record<string, string> = {
 };
 
 /**
+ * The icon of a note made by the web clipper or the PWA share target, keyed by its `#clipType`
+ * label.
+ */
+export const CLIP_TYPE_ICONS: ReadonlyMap<string, string> = new Map([
+    [ "clippings", "bx bx-paperclip" ],
+    [ "page", "bx bx-globe" ],
+    [ "note", "bx bx-bookmark" ],
+    [ "tabs", "bx bx-window-alt" ],
+    [ "share", "bx bx-share" ]
+]);
+
+/** The icon of a calendar event, a text note with a start date (see {@link getEventStartDate}). */
+export const CALENDAR_EVENT_ICON = "bx bx-calendar-event";
+
+/** The label on a note created by the "Record meeting" launcher. It has no value. */
+export const MEETING_RECORDING_LABEL = "meetingRecording";
+
+/** The icon of a note carrying {@link MEETING_RECORDING_LABEL}. */
+export const MEETING_RECORDING_ICON = "bx bx-conversation";
+
+/**
  * The icon a note is drawn under: its own `#iconClass` where it has one, and a default read off
  * what the note is otherwise.
  *
@@ -143,7 +191,10 @@ export const GEO_SHAPE_ICONS: Record<string, string> = {
  * The geo map therefore writes no `#iconClass` onto a marker or a shape it creates, so an icon it
  * hands down through
  * `#child:iconClass` or a template still applies, and redrawing a shape as another kind changes the
- * icon with it. `iconClass` stays an argument rather than being read here because the share tree
+ * icon with it. A note the web clipper made is drawn by its `#clipType` ({@link CLIP_TYPE_ICONS}),
+ * a recorded meeting by {@link MEETING_RECORDING_ICON}, and a calendar event by
+ * {@link CALENDAR_EVENT_ICON}.
+ * `iconClass` stays an argument rather than being read here because the share tree
  * narrows it to the prefixes an icon pack supplies.
  */
 export function getNoteIcon({
@@ -177,6 +228,16 @@ export function getNoteIcon({
         if (shape) {
             return GEO_SHAPE_ICONS[shape.split(":", 1)[0]] ?? GEO_SHAPE_ICONS.line;
         }
+        const clipIcon = CLIP_TYPE_ICONS.get(getLabelValue("clipType") ?? "");
+        if (clipIcon) {
+            return clipIcon;
+        }
+        if (getLabelValue(MEETING_RECORDING_LABEL) !== null) {
+            return MEETING_RECORDING_ICON;
+        }
+        if (getEventStartDate(getLabelValue)) {
+            return CALENDAR_EVENT_ICON;
+        }
         if (isFolder()) {
             return "bx bx-folder";
         }
@@ -190,6 +251,15 @@ export function getNoteIcon({
     }
 
     return NOTE_TYPE_ICONS[type];
+}
+
+/**
+ * The start date of a calendar event: the value of the label `#calendar:startDate` names, falling
+ * back to `#startDate`, as the calendar collection reads it.
+ */
+export function getEventStartDate(getLabelValue: (name: string) => string | null) {
+    const customLabelName = getLabelValue("calendar:startDate");
+    return (customLabelName && getLabelValue(customLabelName)) || getLabelValue("startDate");
 }
 
 /**
@@ -253,6 +323,7 @@ export function getNoteContentType(type: string, mime: string, hasIconPackLabel:
 export function getFileContentType(type: string, mime: string) {
     if (type === "file" && mime === "application/pdf") return "pdf";
     if (type === "file" && mime === CANVAS_ATTACHMENT_MIME) return "canvasDrawing";
+    if (type === "file" && mime === MERMAID_ATTACHMENT_MIME) return "mermaidDiagram";
     if ((type === "file" || type === "viewConfig") && mime === "application/json") return "code";
     if (type === "file" && mime.startsWith("audio/")) return "audio";
     if (type === "file" && mime.startsWith("video/")) return "video";
@@ -271,10 +342,10 @@ export const CONTENT_RENDERER_GROUPS: Readonly<Record<string, string>> = {
     markdown: "markdown",
     image: "image",
     canvasDrawing: "file",
+    mermaidDiagram: "file",
     pdf: "file",
     audio: "file",
     video: "file",
-    mermaid: "mermaid",
     render: "render",
     webView: "webView",
     llmChat: "llmChat"

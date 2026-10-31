@@ -1,20 +1,34 @@
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Component from "../../../components/component";
 import type NoteContext from "../../../components/note_context";
 import type FAttachment from "../../../entities/fattachment";
 import type FNote from "../../../entities/fnote";
-import type { AttachmentEditor, NoteEditor } from "../../../services/content_renderer";
+import {
+    type AttachmentEditor, bindAttachmentEditor, type NoteEditor
+} from "../../../services/content_renderer";
 import { ParentComponent } from "../../react/react_utils";
-import AttachmentSaves, { NoteSaves, useAttachmentEditor, useNoteEditor } from "./attachment_saves";
+import AttachmentSaves, {
+    InlineSourceSaves, NoteSaves, useAttachmentEditor, useNoteEditor
+} from "./attachment_saves";
 
 const serverPost = vi.hoisted(() => vi.fn(async () => undefined));
 const serverPut = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../../../services/server", () => ({
     default: { get: async () => [], post: serverPost, put: serverPut }
 }));
+
+const frocaNotes = vi.hoisted((): Record<string, unknown> => ({}));
+vi.mock("../../../services/froca", () => ({ default: { notes: frocaNotes } }));
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    for (const noteId of [ "note1", "code1" ]) {
+        frocaNotes[noteId] = {};
+    }
+});
 
 const drawing = {
     attachmentId: "drawing1",
@@ -25,10 +39,10 @@ const drawing = {
 } as FAttachment;
 
 function setUp() {
-    const scheduleUpdate = vi.fn();
-    const saves = new AttachmentSaves(scheduleUpdate);
+    const update = { scheduleUpdate: vi.fn(), resetUpdateTimer: vi.fn() };
+    const saves = new AttachmentSaves(() => update);
     saves.setNoteId("note1");
-    return { saves, scheduleUpdate };
+    return { saves, update };
 }
 
 describe("AttachmentSaves", () => {
@@ -43,13 +57,13 @@ describe("AttachmentSaves", () => {
     });
 
     it("schedules a save and reads the content when the note saves", () => {
-        const { saves, scheduleUpdate } = setUp();
+        const { saves, update } = setUp();
         let content = "first";
 
         saves.scheduleSave(drawing, () => content);
         content = "second";
 
-        expect(scheduleUpdate).toHaveBeenCalledOnce();
+        expect(update.scheduleUpdate).toHaveBeenCalledOnce();
         expect(saves.getUnsavedContent("drawing1")).toBe("second");
         expect(saves.collect()).toStrictEqual([ {
             attachmentId: "drawing1",
@@ -60,18 +74,31 @@ describe("AttachmentSaves", () => {
         } ]);
     });
 
-    it("keeps a change made while a save runs", () => {
+    it("postpones the save of the note, also through the editor of one attachment", () => {
+        const { saves, update } = setUp();
+
+        saves.postponeSave();
+        bindAttachmentEditor(saves, drawing).postponeSave?.();
+
+        expect(update.resetUpdateTimer).toHaveBeenCalledTimes(2);
+        expect(update.scheduleUpdate).not.toHaveBeenCalled();
+    });
+
+    it("keeps a change made while a save runs, and reports only the last change saved", () => {
         const { saves } = setUp();
-        saves.scheduleSave(drawing, () => "saved");
+        const onSaved = vi.fn();
+        saves.scheduleSave(drawing, () => "saved", onSaved);
         const sent = saves.collect();
 
-        saves.scheduleSave(drawing, () => "changed meanwhile");
+        saves.scheduleSave(drawing, () => "changed meanwhile", onSaved);
         saves.markSaved(sent);
         expect(saves.getUnsavedContent("drawing1")).toBe("changed meanwhile");
+        expect(onSaved).not.toHaveBeenCalled();
 
         saves.markSaved(saves.collect());
         expect(saves.getUnsavedContent("drawing1")).toBeUndefined();
         expect(saves.collect()).toStrictEqual([]);
+        expect(onSaved.mock.calls).toStrictEqual([ [ "changed meanwhile" ] ]);
     });
 
     it("ignores a save of other data", () => {
@@ -98,15 +125,25 @@ describe("AttachmentSaves", () => {
         expect(getContent).toHaveBeenCalledOnce();
     });
 
-    it("drops the changes when it saves another note", () => {
+    it("drops the changes when it saves another note, and reports the last one saved after", () => {
         const { saves } = setUp();
-        saves.scheduleSave(drawing, () => "unsaved");
+        const onSaved = vi.fn();
+        saves.scheduleSave(drawing, () => "first", onSaved);
 
         saves.setNoteId("note1");
-        expect(saves.getUnsavedContent("drawing1")).toBe("unsaved");
+        expect(saves.getUnsavedContent("drawing1")).toBe("first");
 
+        // The previous note saves both changes in the background after the switch.
+        const first = saves.collect();
+        saves.scheduleSave(drawing, () => "second", onSaved);
+        const second = saves.collect();
         saves.setNoteId("note2");
         expect(saves.getUnsavedContent("drawing1")).toBeUndefined();
+
+        saves.markSaved(first);
+        saves.markSaved(second);
+        saves.markSaved(second);
+        expect(onSaved.mock.calls).toStrictEqual([ [ "second" ] ]);
     });
 });
 
@@ -131,6 +168,10 @@ describe("useAttachmentEditor", () => {
         return null;
     }
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it("saves on its own before the note switches, and once the content goes away", async () => {
         component = new Component();
         const container = document.createElement("div");
@@ -138,6 +179,10 @@ describe("useAttachmentEditor", () => {
             render(h(ParentComponent.Provider, { value: component }, h(Probe, {})), container);
         });
         expect(editor?.canEdit(drawing)).toBe(true);
+        // Its saves send this component ID, so a drawing can skip the changes they report.
+        expect(editor?.componentId).toBe(component.componentId);
+        expect(editor && bindAttachmentEditor(editor, drawing).componentId)
+            .toBe(component.componentId);
 
         editor?.scheduleSave(drawing, () => "first");
         await act(async () => {
@@ -153,6 +198,56 @@ describe("useAttachmentEditor", () => {
         await act(() => render(null, container));
         expect(serverPost).toHaveBeenCalledTimes(2);
         expect(serverPost).toHaveBeenLastCalledWith(...savedRequest("second"));
+    });
+
+    it("drops the changes to a note deleted before they save", async () => {
+        component = new Component();
+        const container = document.createElement("div");
+        await act(() => {
+            render(h(ParentComponent.Provider, { value: component }, h(Probe, {})), container);
+        });
+
+        editor?.scheduleSave(drawing, () => "first");
+        delete frocaNotes.note1;
+        await act(async () => {
+            await component.handleEvent("beforeNoteSwitch", { noteContext } as never);
+        });
+        expect(serverPost).not.toHaveBeenCalled();
+        expect(editor?.getUnsavedContent("drawing1")).toBeUndefined();
+        expect(noteContext.setContextData).toHaveBeenLastCalledWith("saveState", { state: "saved" });
+        await act(() => render(null, container));
+    });
+
+    it("saves once the changes pause for a second, or 10 s after the first one", async () => {
+        vi.useFakeTimers();
+        serverPost.mockClear();
+        component = new Component();
+        const container = document.createElement("div");
+        await act(() => {
+            render(h(ParentComponent.Provider, { value: component }, h(Probe, {})), container);
+        });
+        // A stroke every 400 ms, which the drawing reports as it ends.
+        let strokes = 0;
+        const write = async (count: number) => {
+            for (let i = 0; i < count; i++) {
+                const content = `stroke ${++strokes}`;
+                editor?.postponeSave();
+                editor?.scheduleSave(drawing, () => content);
+                await vi.advanceTimersByTimeAsync(400);
+            }
+        };
+
+        await write(5);
+        expect(serverPost).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(serverPost).toHaveBeenCalledExactlyOnceWith(...savedRequest("stroke 5"));
+
+        await write(24);
+        expect(serverPost).toHaveBeenCalledOnce();
+        await write(2);
+        expect(serverPost).toHaveBeenCalledTimes(2);
+
+        await act(() => render(null, container));
     });
 });
 
@@ -276,5 +371,49 @@ describe("useNoteEditor", () => {
         expect(serverPut).toHaveBeenCalledTimes(2);
         expect(serverPut).toHaveBeenLastCalledWith(
             "notes/code1/data", { content: "second" }, component.componentId);
+    });
+
+    it("drops the change to a note deleted before it saves", async () => {
+        component = new Component();
+        const container = document.createElement("div");
+        await act(() => {
+            render(h(ParentComponent.Provider, { value: component }, h(Probe, {})), container);
+        });
+
+        editor?.scheduleSave(code, () => "first");
+        delete frocaNotes.code1;
+        await act(async () => {
+            await component.handleEvent("beforeNoteSwitch", { noteContext } as never);
+        });
+        expect(serverPut).not.toHaveBeenCalled();
+        expect(editor?.getUnsavedContent("code1")).toBeUndefined();
+        expect(editor?.getSaveState("code1")).toBe("saved");
+        await act(() => render(null, container));
+    });
+});
+
+describe("InlineSourceSaves", () => {
+    it("schedules a save for a held write, and makes the writes still held on flush", () => {
+        const scheduleUpdate = vi.fn();
+        const saves = new InlineSourceSaves(scheduleUpdate);
+        const made: string[] = [];
+        // Holds a write that, like an inline source, leaves `saves` once made.
+        const hold = (text: string) => {
+            const write = () => {
+                saves.delete(write);
+                made.push(text);
+            };
+            saves.add(write);
+            return write;
+        };
+
+        hold("a");
+        const written = hold("b");
+        written();
+        expect(scheduleUpdate).toHaveBeenCalledTimes(2);
+
+        saves.flush();
+        saves.flush();
+        expect(made).toEqual([ "b", "a" ]);
     });
 });

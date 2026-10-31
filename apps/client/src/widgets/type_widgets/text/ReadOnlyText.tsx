@@ -4,7 +4,18 @@ import "./ReadOnlyText.css";
 // (see https://github.com/zadam/trilium/issues/1590 for example of such conflict)
 import "@triliumnext/ckeditor5";
 
+import {
+    applyListItemAlignment
+} from "@triliumnext/ckeditor5/src/plugins/list_item_alignment_read_only.js";
+import { applyTableScroll } from "@triliumnext/ckeditor5/src/plugins/table_scroll_read_only.js";
+import {
+    applyStickyTableHeaders
+} from "@triliumnext/ckeditor5/src/plugins/table_sticky_header_read_only.js";
+import { CLASSES as TAB_CLASSES } from "@triliumnext/ckeditor5/src/plugins/tabs/constants.js";
 import { applyTabs } from "@triliumnext/ckeditor5/src/plugins/tabs/tabs_read_only.js";
+import {
+    EXTENDED_CODE_BLOCK_CLASS, EXTENDED_CODE_BLOCK_DEFAULT_LANGUAGE
+} from "@triliumnext/commons";
 import clsx from "clsx";
 import { Ref } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef as usePreactRef } from "preact/hooks";
@@ -13,12 +24,16 @@ import appContext from "../../../components/app_context";
 import FNote from "../../../entities/fnote";
 import { consumeBlockReference } from "../../../services/block_reference";
 import { consumeBookmark } from "../../../services/bookmark_jump";
-import { applyInlineMermaid, rewriteMermaidDiagramsInContainer } from "../../../services/content_renderer_text";
+import {
+    applyInlineMermaid, emptyUnknownEmbeds, rewriteMermaidDiagramsInContainer
+} from "../../../services/content_renderer_text";
 import { t } from "../../../services/i18n";
+import { applyNoteImageVersions } from "../../../services/image_urls";
 import { applyLinkEmbeds } from "../../../services/link_embed";
 import { renderMathInElement } from "../../../services/math";
 import { trackPendingRender } from "../../../services/pending_renders";
 import { consumeSearchTerms } from "../../../services/search_jump";
+import { getSourceEmbedTypeByLanguage } from "../../../services/source_embeds";
 import { formatCodeBlocks } from "../../../services/syntax_highlight";
 import { isContentRightToLeft } from "../../../utils/formatters";
 import {
@@ -26,11 +41,14 @@ import {
     useTriliumEvent, useTriliumOption, useTriliumOptionBool
 } from "../../react/hooks";
 import { RawHtmlBlock } from "../../react/RawHtml";
+import { mountScrollableLabel } from "../../react/ScrollableLabel";
 import { TypeWidgetProps } from "../type_widget";
 import { applyReferenceLinks } from "./read_only_helper";
 import {
     loadEmbeddedAttachment,
     loadEmbeddedNote,
+    loadInlineEmbed,
+    loadUnknownEmbed,
     refreshEmbeddedNote,
     setupImageOpening,
     watchContentEmbeds
@@ -42,13 +60,14 @@ export default function ReadOnlyText({ note, noteContext, ntxId, parentComponent
     // hidden while the user temporarily edits an auto-read-only note — would refetch the whole blob
     // after every save and flash the loading overlay over the editor (#10575). Skipped own-component
     // changes are caught up on via refreshOnShow when this view is displayed again.
+    const readOnlyContentRef = usePreactRef<HTMLDivElement>(null);
     const blob = useNoteBlob(note, parentComponent?.componentId, {
         reportLoadStateTo: noteContext,
         isVisible,
-        refreshOnShow: true
+        refreshOnShow: true,
+        shownRef: readOnlyContentRef
     });
     const { isRtl } = useNoteLanguage(note);
-    const readOnlyContentRef = usePreactRef<HTMLDivElement>(null);
     const renderedNoteIdRef = usePreactRef<string | undefined>(undefined);
 
     // Scroll to the bookmark or the blocks a link points at. The blob gate skips the mount run,
@@ -101,6 +120,11 @@ interface ReadOnlyTextContentProps {
     className?: string;
     /** Optional external ref to the rendered content div (e.g. to drive scroll sync). */
     contentRef?: Ref<HTMLDivElement>;
+    /**
+     * Whether `html` changes as it is typed or streamed. Mermaid diagrams then draw in place,
+     * keeping the last drawing while the next renders, instead of in an embed box each.
+     */
+    isChanging?: boolean;
 }
 
 /**
@@ -110,8 +134,10 @@ interface ReadOnlyTextContentProps {
  * whenever `html` changes.
  */
 export function ReadOnlyTextContent({
-    html, noteId, ntxId, dir, className, contentRef: externalContentRef
+    html, noteId, ntxId, dir, className, contentRef: externalContentRef, isChanging = false
 }: ReadOnlyTextContentProps) {
+    // Printing snapshots the page, before an embed box would have drawn its diagram.
+    const hasDiagramEmbeds = !isChanging && glob.device !== "print";
     const contentRef = useSyncedRef(externalContentRef);
     const [ codeBlockWordWrap ] = useTriliumOptionBool("codeBlockWordWrap");
     const [ codeBlockTabWidth ] = useTriliumOption("codeBlockTabWidth");
@@ -137,23 +163,53 @@ export function ReadOnlyTextContent({
         // simply paint when ready; a caller that snapshots the DOM instead (printing) has to wait for
         // them, so the work is registered rather than dropped on the floor.
         trackPendingRender(container, Promise.all([
-            rewriteMermaidDiagramsInContainer(container),
-            applyInlineMermaid(container),
+            // First, so that no other pass renders the content of these embeds.
+            applyUnknownEmbeds(container),
+            ...(hasDiagramEmbeds
+                ? [ applySourceEmbeds(container) ]
+                : [ rewriteMermaidDiagramsInContainer(container), applyInlineMermaid(container) ]),
             applyContentEmbeds(container),
             applyLinkEmbeds(container),
             applyReferenceLinks(container, noteId),
             formatCodeBlocks($(container))
         ]));
 
+        applyNoteImageVersions(container);
+        applyListItemAlignment(container);
+        const disposeTableScroll = applyTableScroll(container);
+        const disposeStickyTableHeaders = applyStickyTableHeaders(container);
         applyMath(container);
-        applyTabs(container, { placeholder: t("text-editor.ck.tab-title") });
+        const disposeTabs = applyTabs(container, {
+            placeholder: t("text-editor.ck.tab-title"),
+            scrollLabels: {
+                start: t("text-editor.ck.scroll-to-the-previous-tabs"),
+                end: t("text-editor.ck.scroll-to-the-next-tabs")
+            }
+        });
+        const tabTitles = container.querySelectorAll<HTMLElement>(`.${TAB_CLASSES.tabTitle}`);
+        const disposeTabTitles = [ ...tabTitles ]
+            .filter((title) => title.hasChildNodes())
+            .map((title) => mountScrollableLabel(title));
         setupImageOpening(container, true);
-    }, [ html, noteId, ntxId, contentRef ]);
+
+        return () => {
+            disposeTableScroll();
+            disposeStickyTableHeaders();
+            disposeTabs();
+            for (const dispose of disposeTabTitles) {
+                dispose();
+            }
+        };
+    }, [ html, noteId, ntxId, contentRef, hasDiagramEmbeds ]);
 
     useEffect(() => {
         if (!contentRef.current) return;
         return watchContentEmbeds(contentRef.current);
-    }, [ contentRef ]);
+    }, [ contentRef, hasDiagramEmbeds ]);
+
+    useTriliumEvent("entitiesReloaded", () => {
+        if (contentRef.current) applyNoteImageVersions(contentRef.current);
+    });
 
     // React to embedded note changes.
     useTriliumEvent("refreshEmbeddedNote", ({ noteId }) => {
@@ -169,6 +225,8 @@ export function ReadOnlyTextContent({
 
     return (
         <RawHtmlBlock
+            // The drawings in place replace the code blocks, which the embed boxes need again.
+            key={hasDiagramEmbeds ? "embeds" : "drawings"}
             containerRef={contentRef}
             className={clsx("note-detail-readonly-text-content ck-content use-tn-links selectable-text", codeBlockWordWrap && "word-wrap", className)}
             tabindex={100}
@@ -199,6 +257,69 @@ function applyContentEmbeds(container: HTMLDivElement) {
         } else if (noteId) {
             loaded.push(loadEmbeddedNote(noteId, $(embeddedNote), undefined, { block }));
         }
+    }
+    return Promise.all(loaded);
+}
+
+/** Shows each embed of a kind that this version does not know as the editor does: an error box. */
+function applyUnknownEmbeds(container: HTMLDivElement) {
+    return Promise.all(emptyUnknownEmbeds(container)
+        .map((box) => loadUnknownEmbed(box, box.dataset.boxSize)));
+}
+
+/**
+ * Shows each code block that keeps the source of an embed, such as a Mermaid diagram, in the embed
+ * box the editor shows it in, read-only.
+ */
+function applySourceEmbeds(container: HTMLDivElement) {
+    const loaded: Promise<unknown>[] = [];
+    for (const code of container.querySelectorAll<HTMLElement>("pre > code")) {
+        const pre = code.parentElement;
+        const codeLanguage = [ ...code.classList ]
+            .find((name) => name.startsWith("language-"))?.slice("language-".length);
+        const isDiagram = !!codeLanguage && !!getSourceEmbedTypeByLanguage(codeLanguage);
+        const isCodeBlock = !isDiagram && !!pre?.classList.contains(EXTENDED_CODE_BLOCK_CLASS);
+        if (!pre || (!isDiagram && !isCodeBlock)) continue;
+        const language = codeLanguage ?? EXTENDED_CODE_BLOCK_DEFAULT_LANGUAGE;
+
+        const figure = document.createElement("figure");
+        figure.className = clsx("include-note", isCodeBlock && EXTENDED_CODE_BLOCK_CLASS);
+        const {
+            boxSize, displayMode, codeWrapLines, codeLineNumbers, codeTabWidth, codeIndentWithTabs
+        } = pre.dataset;
+        const defaultBoxSize = isCodeBlock ? "full" : "medium";
+        figure.dataset.boxSize = boxSize === "small" || boxSize === "medium" || boxSize === "full"
+            ? boxSize
+            : defaultBoxSize;
+        figure.dataset.language = language;
+        const views = {
+            displayMode, codeWrapLines, codeLineNumbers, codeTabWidth, codeIndentWithTabs
+        };
+        for (const [ name, value ] of Object.entries(views)) {
+            if (value) {
+                figure.dataset[name] = value;
+            }
+        }
+        figure.dataset.hideTitle = "true";
+        // Diagrams saved before the embed keep their block ID on the `<code>`.
+        const blockId = pre.dataset.triliumBlockId ?? code.dataset.triliumBlockId;
+        if (blockId) {
+            figure.dataset.triliumBlockId = blockId;
+        }
+        const style = pre.getAttribute("style");
+        if (style) {
+            figure.setAttribute("style", style);
+        }
+        pre.replaceWith(figure);
+
+        const source = code.textContent;
+        loaded.push(loadInlineEmbed({
+            language,
+            getSource: () => source,
+            setSource: () => {},
+            subscribe: () => () => {},
+            isReadOnly: () => true
+        }, $(figure), figure.dataset.boxSize, { isFocused: false }));
     }
     return Promise.all(loaded);
 }

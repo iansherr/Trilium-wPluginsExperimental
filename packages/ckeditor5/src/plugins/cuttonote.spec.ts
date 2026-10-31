@@ -2,7 +2,10 @@ import {
     _getModelData as getModelData,
     _setModelData as setModelData,
     ClassicEditor,
+    CodeBlock,
     Essentials,
+    Indent,
+    IndentBlock,
     List,
     Paragraph,
     Table,
@@ -11,20 +14,21 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestEditor } from "../../test/editor-kit.js";
-import { installGlobMock } from "../../test/globals-test-kit.js";
+import ClipboardPlainTextIndent from "./clipboard_plain_text_indent.js";
 import CutToNotePlugin from "./cuttonote.js";
 
 describe("CutToNotePlugin", () => {
     let editor: ClassicEditor;
-    let triggerCommand: ReturnType<typeof vi.fn>;
+    let cut: ReturnType<typeof vi.fn>;
+    let saveNow: ReturnType<typeof vi.fn>;
 
     beforeEach(async () => {
-        triggerCommand = vi.fn();
-        installGlobMock({
-            getComponentByEl: () => ({ triggerCommand })
-        });
+        cut = vi.fn();
+        saveNow = vi.fn(async () => undefined);
 
-        editor = await createTestEditor([Essentials, Paragraph, CutToNotePlugin]);
+        editor = await createTestEditor([Essentials, Paragraph, CutToNotePlugin], {
+            cutToNote: { cut, saveNow }
+        });
     });
 
     it("loads the plugin and registers the toolbar button", () => {
@@ -37,10 +41,10 @@ describe("CutToNotePlugin", () => {
         expect(view.label).toBe("Cut selection into a sub-note");
     });
 
-    it("triggers the cutIntoNote command on the Trilium component when the button is executed", () => {
+    it("has the host cut the selection into a note when the button is executed", () => {
         const view = editor.ui.componentFactory.create("cutToNote") as { fire(name: string): void };
         view.fire("execute");
-        expect(triggerCommand).toHaveBeenCalledWith("cutIntoNote");
+        expect(cut).toHaveBeenCalledOnce();
     });
 
     it("augments the editor with getSelectedHtml that serializes the selected content", () => {
@@ -89,6 +93,13 @@ describe("CutToNotePlugin", () => {
         expect(editor.getSelectedPlainText()).toBe("bar");
     });
 
+    it("keeps block indentation in getSelectedPlainText, as a native copy does", async () => {
+        const indentEditor = await createTestEditor([Essentials, Paragraph, Indent, IndentBlock, CutToNotePlugin]);
+        setModelData(indentEditor.model, `<paragraph>[One</paragraph><paragraph blockIndent="80px">Two]</paragraph>`);
+
+        expect(indentEditor.getSelectedPlainText()).toBe("One\n\n\t\tTwo");
+    });
+
     it("pasteContent runs the given flavors through the clipboard paste pipeline", () => {
         setModelData(editor.model, "<paragraph>a[]b</paragraph>");
         editor.pasteContent("<span>X</span>", "X");
@@ -103,6 +114,27 @@ describe("CutToNotePlugin", () => {
         setModelData(editor.model, "<paragraph>e[]f</paragraph>");
         editor.pasteContent("", "");
         expect(editor.getData()).toContain("ef");
+    });
+
+    describe("pasteContent hands the flavors to the paste listeners, as a native paste does", () => {
+        let pasteEditor: ClassicEditor;
+
+        beforeEach(async () => {
+            pasteEditor = await createTestEditor([
+                Essentials, Paragraph, Indent, IndentBlock, CodeBlock, ClipboardPlainTextIndent, CutToNotePlugin
+            ]);
+        });
+
+        it("indents plain text led by tabs", () => {
+            pasteEditor.pasteContent("", "\tIndented");
+            expect(pasteEditor.getData()).toBe(`<p style="margin-left:40px;">Indented</p>`);
+        });
+
+        it("pastes plain text into a code block", () => {
+            setModelData(pasteEditor.model, `<codeBlock language="plaintext">[]</codeBlock>`);
+            pasteEditor.pasteContent("", "\tfoo");
+            expect(pasteEditor.getData()).toBe(`<pre><code class="language-plaintext">\tfoo</code></pre>`);
+        });
     });
 
     describe("capturePasteTarget", () => {
@@ -292,7 +324,7 @@ describe("CutToNotePlugin", () => {
 
         expect(editor.getData()).not.toContain("bar");
         expect(editor.getData()).toContain("foobaz");
-        expect(triggerCommand).toHaveBeenCalledWith("saveNoteDetailNow");
+        expect(saveNow).toHaveBeenCalledOnce();
     });
 
     it("removeSelection on a collapsed selection still inserts a paragraph and saves", async () => {
@@ -301,7 +333,17 @@ describe("CutToNotePlugin", () => {
         await editor.removeSelection();
 
         expect(editor.getData()).toContain("foobar");
-        expect(triggerCommand).toHaveBeenCalledWith("saveNoteDetailNow");
+        expect(saveNow).toHaveBeenCalledOnce();
+    });
+
+    it("removes the selection without the cutToNote config entry, and cuts nothing", async () => {
+        const plainEditor = await createTestEditor([Essentials, Paragraph, CutToNotePlugin]);
+        setModelData(plainEditor.model, "<paragraph>foo[bar]baz</paragraph>");
+
+        const view = plainEditor.ui.componentFactory.create("cutToNote") as { fire(name: string): void };
+        expect(() => view.fire("execute")).not.toThrow();
+        await plainEditor.removeSelection();
+        expect(plainEditor.getData()).toContain("foobaz");
     });
 });
 

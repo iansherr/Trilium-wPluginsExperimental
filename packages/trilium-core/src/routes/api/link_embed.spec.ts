@@ -13,7 +13,7 @@ const safeFetch = vi.hoisted(() => vi.fn());
 const saveImageToAttachment = vi.hoisted(() => vi.fn());
 const awaitImageWrite = vi.hoisted(() => vi.fn(async () => {}));
 
-import linkEmbedRoute from "./link_embed.js";
+import linkEmbedRoute, { storeFavicon } from "./link_embed.js";
 
 let attachmentCounter = 0;
 
@@ -124,6 +124,12 @@ async function makePng(width: number, height: number, color: number) {
     return Buffer.from(await image.getBuffer("image/png"));
 }
 
+/** A real JPEG, with the size in its header that the YouTube thumbnail checks read. */
+async function makeJpeg(width: number, height: number) {
+    const image = new Jimp({ width, height, color: 0x336699ff });
+    return Buffer.from(await image.getBuffer("image/jpeg"));
+}
+
 /**
  * A PNG that is genuinely large, for the ceilings that are about bytes rather than pixels.
  *
@@ -227,6 +233,80 @@ describe("link-embed getMetadata", () => {
         expect(result.favicon).toMatch(/^api\/attachments\/att\d+\/image\/www\.youtube\.com\.ico$/);
     });
 
+    describe("YouTube thumbnails", () => {
+        type ThumbnailName = "maxresdefault" | "sddefault" | "hqdefault";
+
+        /** Serves the given thumbnail sizes of the video, and a 404 for every other address. */
+        function serveThumbnails(thumbnails: Partial<Record<ThumbnailName, Buffer>>) {
+            safeFetch.mockImplementation(async (url: string) => {
+                for (const [ name, bytes ] of Object.entries(thumbnails)) {
+                    if (url === `https://i.ytimg.com/vi/dQw4w9WgXcQ/${name}.jpg`) {
+                        return fakeResponse(bytes, { contentType: "image/jpeg" });
+                    }
+                }
+                return fakeResponse("", { ok: false });
+            });
+        }
+
+        /** The cover stored by a fresh preview of the video. */
+        async function coverOf() {
+            safeFetch.mockClear();
+            saveImageToAttachment.mockClear();
+            await linkEmbedRoute.getMetadata(req("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+            return stored("coverImage");
+        }
+
+        it("keeps the 1280x720 thumbnail as served, named by the video ID", async () => {
+            const hd = await makeJpeg(1280, 720);
+            serveThumbnails({
+                maxresdefault: hd,
+                sddefault: await makeJpeg(640, 480),
+                hqdefault: await makeJpeg(480, 360)
+            });
+
+            const cover = await coverOf();
+            expect(cover?.fileName).toBe("youtube-dQw4w9WgXcQ.jpg");
+            expect(cover?.buffer.equals(hd)).toBe(true);
+
+            const requested = safeFetch.mock.calls.map(([ url ]) => String(url));
+            expect(requested.filter((url) => /sddefault|hqdefault/.test(url))).toEqual([]);
+        });
+
+        it("steps down when a larger thumbnail is missing, too small or too large", async () => {
+            const sd = await makeJpeg(640, 480);
+
+            serveThumbnails({ sddefault: sd });
+            expect((await coverOf())?.buffer.equals(sd)).toBe(true);
+
+            // The 120x90 placeholder YouTube serves for a missing size.
+            serveThumbnails({ maxresdefault: await makeJpeg(120, 90), sddefault: sd });
+            expect((await coverOf())?.buffer.equals(sd)).toBe(true);
+
+            // A valid JPEG padded past the 300KB cap.
+            const oversized = Buffer.concat([
+                await makeJpeg(1280, 720),
+                Buffer.alloc(300 * 1024)
+            ]);
+            serveThumbnails({ maxresdefault: oversized, sddefault: sd });
+            expect((await coverOf())?.buffer.equals(sd)).toBe(true);
+
+            const hq = await makeJpeg(480, 360);
+            serveThumbnails({ hqdefault: hq });
+            expect((await coverOf())?.buffer.equals(hq)).toBe(true);
+
+            serveThumbnails({});
+            expect(await coverOf()).toBeUndefined();
+        });
+
+        it("keeps a thumbnail over the verbatim cap where nothing can decode it", async () => {
+            installResizer(noResizer);
+            const hd = Buffer.concat([ await makeJpeg(1280, 720), Buffer.alloc(150 * 1024) ]);
+            serveThumbnails({ maxresdefault: hd });
+
+            expect((await coverOf())?.buffer.equals(hd)).toBe(true);
+        });
+    });
+
     it("parses OpenGraph metadata from an HTML page", async () => {
         const html = `<html><head>
             <meta property="og:title" content="OG Title">
@@ -249,8 +329,8 @@ describe("link-embed getMetadata", () => {
         expect(result.siteName).toBe("Example");
         // Stored, not hotlinked; opaque, so re-encoded as JPEG. Named after the page it is a
         // picture of, which is what a second paste of the same URL reuses it by.
-        expect(stored("coverImage")?.fileName).toMatch(/^example\.com-page-[0-9a-f]{8}\.jpeg$/);
-        expect(result.image).toMatch(/^api\/attachments\/att\d+\/image\/example\.com-page-[0-9a-f]{8}\.jpeg$/);
+        expect(stored("coverImage")?.fileName).toMatch(/^example\.com-page-[0-9a-f]{8}\.jpg$/);
+        expect(result.image).toMatch(/^api\/attachments\/att\d+\/image\/example\.com-page-[0-9a-f]{8}\.jpg$/);
     });
 
     it("resolves a relative og:image against the page URL before downloading it", async () => {
@@ -306,7 +386,7 @@ describe("link-embed getMetadata", () => {
             serveImage({ payload: await makePng(1024, 512, 0x00ff00ff), contentType: "image/png" });
 
             const image = await imageOf();
-            expect(image?.fileName).toMatch(/\.jpeg$/);
+            expect(image?.fileName).toMatch(/\.jpg$/);
 
             const decoded = await Jimp.read(image?.buffer ?? Buffer.alloc(0));
             expect(decoded.bitmap.width).toBe(256);
@@ -817,10 +897,12 @@ describe("link-embed getMetadata", () => {
     });
 
     it("sets no title or thumbnail override when oEmbed answers with an empty payload", async () => {
-        const thumb = await makePng(120, 90, 0xff0000ff);
+        const thumb = await makeJpeg(1280, 720);
         safeFetch.mockImplementation(async (url: string) => {
             if (url.includes("oembed")) return fakeResponse("", { json: {} });
-            if (url.includes("hqdefault.jpg")) return fakeResponse(thumb, { contentType: "image/jpeg" });
+            if (url.includes("maxresdefault.jpg")) {
+                return fakeResponse(thumb, { contentType: "image/jpeg" });
+            }
             if (url.includes("favicon")) return fakeResponse(makeIco(), { contentType: "image/x-icon" });
             return fakeResponse("", { ok: false });
         });
@@ -828,10 +910,10 @@ describe("link-embed getMetadata", () => {
         const result = await linkEmbedRoute.getMetadata(req("https://youtu.be/dQw4w9WgXcQ"));
         expect(result.embedType).toBe("youtube");
         // An empty payload is not an error: nothing throws, so the generic fallback title is not
-        // used either, and the thumbnail comes from the conventional hqdefault URL.
+        // used either. The thumbnail does not depend on oEmbed.
         expect(result.title).toBeUndefined();
         expect(result.description).toBeUndefined();
-        expect(stored("coverImage")?.fileName).toMatch(/\.jpeg$/);
+        expect(stored("coverImage")?.fileName).toMatch(/\.jpg$/);
     });
 
     it("ignores meta tags whose content is empty, falling back to the document title", async () => {
@@ -910,5 +992,47 @@ describe("link-embed getMetadata", () => {
         const result = await linkEmbedRoute.getMetadata(req("https://example.com/page"));
         expect(result.title).toBe("Plain");
         expect(result.favicon).toBeUndefined();
+    });
+});
+
+describe("storeFavicon", () => {
+    it("stores a favicon the caller holds, trimmed and named after the site", async () => {
+        const fat = makeMultiSizeIco([
+            { edge: 16, bytes: 1128 },
+            { edge: 48, bytes: 9640 },
+            { edge: 256, bytes: 70000 }
+        ]);
+
+        const url = await storeFavicon("note1", "https://www.example.com/page", fat);
+
+        expect(url).toMatch(/^api\/attachments\/att\d+\/image\/www\.example\.com\.ico$/);
+        expect(saveImageToAttachment.mock.calls[0]?.[0]).toBe("note1");
+        expect(stored("favicon")?.buffer.byteLength).toBe(22 + 9640);
+        expect(awaitImageWrite).toHaveBeenCalledWith("att1");
+    });
+
+    it("stores the PNG inside a one-picture icon as a PNG", async () => {
+        // Browsers re-encode a favicon into such a file, writing 0 (256) as its size whatever the
+        // PNG holds, and Chromium then draws nothing.
+        const png = Buffer.from(await new Jimp({ width: 48, height: 48, color: 0xff0000ff }).getBuffer("image/png"));
+        const directory = Buffer.alloc(22);
+        directory.writeUInt16LE(1, 2);
+        directory.writeUInt16LE(1, 4);
+        directory.writeUInt32LE(png.byteLength, 14);
+        directory.writeUInt32LE(directory.byteLength, 18);
+
+        const url = await storeFavicon("note1", "https://example.com/", Buffer.concat([ directory, png ]));
+
+        expect(url).toMatch(/\/image\/example\.com\.png$/);
+        expect(stored("favicon")?.buffer.equals(png)).toBe(true);
+    });
+
+    it("stores nothing for bytes that are not a picture or too large", async () => {
+        const huge = makeMultiSizeIco([ { edge: 256, bytes: 100 * 1024 } ]);
+
+        for (const bytes of [ Buffer.from("<html>Not found</html>"), huge ]) {
+            expect(await storeFavicon("note1", "https://example.com/", bytes)).toBeUndefined();
+        }
+        expect(saveImageToAttachment).not.toHaveBeenCalled();
     });
 });

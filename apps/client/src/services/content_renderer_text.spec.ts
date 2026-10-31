@@ -2,7 +2,9 @@
 // DOMPurify relies on browser-faithful DOM traversal (NodeIterator); happy-dom
 // mishandles it and strips valid markup (surfaced by dompurify 3.4.8). Run the
 // sanitization-dependent specs under jsdom, which matches real-browser behavior.
-import { KATEX_MACROS, trimIndentation } from "@triliumnext/commons";
+import {
+    KATEX_MACROS, MULTICOLUMN_COLUMN_CLASS, MULTICOLUMN_LAYOUT_CLASS, trimIndentation
+} from "@triliumnext/commons";
 import DOMPurify from "dompurify";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,8 +53,23 @@ vi.mock("./math.js", async (importOriginal) => {
     };
 });
 
+const disposeStickyTableHeaders = vi.hoisted(() => vi.fn());
+const applyStickyTableHeaders = vi.hoisted(() => vi.fn(() => disposeStickyTableHeaders));
+vi.mock("@triliumnext/ckeditor5/src/plugins/table_sticky_header_read_only.js", () => ({
+    applyStickyTableHeaders
+}));
+
+// jsdom has no `ResizeObserver`.
+const scrollFade = vi.hoisted(() => ({ measure: vi.fn(), disconnect: vi.fn() }));
+const watchScrollFade = vi.hoisted(() => vi.fn(() => scrollFade));
+vi.mock("@triliumnext/commons/src/lib/scroll_fade.js", async (importOriginal) => ({
+    ...await importOriginal<object>(),
+    watchScrollFade
+}));
+
 import renderText, {
     applyInlineMermaid,
+    emptyUnknownEmbeds,
     postProcessRichContent,
     renderChildrenList,
     renderTextContent,
@@ -264,6 +281,50 @@ describe("Text content renderer", () => {
         const emptied = document.createElement("div");
         await renderTextContent(note, "<p>&nbsp;</p>", $(emptied));
         expect(emptied.querySelector("a")?.textContent).toBe("Child note");
+    });
+
+    it("sizes the tables for scrolling and keeps their header rows in view", async () => {
+        const note = buildNote({ title: "Tables" });
+        const table = `<figure class="table" style="width:800px;" data-trilium-block-id="t1">`
+            + "<table><tbody><tr><td>a</td></tr></tbody></table></figure>";
+        const tableWidth = (contentEl: HTMLElement) => contentEl
+            .querySelector<HTMLElement>(".ck-content > figure.table")
+            ?.style.getPropertyValue("--table-width");
+
+        const full = document.createElement("div");
+        await renderTextContent(note, table, $(full));
+        expect(tableWidth(full)).toBe("800px");
+        expect(applyStickyTableHeaders).toHaveBeenCalledWith(full.querySelector(".ck-content"));
+        expect(watchScrollFade).toHaveBeenCalledWith(full.querySelector("figure.table"),
+            expect.any(Function), { direction: "horizontal" });
+
+        // Both passes stop with the rest of the rendered content.
+        content_renderer.disposeInteractiveContent($(full));
+        expect(scrollFade.disconnect).toHaveBeenCalledTimes(1);
+        expect(disposeStickyTableHeaders).toHaveBeenCalledTimes(1);
+
+        // The excerpt of a table in one column of a layout has the table at its top level.
+        const excerpt = document.createElement("div");
+        const layout = `<div class="${MULTICOLUMN_LAYOUT_CLASS}">`
+            + `<div class="${MULTICOLUMN_COLUMN_CLASS}">${table}</div>`
+            + `<div class="${MULTICOLUMN_COLUMN_CLASS}"><p>Other</p></div></div>`;
+        await renderTextContent(note, layout, $(excerpt), { block: "t1" });
+        expect(tableWidth(excerpt)).toBe("800px");
+    });
+
+    it("marks the list items whose first paragraph is aligned, in text and Markdown", async () => {
+        const list = "<ul><li><p style=\"text-align:center;\">a</p></li><li>b</li></ul>";
+        const classes = (root: HTMLElement) =>
+            [ ...root.querySelectorAll("li") ].map((item) => item.className);
+
+        const text = document.createElement("div");
+        await renderTextContent(buildNote({ title: "Lists" }), list, $(text));
+        expect(classes(text)).toEqual([ "trilium-list-item-aligned-center", "" ]);
+
+        // The Markdown renderers run only `postProcessRichContent()` on their HTML.
+        const $markdown = $("<div>").append($("<div class=\"ck-content\">").html(list));
+        await postProcessRichContent(buildNote({ title: "Markdown" }), $markdown);
+        expect(classes($markdown[0])).toEqual([ "trilium-list-item-aligned-center", "" ]);
     });
 
     it("renders nothing for an empty note with no children when noChildrenList is set", async () => {
@@ -517,6 +578,34 @@ describe("renderContentEmbeds via postProcessRichContent", () => {
     });
 });
 
+describe("Embeds of an unknown kind", () => {
+    it("become empty include-note boxes, keeping only their kind, box size and block ID", () => {
+        const container = document.createElement("div");
+        container.innerHTML = `<section class="future" data-trilium-embed="note-card"`
+            + ` data-note-id="n1" data-box-size="small" data-trilium-block-id="b1"`
+            + ` style="color: red">`
+            + `<p>Fallback</p><section data-trilium-embed="nested"><p>Inner</p></section>`
+            + `</section><p>Text</p>`;
+
+        const boxes = emptyUnknownEmbeds(container);
+
+        expect(boxes).toEqual([ container.firstElementChild ]);
+        expect(container.innerHTML).toBe(`<section data-trilium-embed="note-card"`
+            + ` data-box-size="small" data-trilium-block-id="b1"`
+            + ` class="include-note unknown-content-embed"></section><p>Text</p>`);
+    });
+
+    it("show no fallback in rendered content", async () => {
+        const $rendered = $("<div>").append($('<div class="ck-content">').html(
+            `<section data-trilium-embed="note-card"><p>Fallback</p></section>`));
+
+        await postProcessRichContent(buildNote({ title: "Host" }), $rendered);
+
+        expect($rendered.find("section.include-note.unknown-content-embed").length).toBe(1);
+        expect($rendered.text()).not.toContain("Fallback");
+    });
+});
+
 describe("Attachment embeds", () => {
     it("renders an embedded attachment in place, and links to it one level down", async () => {
         const owner = buildNote({
@@ -545,6 +634,51 @@ describe("Attachment embeds", () => {
         expect(nestedEl.querySelector("section.include-note")).toBeNull();
         expect(nestedEl.querySelector("a.reference-link")?.getAttribute("href"))
             .toBe(`#root/${owner.noteId}?viewMode=attachments&attachmentId=embedPic`);
+    });
+
+    it("renders an embedded code file in the language and lines that its embed sets", async () => {
+        const owner = buildNote({
+            title: "Code owner",
+            content: `<figure class="include-note" data-attachment-id="embedCode"`
+                + ` data-code-language="text/x-sh" data-code-wrap-lines="true"`
+                + ` data-code-line-numbers="false">&nbsp;</figure>`
+        });
+        const attachment = new FAttachment(froca, {
+            attachmentId: "embedCode",
+            ownerId: owner.noteId,
+            role: "file",
+            mime: "text/plain",
+            title: "script.py",
+            dateModified: "",
+            utcDateModified: "",
+            utcDateScheduledForErasureSince: "",
+            contentLength: 0
+        });
+        attachment.getBlob = async () => null;
+        const getRenderedContent = vi.spyOn(content_renderer, "getRenderedContent");
+
+        await renderText(owner, $(document.createElement("div")));
+        expect(getRenderedContent).toHaveBeenCalledWith(
+            expect.objectContaining({ attachmentId: "embedCode" }),
+            { codeLanguage: "text/x-sh", isCodeWrapped: true, hasCodeLineNumbers: false }
+        );
+        getRenderedContent.mockRestore();
+    });
+
+    it("renders an embedded code note with the line numbers that its embed sets", async () => {
+        const code = buildNote({ title: "Script", type: "code", mime: "text/x-sh", content: "a" });
+        const owner = buildNote({
+            title: "Code note owner",
+            content: `<figure class="include-note" data-note-id="${code.noteId}"`
+                + ` data-code-line-numbers="false">&nbsp;</figure>`
+        });
+        const getRenderedContent = vi.spyOn(content_renderer, "getRenderedContent");
+
+        await renderText(owner, $(document.createElement("div")));
+        expect(getRenderedContent).toHaveBeenCalledWith(
+            code, expect.objectContaining({ hasCodeLineNumbers: false })
+        );
+        getRenderedContent.mockRestore();
     });
 
     it("leaves the embed of an attachment that cannot be loaded as it is", async () => {
@@ -631,18 +765,34 @@ describe("rewriteMermaidDiagramsInContainer", () => {
         const container = document.createElement("div");
         container.innerHTML = `<pre><code class="language-js">x</code></pre>`;
         await rewriteMermaidDiagramsInContainer(container);
-        expect(container.querySelector("div.mermaid-diagram")).toBeNull();
+        expect(container.querySelector("div.rendered-mermaid-diagram")).toBeNull();
         expect(container.querySelector("pre")).not.toBeNull();
     });
 
-    it("converts mermaid pre/code blocks into mermaid-diagram divs", async () => {
+    it("converts mermaid pre/code blocks into rendered-mermaid-diagram divs", async () => {
         const container = document.createElement("div");
         container.innerHTML = `<pre><code class="language-mermaid">graph TD;A--&gt;B;</code></pre>`;
         await rewriteMermaidDiagramsInContainer(container);
-        const div = container.querySelector("div.mermaid-diagram");
+        const div = container.querySelector("div.rendered-mermaid-diagram");
         expect(div).not.toBeNull();
         expect(div?.textContent).toContain("graph TD;");
+        expect(div?.hasAttribute("data-trilium-block-id")).toBe(false);
         expect(container.querySelector("pre")).toBeNull();
+    });
+
+    it("keeps the block ID of a code block on its diagram, for links to the block", async () => {
+        const container = document.createElement("div");
+        container.innerHTML = `<pre><code class="language-mermaid" data-trilium-block-id="d1">`
+            + `graph TD;A--&gt;B;</code></pre>`;
+        await rewriteMermaidDiagramsInContainer(container);
+        const diagram = container.querySelector("div.rendered-mermaid-diagram");
+        expect(diagram?.getAttribute("data-trilium-block-id")).toBe("d1");
+
+        container.innerHTML = `<pre data-box-size="medium" data-trilium-block-id="d2">`
+            + `<code class="language-mermaid">graph TD;A--&gt;B;</code></pre>`;
+        await rewriteMermaidDiagramsInContainer(container);
+        const embedDiagram = container.querySelector("div.rendered-mermaid-diagram");
+        expect(embedDiagram?.getAttribute("data-trilium-block-id")).toBe("d2");
     });
 
     it("uses an empty body when the code element is missing", async () => {
@@ -651,7 +801,7 @@ describe("rewriteMermaidDiagramsInContainer", () => {
         // rewritten div ends up with an empty body.
         container.innerHTML = `<pre><code class="language-mermaid"></code></pre>`;
         await rewriteMermaidDiagramsInContainer(container);
-        const div = container.querySelector("div.mermaid-diagram");
+        const div = container.querySelector("div.rendered-mermaid-diagram");
         expect(div).not.toBeNull();
         expect(div?.innerHTML).toBe("");
     });
@@ -667,7 +817,7 @@ describe("applyInlineMermaid", () => {
         const container = document.createElement("div");
         for (const source of sources) {
             const div = document.createElement("div");
-            div.className = "mermaid-diagram";
+            div.className = "rendered-mermaid-diagram";
             div.textContent = source;
             container.appendChild(div);
         }
@@ -685,7 +835,7 @@ describe("applyInlineMermaid", () => {
         const container = makeContainer(["graph A"]);
         await applyInlineMermaid(container);
         expect(mermaidInitialize).toHaveBeenCalledTimes(1);
-        const visible = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const visible = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         expect(visible.innerHTML).toBe("<svg>graph A</svg>");
         expect(visible.getAttribute("data-processed")).toBe("true");
     });
@@ -701,7 +851,7 @@ describe("applyInlineMermaid", () => {
         expect(renderCount).toBe(1);
 
         // Reset the visible node so we can observe the cached repaint.
-        const node = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const node = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         node.removeAttribute("data-processed");
         node.innerHTML = "graph CACHE";
         mermaidInitialize.mockClear();
@@ -720,7 +870,7 @@ describe("applyInlineMermaid", () => {
 
         // Edit the diagram source in place; the old SVG should be used as the
         // positional placeholder for the new (uncached) source.
-        const node = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const node = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         const previousSvg = node.innerHTML;
         node.textContent = "graph V2";
 
@@ -739,9 +889,9 @@ describe("applyInlineMermaid", () => {
         await applyInlineMermaid(container);
 
         // Remove the second diagram so its cached source must be evicted.
-        container.querySelectorAll("div.mermaid-diagram")[1].remove();
+        container.querySelectorAll("div.rendered-mermaid-diagram")[1].remove();
         // First node is now a cache hit (its source is unchanged); reset to verify.
-        const remaining = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const remaining = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         remaining.removeAttribute("data-processed");
         remaining.innerHTML = "graph KEEP";
 
@@ -757,7 +907,7 @@ describe("applyInlineMermaid", () => {
         };
         await applyInlineMermaid(container);
         expect(error).toHaveBeenCalled();
-        const node = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const node = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         // The failure is rendered into the node (not left as raw source), so it's
         // visible in the UI instead of swallowed to the console.
         expect(node.classList.contains("mermaid-error")).toBe(true);
@@ -774,7 +924,7 @@ describe("applyInlineMermaid", () => {
             return { svg: `<svg>${source}</svg>` };
         };
         await applyInlineMermaid(container);
-        const [ ok, bad ] = container.querySelectorAll<HTMLElement>("div.mermaid-diagram");
+        const [ ok, bad ] = container.querySelectorAll<HTMLElement>("div.rendered-mermaid-diagram");
         // The good diagram still renders; only the failing one shows the error.
         expect(ok.innerHTML).toBe("<svg>graph OK</svg>");
         expect(bad.classList.contains("mermaid-error")).toBe(true);
@@ -789,7 +939,7 @@ describe("applyInlineMermaid", () => {
 
         // Break the source: the stale render must not mask the failure — otherwise
         // the diagram looks fine until a full refresh.
-        const node = container.querySelector("div.mermaid-diagram") as HTMLElement;
+        const node = container.querySelector("div.rendered-mermaid-diagram") as HTMLElement;
         node.textContent = "graph BROKEN";
         mermaidRenderImpl = () => {
             throw new Error("still broken");
@@ -805,6 +955,49 @@ describe("applyInlineMermaid", () => {
         expect(node.classList.contains("mermaid-error")).toBe(false);
         expect(node.innerHTML).toBe("<svg>graph FIXED</svg>");
         error.mockRestore();
+    });
+});
+
+describe("Mermaid diagrams in rendered content", () => {
+    it("draws the diagrams of the content and of each embed once", async () => {
+        const renderedSources: string[] = [];
+        mermaidRenderImpl = (_id, source) => {
+            renderedSources.push(source);
+            return { svg: `<svg><text>drawn ${source}</text></svg>` };
+        };
+        const embeddedNote = buildNote({
+            title: "Embedded diagram",
+            content: `<pre><code class="language-mermaid">graph B</code></pre>`
+        });
+        const note = buildNote({
+            title: "Host diagram",
+            content: `<pre><code class="language-mermaid">graph A</code></pre>`
+                + `<section class="include-note" data-note-id="${embeddedNote.noteId}"`
+                + ` data-box-size="medium">&nbsp;</section>`
+        });
+        const contentEl = document.createElement("div");
+        await renderText(note, $(contentEl));
+
+        const diagrams = [ ...contentEl.querySelectorAll("div.rendered-mermaid-diagram") ];
+        expect(diagrams.map((diagram) => diagram.innerHTML)).toEqual([
+            "<svg><text>drawn graph A</text></svg>",
+            "<svg><text>drawn graph B</text></svg>"
+        ]);
+        expect(renderedSources.sort()).toEqual([ "graph A", "graph B" ]);
+    });
+
+    it("keeps the styles of a diagram in a trimmed preview", async () => {
+        mermaidRenderImpl = () => ({ svg: "<svg><style>.node { fill: red; }</style></svg>" });
+        const note = buildNote({ title: "Trimmed diagram" });
+        const $renderedContent = $("<div>").append($("<div class=\"ck-content\">").html(
+            `<pre><code class="language-mermaid">graph S</code></pre><style>li { }</style>`
+        ));
+
+        await postProcessRichContent(note, $renderedContent, { trim: true });
+
+        const styles = [ ...$renderedContent[0].querySelectorAll("style") ];
+        const styleParents = styles.map((style) => style.parentElement?.tagName.toLowerCase());
+        expect(styleParents).toEqual([ "svg" ]);
     });
 });
 

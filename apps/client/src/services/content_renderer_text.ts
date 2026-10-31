@@ -1,15 +1,26 @@
 import {
-    type ContentEmbedContext, getAttachmentEmbedHref, getEmbedKey, getNestedEmbedOptions,
-    getNoteEmbedHref, KATEX_MACROS, resolveContentEmbed, sliceToBlockReference
+    applyListItemAlignment
+} from "@triliumnext/ckeditor5/src/plugins/list_item_alignment_read_only.js";
+import { applyTableScroll } from "@triliumnext/ckeditor5/src/plugins/table_scroll_read_only.js";
+import {
+    applyStickyTableHeaders
+} from "@triliumnext/ckeditor5/src/plugins/table_sticky_header_read_only.js";
+import {
+    BLOCK_ID_ATTRIBUTE, CONTENT_EMBED_KIND_ATTRIBUTE, type ContentEmbedContext,
+    getAttachmentEmbedHref, getEmbedKey, getNestedEmbedOptions, getNoteEmbedHref, KATEX_MACROS,
+    resolveContentEmbed, sliceToBlockReference
 } from "@triliumnext/commons";
 
 import FAttachment from "../entities/fattachment.js";
 import FNote from "../entities/fnote.js";
+import { getContentEmbedFlag } from "../widgets/type_widgets/text/content_embed_tools.js";
 import { highlightBlockReference } from "./block_reference.js";
-import { default as content_renderer, type RenderOptions } from "./content_renderer.js";
+import {
+    addContentDisposer, default as content_renderer, type RenderOptions
+} from "./content_renderer.js";
 import froca from "./froca.js";
 import { t } from "./i18n.js";
-import { resolveContentImageUrls } from "./image_urls.js";
+import { applyNoteImageVersions, resolveContentImageUrls } from "./image_urls.js";
 import link from "./link.js";
 import { applyLinkEmbeds } from "./link_embed.js";
 import { getMermaidConfig, postprocessMermaidSvg } from "./mermaid.js";
@@ -38,12 +49,15 @@ export async function renderTextContent(
     const hasContent = content !== undefined && !isHtmlEmpty(content);
     const $content = $('<div class="ck-content">')
         .html(hasContent ? resolveContentImageUrls(sanitizeNoteContentHtml(content)) : "");
+    applyNoteImageVersions($content[0]);
 
     if (options.block !== undefined && !sliceToBlockReference($content[0], options.block)) {
         $renderedContent.append($("<p>")
             .addClass("block-reference-broken")
             .text(t("block_reference.broken")));
     } else if (hasContent) {
+        addContentDisposer($content[0], applyTableScroll($content[0]));
+        addContentDisposer($content[0], applyStickyTableHeaders($content[0]));
         // Runs before `postProcessRichContent()` renders embeds, so their blocks are not searched.
         if (options.highlightBlock) {
             highlightBlockReference($content[0], options.highlightBlock);
@@ -57,14 +71,20 @@ export async function renderTextContent(
 
 /**
  * Apply the post-render passes that make CKEditor-compatible HTML fully
- * interactive: expand `<figure class="include-note">`, render inline math and
- * Mermaid diagrams, rewrite reference-link titles, and highlight code blocks.
- * Assumes the caller has already appended the HTML inside a `.ck-content` child
- * of `$renderedContent`.
+ * interactive: mark aligned list items, expand `<figure class="include-note">`,
+ * render inline math and Mermaid diagrams, rewrite reference-link titles, and
+ * highlight code blocks. Assumes the caller has already appended the HTML inside
+ * a `.ck-content` child of `$renderedContent`.
  */
 export async function postProcessRichContent(note: FNote | FAttachment, $renderedContent: JQuery<HTMLElement>, options: RenderOptions = {}) {
     const seenNoteIds = options.seenNoteIds ?? new Set<string>();
     seenNoteIds.add(getEmbedKey("noteId" in note ? note.noteId : note.attachmentId, options.block));
+    applyListItemAlignment($renderedContent[0]);
+    emptyUnknownEmbeds($renderedContent[0]);
+    // Runs before the embeds render, as each embed draws its own diagrams.
+    await rewriteMermaidDiagramsInContainer($renderedContent[0] as HTMLDivElement);
+    await applyInlineMermaid($renderedContent[0] as HTMLDivElement);
+
     if (options.noContentEmbeds) {
         $renderedContent.find(".include-note").remove();
     } else {
@@ -99,11 +119,10 @@ export async function postProcessRichContent(note: FNote | FAttachment, $rendere
     }));
 
     applyLinkEmbeds($renderedContent[0]);
-    await rewriteMermaidDiagramsInContainer($renderedContent[0] as HTMLDivElement);
     await formatCodeBlocks($renderedContent);
 
     if (options.trim) {
-        $renderedContent.find("style").remove();
+        $renderedContent.find("style").not("svg style").remove();
     }
 }
 
@@ -131,7 +150,9 @@ async function renderContentEmbeds(contentEl: HTMLElement, context: ContentEmbed
                 const { ownerId, attachmentId } = attachment;
                 replaceWithReferenceLink(embedEl, getAttachmentEmbedHref(ownerId, attachmentId));
             } else {
-                const { $renderedContent } = await content_renderer.getRenderedContent(attachment);
+                const { $renderedContent } = await content_renderer.getRenderedContent(
+                    attachment, getEmbedCodeView(embedEl)
+                );
                 replaceEmbedContent(embedEl, $renderedContent.toArray());
             }
             continue;
@@ -148,10 +169,53 @@ async function renderContentEmbeds(contentEl: HTMLElement, context: ContentEmbed
             continue;
         }
 
-        const { $renderedContent } = await content_renderer.getRenderedContent(note,
-            getNestedEmbedOptions(context, embed.block));
+        const { $renderedContent } = await content_renderer.getRenderedContent(note, {
+            ...getNestedEmbedOptions(context, embed.block),
+            hasCodeLineNumbers: getEmbedCodeView(embedEl).hasCodeLineNumbers
+        });
         replaceEmbedContent(embedEl, $renderedContent.toArray());
     }
+}
+
+/** The attributes that the box of an embed of an unknown kind keeps from its section. */
+const UNKNOWN_EMBED_ATTRIBUTES = [
+    CONTENT_EMBED_KIND_ATTRIBUTE, "data-box-size", BLOCK_ID_ATTRIBUTE
+];
+
+/**
+ * Turns each embed of a kind that this version does not know into an empty `.include-note` box,
+ * and returns the boxes. The content of the section is dropped, as it needs the renderer of its
+ * kind, and so are its other attributes, as `data-note-id` makes the include passes load it.
+ */
+export function emptyUnknownEmbeds(container: Element) {
+    const boxes: HTMLElement[] = [];
+    const sections = container.querySelectorAll<HTMLElement>(
+        `section[${CONTENT_EMBED_KIND_ATTRIBUTE}]`);
+    for (const section of sections) {
+        // Inside an embed emptied before it.
+        if (!container.contains(section)) continue;
+
+        for (const name of section.getAttributeNames()) {
+            if (!UNKNOWN_EMBED_ATTRIBUTES.includes(name)) {
+                section.removeAttribute(name);
+            }
+        }
+        section.className = "include-note unknown-content-embed";
+        section.replaceChildren();
+        boxes.push(section);
+    }
+    return boxes;
+}
+
+/** How `embedEl` shows a code file or a code note, by its `data-code-*` attributes. */
+export function getEmbedCodeView(
+    embedEl: Element | null | undefined
+): Pick<RenderOptions, "codeLanguage" | "isCodeWrapped" | "hasCodeLineNumbers"> {
+    return {
+        codeLanguage: embedEl?.getAttribute("data-code-language") ?? undefined,
+        isCodeWrapped: getContentEmbedFlag(embedEl, "data-code-wrap-lines"),
+        hasCodeLineNumbers: getContentEmbedFlag(embedEl, "data-code-line-numbers")
+    };
 }
 
 /** Puts `content` in an embed, followed by the embed's caption. */
@@ -191,8 +255,14 @@ export async function rewriteMermaidDiagramsInContainer(container: HTMLDivElemen
         }
 
         const div = document.createElement("div");
-        div.classList.add("mermaid-diagram");
+        div.classList.add("rendered-mermaid-diagram");
         div.textContent = code.textContent;
+        // A code block keeps its block ID on `<code>`, a Mermaid embed on `<pre>`.
+        const blockId = mermaidBlock.getAttribute(BLOCK_ID_ATTRIBUTE)
+            ?? code.getAttribute(BLOCK_ID_ATTRIBUTE);
+        if (blockId) {
+            div.setAttribute(BLOCK_ID_ATTRIBUTE, blockId);
+        }
         mermaidBlock.replaceWith(div);
     }
 }
@@ -217,7 +287,7 @@ const mermaidLastRenderedByPosition = new WeakMap<HTMLElement, string[]>();
 let mermaidRenderId = 0;
 
 export async function applyInlineMermaid(container: HTMLDivElement) {
-    const nodes = Array.from(container.querySelectorAll<HTMLElement>("div.mermaid-diagram"));
+    const nodes = Array.from(container.querySelectorAll<HTMLElement>("div.rendered-mermaid-diagram"));
     if (!nodes.length) {
         mermaidLastRenderedByPosition.delete(container);
         return;

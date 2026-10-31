@@ -25,6 +25,7 @@ import {
 } from "@ckeditor/ckeditor5-icons";
 import bxBookmark from "boxicons/svg/regular/bx-bookmark.svg?raw";
 import bxBulb from "boxicons/svg/regular/bx-bulb.svg?raw";
+import bxCodeBlock from "boxicons/svg/regular/bx-code-block.svg?raw";
 import bxCommentError from "boxicons/svg/regular/bx-comment-error.svg?raw";
 import bxError from "boxicons/svg/regular/bx-error.svg?raw";
 import bxErrorCircle from "boxicons/svg/regular/bx-error-circle.svg?raw";
@@ -32,11 +33,13 @@ import bxInfoCircle from "boxicons/svg/regular/bx-info-circle.svg?raw";
 import bxNetworkChart from "boxicons/svg/regular/bx-network-chart.svg?raw";
 import bxPen from "boxicons/svg/regular/bx-pen.svg?raw";
 import bxSticker from "boxicons/svg/regular/bx-sticker.svg?raw";
+import bxSubdirectoryRight from "boxicons/svg/regular/bx-subdirectory-right.svg?raw";
 import { BookmarkUI, type Editor, type MentionFeedObjectItem, Plugin } from "ckeditor5";
 
 import collapsibleIcon from "../../icons/collapsible.svg?raw";
 import dateTimeIcon from "../../icons/date-time.svg?raw";
 import insertFootnoteIcon from "../../icons/insert-footnote.svg?raw";
+import linkPreviewIcon from "../../icons/link-preview.svg?raw";
 import importMarkdownIcon from "../../icons/markdown-mark.svg?raw";
 import mathIcon from "../../icons/math.svg?raw";
 import noteIcon from "../../icons/note.svg?raw";
@@ -45,7 +48,11 @@ import internalLinkIcon from "../../icons/trilium.svg?raw";
 import { ADMONITION_TYPE_NAMES, type AdmonitionType } from "../admonition/admonition_command.js";
 import { getAdmonitionTitle } from "../admonition/admonition_ui.js";
 import aiIcon from "../ai_assistant/theme/icons/ai.svg?raw";
+import { COMMAND_NAME as CHILD_NOTE_COMMAND } from "../child_note.js";
 import { COMMAND_NAME as CONTENT_EMBED_COMMAND } from "../content_embed/content_embed.js";
+import {
+    INSERT_EXTENDED_CODE_BLOCK_COMMAND, insertExtendedCodeBlock
+} from "../content_embed/extended_code_block.js";
 import { insertDrawingCanvas } from "../file_upload/file_upload_ui.js";
 import { INSERT_ICON_COMMAND } from "../inline_icon/inline_icon_editing.js";
 import InlineIconUI from "../inline_icon/inline_icon_ui.js";
@@ -53,8 +60,8 @@ import InsertDateTimePlugin, { COMMAND_NAME as INSERT_DATE_TIME_COMMAND, getDate
 import { COMMAND_NAME as INTERNAL_LINK_COMMAND } from "../internallink.js";
 import { COMMAND_NAME as MARKDOWN_IMPORT_COMMAND } from "../markdownimport.js";
 import MathUI from "../math/math_ui.js";
-import { INSERT_MERMAID_COMMAND } from "../mermaid/insert_mermaid_command.js";
-import type { MermaidSample } from "../mermaid/mermaid_ui.js";
+import { INSERT_INLINE_EMBED_COMMAND } from "../content_embed/inline_source.js";
+import { insertMermaidDiagram, type MermaidSample } from "../mermaid/mermaid_ui.js";
 import { getDefaultRatios, MAX_COLUMNS, MIN_COLUMNS } from "../multicolumn/constants.js";
 import { BUTTON_ICON_SIZE, createLayoutFigure } from "../multicolumn/multicolumn_ui.js";
 import SnippetsEditing from "../snippets/snippetsediting.js";
@@ -347,6 +354,15 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
         },
         ...buildMermaidSlashCommands(editor),
         {
+            id: "extended-code-block",
+            title: t("Extended code block"),
+            description: t("Insert a code block that is edited as a code note."),
+            aliases: [ "code", "codemirror", "pre" ],
+            icon: bxCodeBlock,
+            commandName: INSERT_EXTENDED_CODE_BLOCK_COMMAND,
+            execute: insertExtendedCodeBlock
+        },
+        {
             id: "ai-assistant",
             title: t("AI assistant"),
             description: t("Ask AI to rewrite the selection or generate new content."),
@@ -391,6 +407,18 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
             commandName: INTERNAL_LINK_COMMAND
         },
         {
+            id: "link-preview",
+            title: t("Link preview"),
+            description: t("Insert a preview of a web page or a video"),
+            aliases: [ "embed", "url", "website", "youtube", "video" ],
+            icon: linkPreviewIcon,
+            commandName: INTERNAL_LINK_COMMAND,
+            // The link dialog on the web link side, with a video player or else a card.
+            execute: (target: Editor) => {
+                target.execute(INTERNAL_LINK_COMMAND, { target: "url", display: "embed" });
+            }
+        },
+        {
             id: "attach-file",
             title: t("Attach file as a link"),
             description: t("Upload files as attachments and insert links."),
@@ -422,6 +450,14 @@ export function buildTriliumSlashCommands(editor: Editor): SlashCommandDefinitio
             aliases: [ "latex", "equation" ],
             icon: mathIcon,
             execute: (target: Editor) => target.plugins.get(MathUI)._showUI()
+        },
+        {
+            id: "child-note",
+            title: t("Create a new child note"),
+            description: t("Create a new child note and insert a link to it"),
+            aliases: [ "new note", "subnote", "sub-note", "page" ],
+            icon: bxSubdirectoryRight,
+            commandName: CHILD_NOTE_COMMAND
         },
         {
             id: "content-embed",
@@ -552,15 +588,14 @@ function buildMermaidSlashCommands(editor: Editor): SlashCommandDefinition[] {
     const t = editor.locale.t;
     const samples = (editor.config.get("mermaid.samples") ?? []) as MermaidSample[];
 
-    // The blank diagram. Replaces CKEditor's built-in `insertMermaidCommand` slash command (removed
-    // via `removeCommands`), which uses a generic icon.
     const blank: SlashCommandDefinition = {
         id: "mermaid",
         title: t("Mermaid diagram"),
         description: t("Insert an empty Mermaid diagram"),
         aliases: [ "mermaid", "diagram", "flowchart" ],
         icon: bxNetworkChart,
-        commandName: INSERT_MERMAID_COMMAND
+        commandName: INSERT_INLINE_EMBED_COMMAND,
+        execute: insertMermaidDiagram
     };
 
     const templates = samples.map((sample, index) => ({
@@ -571,8 +606,8 @@ function buildMermaidSlashCommands(editor: Editor): SlashCommandDefinition[] {
         description: t("Insert a \"%0\" Mermaid diagram template", sample.name),
         aliases: [ "mermaid", "diagram", sample.name ],
         icon: bxNetworkChart,
-        // Inserts a mermaid block pre-filled with the sample source (see insertMermaidCommand).
-        execute: (target: Editor) => target.execute(INSERT_MERMAID_COMMAND, { source: sample.content })
+        commandName: INSERT_INLINE_EMBED_COMMAND,
+        execute: (target: Editor) => insertMermaidDiagram(target, sample.content)
     }));
 
     return [ blank, ...templates ];

@@ -38,22 +38,44 @@ export default function setupToC() {
         });
     }
 
+    const tocPane = document.getElementById("toc-pane");
+    let activeIndex = -1;
+
     // Marks the entry of the last section scrolled past, or the first entry above every section.
     const changeLinkState = () => {
         let index = sections.length;
         while (--index > 0 && sections[index].getBoundingClientRect().top > 50) {
             // Walk back to the last section scrolled past.
         }
+        if (index === activeIndex) return;
+        activeIndex = index;
 
         for (const links of linkLists) {
             for (const [ linkIndex, link ] of links.entries()) {
                 link.classList.toggle("active", linkIndex === index);
             }
         }
+
+        const activeLink = tocPane?.querySelectorAll("a")[index];
+        if (tocPane && activeLink) {
+            keepInView(tocPane, activeLink);
+        }
     };
 
     changeLinkState();
     window.addEventListener("scroll", changeLinkState, { passive: true });
+}
+
+/**
+ * Scrolls `pane` to put `entry` in its middle when the entry is not entirely visible. Only the pane
+ * scrolls: `scrollIntoView()` would also move the page, which is scrolling already.
+ */
+function keepInView(pane: HTMLElement, entry: HTMLElement) {
+    const paneRect = pane.getBoundingClientRect();
+    const entryRect = entry.getBoundingClientRect();
+    if (entryRect.top >= paneRect.top && entryRect.bottom <= paneRect.bottom) return;
+
+    pane.scrollTop += entryRect.top - paneRect.top - (pane.clientHeight - entryRect.height) / 2;
 }
 
 /** How long a heading link shows its check mark after copying, in milliseconds. */
@@ -62,6 +84,7 @@ const COPIED_DURATION = 1500;
 /**
  * Makes a click on the link of a heading put the address of its section in the location bar, in
  * place of the current one and without scrolling, and copy it, showing a check mark for a moment.
+ * The address leaves out the `block` parameter of a block link, which would scroll to the block.
  * A click with a modifier key or another button than the main one is left to the browser.
  */
 function setupHeadingLinks() {
@@ -80,8 +103,10 @@ function setupHeadingLinks() {
             }
 
             e.preventDefault();
-            history.replaceState(history.state, "", link.href);
-            navigator.clipboard?.writeText(link.href).then(() => {
+            const url = new URL(link.href);
+            url.searchParams.delete("block");
+            history.replaceState(history.state, "", url);
+            navigator.clipboard?.writeText(url.href).then(() => {
                 setCopied(true);
                 clearTimeout(resetTimer);
                 resetTimer = setTimeout(() => setCopied(false), COPIED_DURATION);

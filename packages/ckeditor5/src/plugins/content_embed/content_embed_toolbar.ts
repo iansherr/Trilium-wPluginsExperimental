@@ -2,6 +2,9 @@ import { Plugin, WidgetToolbarRepository, isWidget, type ViewElement } from "cke
 import ContentEmbed, {
     CONVERT_EMBED_TO_LINK_COMMAND,
     CONTENT_EMBED_MENU,
+    CONTENT_EMBED_DISPLAY_MODE_SEPARATOR,
+    DISPLAY_MODE_BUTTONS,
+    DISPLAY_MODES,
     TOGGLE_CAPTION_COMMAND_NAME,
     TOGGLE_EDITABLE_COMMAND_NAME,
     TOGGLE_TITLE_COMMAND_NAME
@@ -10,12 +13,14 @@ import ContentEmbedBoxSizeDropdown, {
     CONTENT_EMBED_BOX_SIZE_DROPDOWN
 } from "./content_embed_box_size_dropdown.js";
 import ContentEmbedTools, { CONTENT_EMBED_TOOLS } from "./content_embed_tools.js";
+import ExtendedCodeBlock, { EXTENDED_CODE_BLOCK_COPY_BUTTON } from "./extended_code_block.js";
 
 export default class ContentEmbedToolbar extends Plugin {
 
     static get requires() {
         return [
-            WidgetToolbarRepository, ContentEmbed, ContentEmbedBoxSizeDropdown, ContentEmbedTools
+            WidgetToolbarRepository, ContentEmbed, ContentEmbedBoxSizeDropdown, ContentEmbedTools,
+            ExtendedCodeBlock
         ] as const;
     }
 
@@ -26,7 +31,10 @@ export default class ContentEmbedToolbar extends Plugin {
         widgetToolbarRepository.register("contentEmbed", {
             items: [
                 TOGGLE_EDITABLE_COMMAND_NAME,
+                CONTENT_EMBED_DISPLAY_MODE_SEPARATOR,
+                ...DISPLAY_MODES.map((mode) => DISPLAY_MODE_BUTTONS[mode]),
                 CONTENT_EMBED_TOOLS,
+                EXTENDED_CODE_BLOCK_COPY_BUTTON,
                 CONTENT_EMBED_BOX_SIZE_DROPDOWN,
                 TOGGLE_TITLE_COMMAND_NAME,
                 TOGGLE_CAPTION_COMMAND_NAME,

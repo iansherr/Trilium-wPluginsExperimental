@@ -1,8 +1,11 @@
+import { CANVAS_ATTACHMENT_MIME } from "@triliumnext/commons";
 import { becca, cls, note_service as noteService, ValidationError } from "@triliumnext/core";
 import type { Request } from "express";
 import fs from "fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import path from "path";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import dataDirs from "../../services/data_dir.js";
 import filesRoute from "./files.js";
 
 let noteId: string;
@@ -28,6 +31,11 @@ describe("Files API", () => {
         it("saves a note to a temp file then uploads the modified content back", () => {
             const { tmpFilePath } = cls.init(() => filesRoute.saveNoteToTmpDir(fileReq({ noteId })));
             expect(fs.existsSync(tmpFilePath)).toBe(true);
+            expect(path.dirname(tmpFilePath)).toBe(path.resolve(dataDirs.TMP_DIR));
+            expect(path.basename(tmpFilePath)).toMatch(/^tmp-\d+-\w{12}-File note\.txt$/);
+            if (process.platform !== "win32") {
+                expect(fs.statSync(tmpFilePath).mode & 0o777).toBe(0o600);
+            }
 
             fs.writeFileSync(tmpFilePath, "edited-on-disk");
             cls.init(() => filesRoute.uploadModifiedFileToNote(fileReq({ noteId }, undefined, {}, { filePath: tmpFilePath })));
@@ -43,12 +51,66 @@ describe("Files API", () => {
             expect(becca.getAttachmentOrThrow(attachmentId).getContent()).toBe("edited-att");
         });
 
+        it("saves a canvas drawing to a temp file with the images it refers to inside", () => {
+            const drawing = cls.init(() => {
+                const { note } = noteService.createNewNote({
+                    parentNoteId: "root", title: "Drawing note", type: "text", content: "<p>x</p>"
+                });
+                note.saveAttachment({
+                    role: "image", mime: "image/png", title: "f1.png", content: "abc"
+                });
+                return note.saveAttachment({
+                    role: "file",
+                    mime: CANVAS_ATTACHMENT_MIME,
+                    title: "Canvas.excalidraw",
+                    content: JSON.stringify({ elements: [ { type: "image", fileId: "f1.png" } ] })
+                });
+            });
+            const req = fileReq({ attachmentId: drawing.attachmentId ?? "" });
+
+            const { tmpFilePath } = cls.init(() => filesRoute.saveAttachmentToTmpDir(
+                req as unknown as Request<{ attachmentId: string }>));
+
+            const scene = JSON.parse(fs.readFileSync(tmpFilePath, "utf8"));
+            expect(scene.files?.["f1.png"]?.dataURL).toBe("data:image/png;base64,YWJj");
+        });
+
         it("rejects uploading from an unknown temp path", () => {
             expect(() => cls.init(() => filesRoute.uploadModifiedFileToNote(
                 fileReq({ noteId }, undefined, {}, { filePath: "/not/a/temp/file" })
             ))).toThrow(ValidationError);
             const req = fileReq({ attachmentId } as Record<string, string>, undefined, {}, { filePath: "/nope" }) as unknown as Request<{ attachmentId: string }>;
             expect(() => cls.init(() => filesRoute.uploadModifiedFileToAttachment(req))).toThrow(ValidationError);
+        });
+
+        it("removes the temp files when the process exits", () => {
+            const { tmpFilePath } = cls.init(() => filesRoute.saveNoteToTmpDir(fileReq({ noteId })));
+            const cleanup = process.listeners("exit").find((listener) => listener.name === "removeTemporaryFiles");
+            expect(cleanup).toBeDefined();
+
+            cleanup?.(0);
+            expect(fs.existsSync(tmpFilePath)).toBe(false);
+        });
+
+        it("removes the other temp files when one cannot be removed", () => {
+            const locked = cls.init(() => filesRoute.saveNoteToTmpDir(fileReq({ noteId }))).tmpFilePath;
+            const other = cls.init(() => filesRoute.saveNoteToTmpDir(fileReq({ noteId }))).tmpFilePath;
+            const rmSync = fs.rmSync;
+            const spy = vi.spyOn(fs, "rmSync").mockImplementation((filePath, options) => {
+                if (filePath === locked) {
+                    throw new Error("EBUSY: resource busy or locked");
+                }
+                rmSync(filePath, options);
+            });
+            const cleanup = process.listeners("exit").find((listener) => listener.name === "removeTemporaryFiles");
+
+            try {
+                expect(() => cleanup?.(0)).not.toThrow();
+                expect(fs.existsSync(other)).toBe(false);
+            } finally {
+                spy.mockRestore();
+                fs.rmSync(locked, { force: true });
+            }
         });
     });
 });

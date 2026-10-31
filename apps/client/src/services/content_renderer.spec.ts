@@ -1,5 +1,6 @@
 import { attachmentIcon, CONTENT_RENDERER_GROUPS } from "@triliumnext/commons";
-import { h, VNode } from "preact";
+import { h, render, VNode } from "preact";
+import { useLayoutEffect } from "preact/hooks";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- Mock heavy / side-effecting collaborators BEFORE importing the SUT. ---
@@ -27,9 +28,14 @@ const renderServiceRender = vi.fn(async (...args: any[]) => {
 });
 vi.mock("./render.js", () => ({ default: { render: (...args: any[]) => renderServiceRender(...args) } }));
 
-const applySingleBlockSyntaxHighlight = vi.fn(async (..._args: any[]) => {});
-vi.mock("./syntax_highlight.js", () => ({
-    applySingleBlockSyntaxHighlight: (...args: any[]) => applySingleBlockSyntaxHighlight(...args)
+const renderCodeNotePreview = vi.fn(
+    async (content: string, _mime: string, _note?: unknown, _lines?: unknown) => (
+        $("<pre>").append($("<code>").text(content))[0]
+    )
+);
+vi.mock("./code_note_preview.js", () => ({
+    renderCodeNotePreview: (...args: [ string, string, unknown, unknown ]) =>
+        renderCodeNotePreview(...args)
 }));
 
 const setupContextMenu = vi.fn((..._args: any[]) => {});
@@ -58,13 +64,6 @@ vi.mock("./open.js", () => ({
     }
 }));
 
-const getMermaidConfig = vi.fn(() => ({ theme: "default", layout: "dagre", look: "classic" }));
-const postprocessMermaidSvg = vi.fn((...args: any[]) => `<svg class="mm">${args[0]}</svg>`);
-vi.mock("./mermaid.js", () => ({
-    getMermaidConfig: () => getMermaidConfig(),
-    postprocessMermaidSvg: (...a: any[]) => postprocessMermaidSvg(...a)
-}));
-
 // isOfficeMimeType comes (unmocked) from @triliumnext/commons; only the server
 // round-trip is stubbed out.
 const renderOfficeToHtml = vi.fn(async (..._args: any[]) => ({ css: "", html: `<div class="office-doc">converted</div>` }));
@@ -73,9 +72,11 @@ vi.mock("./office_renderer.js", () => ({
 }));
 
 const mermaidRender = vi.fn(async (..._args: any[]) => ({ svg: "<g/>" }));
-const mermaidInitialize = vi.fn((..._args: any[]) => {});
 vi.mock("mermaid", () => ({
-    default: { mermaidAPI: { initialize: (...a: any[]) => mermaidInitialize(...a), render: (...a: any[]) => mermaidRender(...a) } }
+    default: {
+        render: (...a: any[]) => mermaidRender(...a),
+        mermaidAPI: { render: (...a: any[]) => mermaidRender(...a) }
+    }
 }));
 
 const pdfViewerComponent = vi.fn((_props: any) => null);
@@ -109,17 +110,37 @@ vi.mock("../widgets/type_widgets/canvas/CanvasDrawing", () => ({
     renderCanvasDrawingPicture: (entity: unknown) => renderCanvasDrawingPicture(entity)
 }));
 
+const mermaidDiagramComponent = vi.fn((_props: any): VNode<any> =>
+    h("span", { class: "mock-mermaid-diagram-marker" }));
+vi.mock("../widgets/type_widgets/mermaid/MermaidDiagram", () => ({ default: mermaidDiagramComponent }));
+const renderMermaidSvg = vi.fn(async (_source: string) => "<svg class=\"mock-mermaid-svg\"></svg>");
+vi.mock("./mermaid", async (importOriginal) => ({
+    ...await importOriginal<object>(),
+    renderMermaidSvg: (source: string) => renderMermaidSvg(source)
+}));
+
 const chatPreviewComponent = vi.fn((props: any): VNode<any> =>
     h("span", { class: "mock-chat-marker" }, `messages:${props.messages.length}`));
 vi.mock("../widgets/type_widgets/llm_chat/ChatPreview", () => ({ default: chatPreviewComponent }));
 
 const codeEmbedComponent = vi.fn((_props: any): VNode<any> =>
     h("span", { class: "mock-code-embed-marker" }));
-vi.mock("../widgets/type_widgets/code/CodeEmbed", () => ({ default: codeEmbedComponent }));
+vi.mock("../widgets/type_widgets/code/CodeEmbed", () => ({
+    default: codeEmbedComponent,
+    useSavedContent: () => {}
+}));
 
 const textEmbedComponent = vi.fn((_props: any): VNode<any> =>
     h("span", { class: "mock-text-embed-marker" }));
 vi.mock("../widgets/type_widgets/text/TextEmbed", () => ({ default: textEmbedComponent }));
+
+const markdownEmbedComponent = vi.fn((_props: any): VNode<any> =>
+    h("span", { class: "mock-markdown-embed-marker" }));
+const renderMarkdownHtml = vi.fn((source: string) => (source ? `<p>${source}</p>` : ""));
+vi.mock("../widgets/type_widgets/markdown/MarkdownEmbed", () => ({
+    default: markdownEmbedComponent,
+    renderMarkdownHtml: (source: string) => renderMarkdownHtml(source)
+}));
 
 // `addHook` is a no-op here: sanitize_content.ts registers a DOMPurify hook at
 // module load (pulled in transitively), which would otherwise throw against this mock.
@@ -137,13 +158,16 @@ import Component from "../components/component.js";
 import type { SaveState } from "../components/note_context.js";
 import FAttachment from "../entities/fattachment.js";
 import { buildNote } from "../test/easy-froca.js";
+import EmbedHistories from "../widgets/type_widgets/text/embed_history.js";
 import {
+    addContentDisposer,
     CONTENT_RENDERERS,
     disposeInteractiveContent,
     getEmbedBoxSize,
     getRenderedContent as rawGetRenderedContent,
     getUploadBoxSize,
-    hasRenderedPreview
+    hasRenderedPreview,
+    snapshotAndDispose
 } from "./content_renderer.js";
 import froca from "./froca.js";
 import server from "./server.js";
@@ -229,8 +253,10 @@ describe("getEmbedBoxSize", () => {
             buildNote({ title: "Clip", type: "file", mime: "video/mp4" }),
             buildAttachment({ role: "file", mime: "application/pdf" }),
             buildAttachment({ role: "image", mime: "image/png" }),
-            buildAttachment({ role: "file", mime: "application/vnd.excalidraw+json" })
-        ].map(getEmbedBoxSize)).toEqual(Array(9).fill("medium"));
+            buildAttachment({ role: "file", mime: "application/vnd.excalidraw+json" }),
+            buildAttachment({ role: "file", mime: "text/markdown" }),
+            buildAttachment({ role: "file", mime: "text/plain", title: "readme.md" })
+        ].map(getEmbedBoxSize)).toEqual(Array(11).fill("medium"));
     });
 
     it("shows an upload too large to highlight as a file", () => {
@@ -243,10 +269,10 @@ describe("getEmbedBoxSize", () => {
         expect([
             "application/zip", "", "audio/mpeg", "application/json", "application/pdf",
             "image/png", "video/mp4", "application/vnd.excalidraw+json", "text/plain",
-            "application/x-sql", "text/rtf"
+            "application/x-sql", "text/rtf", "text/markdown"
         ].map(getUploadBoxSize)).toEqual([
             "tiny", "tiny", "small", "full", "medium", "medium", "medium", "medium", "full",
-            "full", "medium"
+            "full", "medium", "medium"
         ]);
     });
 });
@@ -349,7 +375,8 @@ describe("getRenderedContent code rendering", () => {
         const { type, $renderedContent } = await getRenderedContent(note);
         expect(type).toBe("code");
         expect($renderedContent.find("pre > code").text()).toBe('{\n    "a": 1\n}');
-        expect(applySingleBlockSyntaxHighlight).toHaveBeenCalledOnce();
+        expect(renderCodeNotePreview.mock.calls)
+            .toEqual([ [ '{\n    "a": 1\n}', "application/json", note, {} ] ]);
     });
 
     it("leaves invalid JSON untouched", async () => {
@@ -373,6 +400,7 @@ describe("getRenderedContent editable code", () => {
             canEdit: vi.fn(() => true),
             getUnsavedContent: vi.fn((): string | undefined => undefined),
             scheduleSave: vi.fn(),
+            postponeSave: vi.fn(),
             release: vi.fn(),
             getSaveState: vi.fn((): SaveState | undefined => "saving"),
             subscribeSaveState: vi.fn(() => () => {})
@@ -390,7 +418,7 @@ describe("getRenderedContent editable code", () => {
         });
         expect((await getRenderedContent(largeSource)).type).toBe("file");
         expect(large.getBlob).not.toHaveBeenCalled();
-        expect(applySingleBlockSyntaxHighlight).not.toHaveBeenCalled();
+        expect(renderCodeNotePreview).not.toHaveBeenCalled();
     });
 
     it("renders an attached code file as code, highlighted by the language of its name", async () => {
@@ -410,8 +438,8 @@ describe("getRenderedContent editable code", () => {
             attachment.getBlob = (async () => ({ content: "" })) as any;
             await getRenderedContent(attachment);
         }
-        expect(applySingleBlockSyntaxHighlight.mock.calls.map(([ , mime ]) => mime)).toEqual([
-            "text-x-python", "text-javascript", "application-typescript", "text-plain"
+        expect(renderCodeNotePreview.mock.calls.map(([ , mime ]) => mime)).toEqual([
+            "text/x-python", "text/javascript", "application/typescript", "text/plain"
         ]);
     });
 
@@ -434,21 +462,71 @@ describe("getRenderedContent editable code", () => {
         expect(props.entity).toBe(note);
         expect(props.content).toBe("unsaved");
         expect(props.mime).toBe("text/javascript");
-        expect(props.preview.textContent).toBe("unsaved");
+        expect(renderCodeNotePreview).not.toHaveBeenCalled();
 
         const getContent = () => "edited";
-        props.editor.scheduleSave(getContent);
+        const onSaved = () => {};
+        props.editor.scheduleSave(getContent, onSaved);
         props.editor.release();
         expect(props.editor.canEdit()).toBe(true);
         expect(noteEditor.canEdit).toHaveBeenCalledWith(note);
         expect(noteEditor.getUnsavedContent).toHaveBeenCalledWith(note.noteId);
-        expect(noteEditor.scheduleSave).toHaveBeenCalledWith(note, getContent);
+        expect(noteEditor.scheduleSave).toHaveBeenCalledWith(note, getContent, onSaved);
         expect(noteEditor.release).toHaveBeenCalledWith(note.noteId);
         const listener = () => {};
         expect(props.editor.getSaveState()).toBe("saving");
         props.editor.subscribeSaveState(listener);
         expect(noteEditor.getSaveState).toHaveBeenCalledWith(note.noteId);
         expect(noteEditor.subscribeSaveState).toHaveBeenCalledWith(listener);
+    });
+
+    it("mounts MarkdownEmbed for a Markdown note in an embed, saved by `noteEditor`", async () => {
+        const note = buildNote({
+            title: "Readme", type: "code", mime: "text/x-markdown", content: "saved"
+        });
+        const noteEditor = buildEditor();
+        noteEditor.getUnsavedContent.mockReturnValue("unsaved");
+
+        const { type, $renderedContent } = await getRenderedContent(note, {
+            interactive: true, hasDisplayModes: true, noteEditor
+        });
+
+        expect(type).toBe("markdown");
+        expect($renderedContent.find(".markdown-embed[data-interactive-mount]")
+            .find(".mock-markdown-embed-marker").length).toBe(1);
+        const props = markdownEmbedComponent.mock.calls[0][0];
+        expect([ props.entity, props.content ]).toEqual([ note, "unsaved" ]);
+        expect(props.preview.outerHTML)
+            .toBe("<div class=\"ck-content markdown-preview\"><p>unsaved</p></div>");
+        expect(postProcessRichContent).toHaveBeenCalledWith(note, expect.anything(),
+            expect.objectContaining({ hasDisplayModes: true }));
+        expect(renderToHtml).not.toHaveBeenCalled();
+        const getContent = () => "edited";
+        props.editor.scheduleSave(getContent);
+        expect(noteEditor.scheduleSave).toHaveBeenCalledWith(note, getContent, undefined);
+
+        // Other Markdown renders the same way, and none shows the children of the note.
+        expect((await props.renderPreview("edited")).innerHTML).toBe("<p>edited</p>");
+        expect(renderChildrenList).not.toHaveBeenCalled();
+        await props.renderPreview("");
+        expect(renderChildrenList).toHaveBeenCalledWith(expect.anything(), note, false);
+    });
+
+    it("mounts MarkdownEmbed read-only for a Markdown file in an embed that cannot save", async () => {
+        const att = buildAttachment({ role: "file", mime: "text/plain", title: "readme.md" });
+        att.getBlob = (async () => ({ content: "# A" })) as any;
+
+        const { type } = await getRenderedContent(att, { interactive: true, hasDisplayModes: true });
+        expect(type).toBe("markdown");
+        const props = markdownEmbedComponent.mock.calls[0][0];
+        expect([ props.entity, props.editor, props.content ]).toEqual([ att, undefined, "# A" ]);
+        await props.renderPreview("");
+        expect(renderChildrenList).not.toHaveBeenCalled();
+
+        // Elsewhere, the rendering shows alone.
+        await getRenderedContent(att, { interactive: true });
+        expect(renderToHtml).toHaveBeenCalledWith("# A", "readme.md", expect.anything());
+        expect(markdownEmbedComponent).toHaveBeenCalledOnce();
     });
 
     it("mounts CodeEmbed for an interactive code file, saved by `attachmentEditor`", async () => {
@@ -462,11 +540,69 @@ describe("getRenderedContent editable code", () => {
         expect(props.entity).toBe(att);
         expect(props.content).toBe("{}");
         expect(props.mime).toBe("application/json");
-        props.editor.scheduleSave(() => "[]");
+        const onSaved = () => {};
+        props.editor.scheduleSave(() => "[]", onSaved);
         props.editor.release();
         expect(attachmentEditor.getUnsavedContent).toHaveBeenCalledWith(att.attachmentId);
-        expect(attachmentEditor.scheduleSave).toHaveBeenCalledWith(att, expect.any(Function));
+        expect(attachmentEditor.scheduleSave)
+            .toHaveBeenCalledWith(att, expect.any(Function), onSaved);
         expect(attachmentEditor.release).toHaveBeenCalledWith(att.attachmentId);
+    });
+
+    it("gives the editor of a note or a file its undo history in the text note", async () => {
+        const note = buildNote({
+            title: "Script", type: "code", mime: "text/javascript", content: ""
+        });
+        const att = buildAttachment({ role: "file", mime: "application/json" });
+        att.getBlob = (async () => ({ content: "{}" })) as any;
+        const noteEditor = buildEditor();
+        const attachmentEditor = buildEditor();
+        const histories = new EmbedHistories(() => null);
+
+        await getRenderedContent(note, { interactive: true, noteEditor, histories });
+        await getRenderedContent(att, { interactive: true, attachmentEditor, histories });
+        const [ noteHistory, fileHistory ] = codeEmbedComponent.mock.calls
+            .map(([ props ]) => props.editor.history);
+        expect(noteHistory).toBe(histories.get(note.noteId, vi.fn()));
+        expect(fileHistory).toBe(histories.get(att.attachmentId, vi.fn()));
+
+        // Content that no editor shows saves through the editor of the embed.
+        noteHistory.write("a");
+        fileHistory.write("b");
+        expect(noteEditor.scheduleSave.mock.lastCall?.[0]).toBe(note);
+        expect(noteEditor.scheduleSave.mock.lastCall?.[1]()).toBe("a");
+        expect(attachmentEditor.scheduleSave.mock.lastCall?.[0]).toBe(att);
+        expect(attachmentEditor.scheduleSave.mock.lastCall?.[1]()).toBe("b");
+    });
+
+    it("highlights a code file in the language that its embed sets, for CodeEmbed too", async () => {
+        const att = buildAttachment({ role: "file", mime: "text/plain", title: "a.py" });
+        att.getBlob = (async () => ({ content: "echo 1" })) as any;
+
+        await getRenderedContent(att, { codeLanguage: "text/x-sh" });
+        expect(renderCodeNotePreview.mock.lastCall?.[1]).toBe("text/x-sh");
+
+        await getRenderedContent(att, {
+            codeLanguage: "text/x-sh", interactive: true, attachmentEditor: buildEditor()
+        });
+        const props = codeEmbedComponent.mock.lastCall?.[0];
+        expect([ props.mime, props.codeLanguage ]).toEqual([ "text/x-python", "text/x-sh" ]);
+        expect(renderCodeNotePreview).toHaveBeenCalledOnce();
+    });
+
+    it("wraps and numbers the lines of code as its embed sets, for CodeEmbed too", async () => {
+        const att = buildAttachment({ role: "file", mime: "text/plain", title: "a.py" });
+        att.getBlob = (async () => ({ content: "echo 1" })) as any;
+        const lines = { isCodeWrapped: false, hasCodeLineNumbers: false };
+
+        await getRenderedContent(att, lines);
+        expect(renderCodeNotePreview.mock.lastCall?.[3])
+            .toEqual({ isWrapped: false, hasLineNumbers: false });
+
+        await getRenderedContent(att, {
+            ...lines, interactive: true, attachmentEditor: buildEditor()
+        });
+        expect(codeEmbedComponent.mock.lastCall?.[0]).toMatchObject(lines);
     });
 
     it("mounts TextEmbed for an interactive text note, with a preview to render again", async () => {
@@ -529,31 +665,34 @@ describe("getRenderedContent editable code", () => {
         const json = buildNote({
             title: "Data", type: "file", mime: "application/json", content: "{}"
         });
-        const { $renderedContent } = await getRenderedContent(json, {
+        await getRenderedContent(json, {
             interactive: true,
             noteEditor: buildEditor()
         });
 
-        expect($renderedContent.find("pre > code").text()).toBe("{}");
-        expect(codeEmbedComponent).not.toHaveBeenCalled();
+        const props = codeEmbedComponent.mock.lastCall?.[0];
+        expect([ props.entity, props.editor, props.content ]).toEqual([ json, undefined, "{}" ]);
     });
 
-    it("keeps the static preview without an editor, or outside an embed", async () => {
+    it("shows code read-only without an editor, and as a static preview outside an embed", async () => {
         const note = buildNote({
             title: "Script", type: "code", mime: "text/javascript", content: "x"
         });
         const att = buildAttachment({ role: "file", mime: "text/plain" });
         att.getBlob = (async () => ({ content: "y" })) as any;
 
-        const results = await Promise.all([
-            getRenderedContent(note, { interactive: true, attachmentEditor: buildEditor() }),
-            getRenderedContent(att, { interactive: true, noteEditor: buildEditor() }),
-            getRenderedContent(note, { noteEditor: buildEditor() })
-        ]);
+        await getRenderedContent(note, { interactive: true, attachmentEditor: buildEditor() });
+        await getRenderedContent(att, { interactive: true, noteEditor: buildEditor() });
+        expect(codeEmbedComponent.mock.calls.map(([ props ]) => [
+            props.entity, props.editor, props.content
+        ])).toEqual([ [ note, undefined, "x" ], [ att, undefined, "y" ] ]);
+        expect(renderCodeNotePreview).not.toHaveBeenCalled();
 
-        expect(results.map(({ $renderedContent }) => $renderedContent.find("pre > code").text()))
-            .toEqual([ "x", "y", "x" ]);
-        expect(codeEmbedComponent).not.toHaveBeenCalled();
+        const { $renderedContent: $static } = await getRenderedContent(note, {
+            noteEditor: buildEditor()
+        });
+        expect($static.find("pre > code").text()).toBe("x");
+        expect(codeEmbedComponent).toHaveBeenCalledTimes(2);
 
         const text = buildNote({ title: "Doc", type: "text", content: "<p>Hi</p>" });
         const { $renderedContent } = await getRenderedContent(text, { noteEditor: buildEditor() });
@@ -830,7 +969,27 @@ describe("getRenderedContent render / doc / protectedSession / mermaid", () => {
     it("mounts a JSX render note under the given parent component", async () => {
         const parentComponent = new Component();
         await getRenderedContent(buildNote({ title: "R", type: "render" }), { parentComponent });
-        expect(renderServiceRender.mock.lastCall?.[3]).toBe(parentComponent);
+        expect(renderServiceRender.mock.lastCall?.[3]).toEqual(expect.objectContaining({ parentComponent }));
+    });
+
+    it("aborts the render and unmounts its JSX when the content is disposed", async () => {
+        const unmounted = vi.fn();
+        function Probe() {
+            useLayoutEffect(() => unmounted, []);
+            return null;
+        }
+        renderServiceRender.mockImplementationOnce(async (_n: unknown, $content: JQuery<HTMLElement>) => {
+            render(h(Probe, {}), $content[0]);
+        });
+
+        const { $renderedContent } = await getRenderedContent(buildNote({ title: "R", type: "render" }));
+        const { signal } = renderServiceRender.mock.lastCall?.[3] as { signal: AbortSignal };
+        expect(signal.aborted).toBe(false);
+        expect(unmounted).not.toHaveBeenCalled();
+
+        disposeInteractiveContent($renderedContent);
+        expect(signal.aborted).toBe(true);
+        expect(unmounted).toHaveBeenCalledOnce();
     });
 
     it("render error callback shows an admonition with the error message", async () => {
@@ -876,32 +1035,15 @@ describe("getRenderedContent render / doc / protectedSession / mermaid", () => {
         expect(enterProtectedSession).toHaveBeenCalledOnce();
     });
 
-    it("renders a mermaid diagram and post-processes the svg", async () => {
+    it("shows a mermaid note's saved SVG instead of rendering its source", async () => {
         const note = buildNote({ title: "M", type: "mermaid", content: "graph TD; A-->B" });
         const { type, $renderedContent } = await getRenderedContent(note);
         expect(type).toBe("mermaid");
-        expect(mermaidInitialize).toHaveBeenCalledOnce();
-        expect(mermaidInitialize).toHaveBeenCalledWith(
-            expect.objectContaining({ layout: "dagre", look: "classic", startOnLoad: false })
-        );
-        expect(postprocessMermaidSvg).toHaveBeenCalledWith("<g/>");
-        expect($renderedContent.find("svg.mm").length).toBe(1);
-    });
-
-    it("renders a mermaid error message when rendering throws", async () => {
-        mermaidRender.mockRejectedValueOnce(new Error("bad diagram"));
-        const note = buildNote({ title: "MErr", type: "mermaid", content: "bogus" });
-        const { $renderedContent } = await getRenderedContent(note);
-        expect($renderedContent.find("p").length).toBe(1);
-        expect(postprocessMermaidSvg).not.toHaveBeenCalled();
-    });
-
-    it("handles a mermaid note with no blob content", async () => {
-        const note = buildNote({ title: "MEmpty", type: "mermaid" });
-        note.getBlob = (async () => null) as any;
-        const { type } = await getRenderedContent(note);
-        expect(type).toBe("mermaid");
-        expect(mermaidRender).toHaveBeenCalled();
+        const $img = $renderedContent.find("img");
+        expect($img.length).toBe(1);
+        expect($img.attr("src")).toContain(`api/images/${note.noteId}/`);
+        expect($renderedContent.find("svg").length).toBe(0);
+        expect(mermaidRender).not.toHaveBeenCalled();
     });
 });
 
@@ -1166,6 +1308,24 @@ describe("getRenderedContent canvas drawing rendering", () => {
     });
 });
 
+describe("Mermaid diagram attachments", () => {
+    it("draws the diagram before returning where it is not interactive, and mounts it where it is", async () => {
+        const att = buildAttachment({ role: "file", mime: "text/vnd.mermaid" });
+        att.getBlob = async () => ({ content: "graph TD;" }) as never;
+
+        const { type, $renderedContent } = await getRenderedContent(att);
+        expect(type).toBe("mermaidDiagram");
+        expect(renderMermaidSvg).toHaveBeenCalledWith("graph TD;");
+        expect($renderedContent.find("svg.mock-mermaid-svg").length).toBe(1);
+        expect(mermaidDiagramComponent).not.toHaveBeenCalled();
+
+        const { $renderedContent: $live } = await getRenderedContent(att, { interactive: true });
+        expect($live.find(".mock-mermaid-diagram-marker").length).toBe(1);
+        expect(mermaidDiagramComponent.mock.calls[0][0].content).toBe("graph TD;");
+        disposeInteractiveContent($live);
+    });
+});
+
 describe("interactive content disposal", () => {
     it("tags an interactive mount and disposes it, unmounting the widget", async () => {
         const note = buildNote({ title: "WI", type: "webView", "#webViewSrc": "https://example.com" });
@@ -1185,6 +1345,33 @@ describe("interactive content disposal", () => {
         const { $renderedContent } = await getRenderedContent(note);
         expect($renderedContent.find("[data-interactive-mount]").length).toBe(0);
         expect(() => disposeInteractiveContent($renderedContent)).not.toThrow();
+    });
+
+    it("runs every registered disposer once, the root's own included", () => {
+        const $root = $("<div>");
+        const child = $("<div>").appendTo($root)[0];
+        const disposers = [ vi.fn(), vi.fn(), vi.fn() ];
+        addContentDisposer($root[0], disposers[0]);
+        addContentDisposer(child, disposers[1]);
+        addContentDisposer(child, disposers[2]);
+
+        disposeInteractiveContent($root);
+        disposeInteractiveContent($root);
+        for (const dispose of disposers) {
+            expect(dispose).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it("snapshots the markup without the markers before disposing of the content", async () => {
+        const { $renderedContent } = await getRenderedContent(buildChatNote([ "Hi" ]));
+        const dispose = vi.fn();
+        addContentDisposer($renderedContent[0], dispose);
+
+        const chat = "<span class=\"mock-chat-marker\">messages:1</span>";
+        expect(snapshotAndDispose($renderedContent))
+            .toBe(`<div class="note-detail-llm-chat-preview">${chat}</div>`);
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect($renderedContent.find(".mock-chat-marker").length).toBe(0);
     });
 });
 

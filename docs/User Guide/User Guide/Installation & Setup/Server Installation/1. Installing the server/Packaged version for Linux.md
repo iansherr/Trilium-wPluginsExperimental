@@ -9,6 +9,7 @@ This is essentially Trilium sources + node modules + node.js runtime packaged in
 *   `cd trilium-linux-x64-server`
 *   `./trilium.sh`
 *   you can open the browser and open http://\[your-server-hostname\]:8080 and you should see Trilium initialization page
+*   the console lists the addresses the server can be reached on, so you can also copy one from there
 
 The problem with above steps is that once you close the SSH connection, the Trilium process is terminated. To avoid that, you have two options:
 
@@ -66,6 +67,7 @@ sudo systemctl enable --now -q trilium
 The script is available in <a class="reference-link" href="Packaged%20version%20for%20Linux/Simple%20auto-update%20for%20server.dat">Simple auto-update for server</a>.
 
 *   Run as the same User Trilium runs.
+    
     *   If you run as `root` please remove `sudo` from the commands.
 *   Requires `jq`:
     

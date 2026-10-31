@@ -25,6 +25,7 @@ describe("extractYouTubeVideoId", () => {
 
     it("extracts the id from an embed URL", () => {
         expect(extractYouTubeVideoId("https://www.youtube.com/embed/dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
+        expect(extractYouTubeVideoId("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
     });
 
     it("extracts the id from a shorts URL", () => {
@@ -167,6 +168,19 @@ describe("linkPreviewImageName", () => {
     it("treats the same page written two ways as one page", () => {
         // A bare host and a trailing slash address the same thing, so they share the picture.
         expect(linkPreviewImageName("https://example.com")).toBe(linkPreviewImageName("https://example.com/"));
+    });
+
+    it("names a YouTube thumbnail by the video ID, whatever the address form", () => {
+        const addresses = [
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42#comments"
+        ];
+
+        for (const address of addresses) {
+            expect(linkPreviewImageName(address), address).toBe("youtube-dQw4w9WgXcQ");
+        }
     });
 
     it("stays a usable file name whatever the address looks like", () => {

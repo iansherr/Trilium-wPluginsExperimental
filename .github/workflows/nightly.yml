@@ -97,7 +97,10 @@ jobs:
         with:
           node-version: 24
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # The macOS and Windows runners each package both architectures, which needs the other
+        # architecture's native optional dependencies (sherpa-onnx-darwin-x64,
+        # sherpa-onnx-win-arm64) beside the host's.
+        run: pnpm install --frozen-lockfile ${{ (matrix.os.name == 'macos' || matrix.os.name == 'windows') && '--cpu=x64,arm64' || '' }}
       - name: Update nightly version
         run: pnpm run chore:ci-update-nightly-version
       - name: Run the build

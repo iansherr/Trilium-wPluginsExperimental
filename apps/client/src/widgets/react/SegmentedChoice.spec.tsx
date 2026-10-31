@@ -66,6 +66,8 @@ describe("SegmentedChoice", () => {
         const buttons = [ ...container.querySelectorAll("button") ];
         expect(buttons.map((button) => button.textContent?.trim())).toStrictEqual([ "Yours", "System" ]);
         expect(buttons.map((button) => button.classList.contains("active"))).toStrictEqual([ false, true ]);
+        expect(buttons.map((button) => button.getAttribute("aria-pressed")))
+            .toStrictEqual([ "false", "true" ]);
     });
 
     it("shows a count as a badge beside the name rather than inside it", () => {
@@ -104,6 +106,26 @@ describe("SegmentedChoice", () => {
         expect(buttons.map((button) => button.disabled)).toStrictEqual([ true, true ]);
         buttons[1].click();
         expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("draws an icon from its SVG source, with or without a label", () => {
+        const svg = "<svg viewBox=\"0 0 1 1\"></svg>";
+        render(
+            <SegmentedChoice
+                options={[
+                    { value: "named" as const, label: "Named", iconSvg: svg },
+                    { value: "bare" as const, title: "Bare", iconSvg: svg }
+                ]}
+                currentValue="named" onChange={() => {}}
+            />, container
+        );
+
+        const buttons = [ ...container.querySelectorAll("button") ];
+        expect(buttons.map((button) => !!button.querySelector(".tn-svg-icon svg")))
+            .toStrictEqual([ true, true ]);
+        expect(container.querySelector(".bx")).toBeNull();
+        expect(buttons.map((button) => button.classList.contains("tn-icon-only")))
+            .toStrictEqual([ false, true ]);
     });
 
     describe("collapsed onto a narrow screen", () => {

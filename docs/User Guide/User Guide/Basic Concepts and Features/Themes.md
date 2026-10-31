@@ -1,7 +1,7 @@
 # Themes
 ## Default Themes
 
-Trilium comes with a couple pre-installed color themes, with the default being a light theme. To switch to a dark theme or any other available theme, navigate to the Options menu (accessible via the app icon in the top-left corner), select the Appearance tab, and choose your preferred theme.
+Trilium comes with a couple pre-installed color themes, with the default being a light theme. To switch to a dark theme or any other available theme, navigate to the <span class="tn-icon bx bx-cog"></span> Options menu (accessible via the app icon in the top-left corner), select the Appearance tab, and choose your preferred theme. The _Theme_ submenu of the <a class="reference-link" href="UI%20Elements/Global%20menu.md">Global menu</a> switches the theme and the color scheme as well.
 
 ![Dark Theme](Themes_dark-theme.png)
 
@@ -22,8 +22,7 @@ Trilium supports custom user themes, allowing you to personalize the application
   font-style: normal;
   font-weight: 400;
   src: url('/custom/fonts/raleway.woff2') format('woff2');
-}
-
+}&#10;
 :root {
     --main-font-family: 'Raleway' !important;
     --main-font-size: normal;
@@ -31,8 +30,7 @@ Trilium supports custom user themes, allowing you to personalize the application
     --tree-font-size: normal;
     --detail-font-family: inherit;
     --detail-font-size: normal;
-    --detail-text-font-family: 'Garamond' !important;
-
+    --detail-text-font-family: 'Garamond' !important;&#10;
     --main-background-color: #404552;
     --main-text-color: #AFB8C6;
     --main-border-color: #AFB8C6;
@@ -61,12 +59,10 @@ Trilium supports custom user themes, allowing you to personalize the application
     --modal-background-color: #404552;
     --modal-backdrop-color: black;
     --scrollbar-border-color: rgba(175, 184, 198, 0.5);
-}
-
+}&#10;
 body .note-detail-text {
     font-size: 120%;
-}
-
+}&#10;
 body .CodeMirror {
     filter: invert(100%) hue-rotate(180deg);
 }</code></pre>
@@ -79,9 +75,11 @@ body .CodeMirror {
 
 Once you've created your custom theme:
 
-1.  Go to "Menu" -> "Options" -> "Appearance."
+1.  Go to "Menu" -> "Options" (<span class="tn-icon bx bx-cog"></span>) -> "Appearance."
 2.  In the theme selection dropdown, you should see your custom theme listed under the name you provided with the `#appTheme` [label](../Advanced%20Usage/Attributes.md).
 3.  Select your custom theme to activate it.
+
+Your custom theme is also listed under <a class="reference-link" href="UI%20Elements/Global%20menu.md">Global menu</a> → _Theme_, with the icon of its note.
 
 If you make changes to your theme, press Ctrl + R to reload the frontend and apply your updates.
 
@@ -118,7 +116,7 @@ When Trilium's frontend starts, all notes labeled with `appCss` are automaticall
 
 After making changes, press Ctrl + R to reload the frontend and apply your new styles.
 
-![](Themes_image.png)
+![](Themes_image.jpg)
 
 ### Styling Specific Notes in the Tree
 

@@ -17,12 +17,12 @@ body {
         padding: 10px 12px;
     }
 
-    .callout-info {
+    .callout-info,
+    .save-status {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        background: color-mix(in srgb, var(--admonition-note-accent-color) 15%, var(--main-background-color));
 
         a {
             flex-shrink: 0;
@@ -32,8 +32,29 @@ body {
         }
     }
 
+    .callout-info {
+        background: color-mix(in srgb, var(--admonition-note-accent-color) 15%, var(--main-background-color));
+    }
+
+    .callout-success {
+        background: color-mix(in srgb, var(--status-ok-color) 18%, var(--main-background-color));
+    }
+
     .callout-warning {
         background: color-mix(in srgb, var(--admonition-warning-accent-color) 15%, var(--main-background-color));
+    }
+
+    .callout-error {
+        background: color-mix(in srgb, var(--status-error-color) 18%, var(--main-background-color));
+    }
+
+    .save-status-links {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        align-items: flex-end;
+        gap: 6px;
+        white-space: nowrap;
     }
 
     .capture-actions {
@@ -100,15 +121,12 @@ body {
         border-radius: 8px;
         background: var(--card-background-color);
 
-        .clip-mode {
+        .clip-mode,
+        .page-variant {
             display: flex;
             gap: 2px;
-            padding: 2px;
-            border-radius: 8px;
-            background: var(--input-background-color);
 
             button {
-                flex: 1;
                 padding: 3px 8px;
                 border: 0;
                 border-radius: 6px;
@@ -117,8 +135,13 @@ body {
                 font-size: 0.9em;
                 cursor: pointer;
 
-                &:hover {
+                &:hover:not(:disabled) {
                     color: var(--main-text-color);
+                }
+
+                &:disabled {
+                    opacity: 0.5;
+                    cursor: default;
                 }
 
                 &[aria-pressed="true"] {
@@ -129,47 +152,138 @@ body {
             }
         }
 
+        .clip-mode {
+            padding: 2px;
+            border-radius: 8px;
+            background: var(--input-background-color);
+
+            button {
+                flex: 1;
+            }
+        }
+
+        .page-variant {
+            flex: none;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            justify-content: flex-end;
+            padding: 4px 6px;
+            border-bottom: 1px solid var(--main-border-color);
+            background: var(--main-background-color);
+
+            button {
+                padding: 1px 8px;
+                font-size: 0.8em;
+            }
+        }
+
         .page-body {
-            position: relative;
-            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 240px;
+            overflow-y: auto;
             border-radius: 6px;
             background: var(--main-background-color);
 
+            &.compact {
+                height: auto;
+
+                .page-fields {
+                    border-bottom: 0;
+                }
+
+                .page-fields.bookmark .note-text {
+                    min-height: auto;
+                }
+            }
+
             &:has(.page-content)::after {
                 content: "";
-                position: absolute;
-                inset: auto 0 0;
+                flex: none;
+                position: sticky;
+                bottom: 0;
                 height: 24px;
+                margin-top: -24px;
                 background: linear-gradient(transparent, var(--main-background-color));
                 pointer-events: none;
             }
         }
 
-        .page-content {
-            display: block;
-            width: 100%;
-            height: 200px;
-            border: 0;
-            background: var(--main-background-color);
+        .page-fields {
+            flex: none;
+            padding: 6px 8px 6px 6px;
+            border-bottom: 1px solid var(--main-border-color);
+
+            &.bookmark {
+                border-bottom: 0;
+
+                .note-text {
+                    min-height: 6lh;
+                }
+            }
         }
 
-        .note-text {
-            --input-background-color: transparent;
-            --input-hover-background: transparent;
-            --input-focus-background: transparent;
+        .page-field {
+            display: flex;
+            align-items: flex-start;
+            gap: 4px;
+        }
 
-            display: block;
-            width: 100%;
-            height: 200px;
-            padding: 8px;
+        .page-field-icon {
+            display: flex;
+            flex: none;
+            padding: 3px 2px;
+            color: var(--muted-text-color);
+            cursor: help;
+
+            svg.icon {
+                width: 16px;
+                height: 16px;
+            }
+        }
+
+        .note-text,
+        .page-description,
+        .page-author {
+            --input-background-color: transparent;
+
+            flex-grow: 1;
+            min-width: 0;
+            padding: 4px 6px;
             border: 0;
-            border-radius: 6px;
+            border-radius: 4px;
+            color: var(--muted-text-color);
+            font-size: 0.85em;
+            line-height: 1.3;
+            field-sizing: content;
             resize: none;
 
             &:focus {
                 outline: 0;
                 box-shadow: inset 0 0 0 2px var(--input-focus-outline-color);
             }
+        }
+
+        .note-text {
+            max-height: 10lh;
+            color: var(--main-text-color);
+        }
+
+        .page-date {
+            padding: 4px 6px;
+            color: var(--muted-text-color);
+            font-size: 0.85em;
+            line-height: 1.3;
+        }
+
+        .page-content {
+            display: block;
+            flex: none;
+            width: 100%;
+            height: 200px;
+            border: 0;
+            background: var(--main-background-color);
         }
 
         .clip-hint {
@@ -181,8 +295,8 @@ body {
         .page-preview-placeholder {
             display: flex;
             align-items: center;
+            flex-grow: 1;
             justify-content: center;
-            height: 120px;
             padding: 12px;
             color: var(--muted-text-color);
             text-align: center;
@@ -236,7 +350,7 @@ body {
 
     .toolbar {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         gap: 4px;
     }
 

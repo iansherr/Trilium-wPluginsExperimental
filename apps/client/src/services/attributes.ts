@@ -45,22 +45,65 @@ export async function setRelation(noteId: string, name: string, value: string = 
  * @param value the boolean value to set for the label.
  */
 export async function setBooleanWithInheritance(note: FNote, labelName: string, value: boolean) {
-    const actualValue = note.isLabelTruthy(labelName);
-    if (actualValue === value) return;
-    const hasInheritedValue = !note.hasOwnedLabel(labelName) && note.hasLabel(labelName);
+    if (note.isLabelTruthy(labelName) === value) return;
 
-    if (hasInheritedValue) {
-        if (value) {
-            setLabel(note.noteId, labelName, "");
-        } else {
-            // Label is inherited - override to false.
-            setLabel(note.noteId, labelName, "false");
-        }
-    } else if (value) {
-        setLabel(note.noteId, labelName, "");
-    } else {
-        removeOwnedLabelByName(note, labelName);
+    const inheritedLabel = note.getLabels(labelName).find((label) => label.noteId !== note.noteId);
+    const inheritedValue = !!inheritedLabel && inheritedLabel.value !== "false";
+
+    if (value === inheritedValue) {
+        await removeOwnedAttributesByNameOrType(note, "label", labelName);
+        return;
     }
+
+    // `set-attribute` updates one owned label and leaves its duplicates in effect.
+    for (const duplicate of note.getOwnedLabels(labelName).slice(1)) {
+        await removeAttributeById(note.noteId, duplicate.attributeId);
+    }
+    await setLabel(note.noteId, labelName, value ? "" : "false");
+}
+
+/**
+ * Sets a label with a value on the given note, taking inheritance into account like
+ * {@link setBooleanWithInheritance}: the owned labels are removed when the note inherits `value`, or
+ * reads it as `defaultValue` without a label, and one owned label is created or updated otherwise.
+ *
+ * @param note the note on which to set the label.
+ * @param labelName the name of the label to set.
+ * @param value the value to set for the label.
+ * @param defaultValue the value of a note without the label, or with an empty one.
+ * @param isInheritable whether the note's children must read the value too. Without it, an owned
+ * label keeps its inheritability, and a new one is not inheritable.
+ */
+export async function setLabelValueWithInheritance(
+    note: FNote,
+    labelName: string,
+    value: string,
+    defaultValue: string,
+    isInheritable = false
+) {
+    const [ ownedLabel, ...duplicates ] = note.getOwnedLabels(labelName);
+    const inheritedLabel = note.getLabels(labelName).find((label) => label.noteId !== note.noteId);
+
+    if (ownedLabel && (ownedLabel.value || defaultValue) === value
+            && (!isInheritable || ownedLabel.isInheritable)) {
+        return;
+    }
+
+    // A label the note inherits reaches its children only when the label is inheritable itself.
+    const reachesChildren = !isInheritable || !inheritedLabel || inheritedLabel.isInheritable;
+    if (reachesChildren && (inheritedLabel?.value || defaultValue) === value) {
+        await removeOwnedAttributesByNameOrType(note, "label", labelName);
+        return;
+    }
+
+    // `set-attribute` changes the value of an owned label but not its inheritability.
+    const replaced = isInheritable && ownedLabel && !ownedLabel.isInheritable
+        ? [ ownedLabel, ...duplicates ]
+        : duplicates;
+    for (const label of replaced) {
+        await removeAttributeById(note.noteId, label.attributeId);
+    }
+    await setLabel(note.noteId, labelName, value, isInheritable);
 }
 
 async function removeAttributeById(noteId: string, attributeId: string) {
@@ -83,10 +126,10 @@ export async function removeOwnedAttributesByNameOrType(note: FNote, type: Attri
  * @param labelName the name of the label to remove.
  * @returns `true` if an attribute was identified and removed, `false` otherwise.
  */
-function removeOwnedLabelByName(note: FNote, labelName: string) {
+async function removeOwnedLabelByName(note: FNote, labelName: string) {
     const label = note.getOwnedLabel(labelName);
     if (label) {
-        removeAttributeById(note.noteId, label.attributeId);
+        await removeAttributeById(note.noteId, label.attributeId);
         return true;
     }
     return false;
@@ -100,10 +143,10 @@ function removeOwnedLabelByName(note: FNote, labelName: string) {
  * @param relationName the name of the relation to remove.
  * @returns `true` if an attribute was identified and removed, `false` otherwise.
  */
-function removeOwnedRelationByName(note: FNote, relationName: string) {
+async function removeOwnedRelationByName(note: FNote, relationName: string) {
     const relation = note.getOwnedRelation(relationName);
     if (relation) {
-        removeAttributeById(note.noteId, relation.attributeId);
+        await removeAttributeById(note.noteId, relation.attributeId);
         return true;
     }
     return false;

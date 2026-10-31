@@ -4,6 +4,7 @@ import type { default as NoteContext, SaveState } from "../../../components/note
 import type FAttachment from "../../../entities/fattachment";
 import type FNote from "../../../entities/fnote";
 import type { AttachmentEditor, NoteEditor } from "../../../services/content_renderer";
+import froca from "../../../services/froca";
 import protected_session_holder from "../../../services/protected_session_holder";
 import server from "../../../services/server";
 import SpacedUpdate from "../../../services/spaced_update";
@@ -11,6 +12,9 @@ import { type SavedData, useSaveBeforeLeaving } from "../../react/hooks";
 import { ParentComponent } from "../../react/react_utils";
 
 type SavedAttachments = NonNullable<SavedData["attachments"]>;
+
+/** The spaced update that saves a note together with the attachment changes. */
+type NoteUpdate = Pick<SpacedUpdate<unknown>, "scheduleUpdate" | "resetUpdateTimer">;
 
 interface SavedNote {
     note: FNote;
@@ -23,11 +27,21 @@ interface PendingSave<T> {
     getContent?: () => string;
     /** The content read when the editor went away. */
     content?: string;
+    /** Runs with the content once it saves, unless the entity changed again by then. */
+    onSaved?: (content: string) => void;
     /**
      * Numbers the change, uniquely among all changes, so that a save drops only the change it
      * sent, also when it is retried.
      */
     revision: number;
+}
+
+/** A change that a save sent. */
+interface SentRevision {
+    id: string;
+    revision: number;
+    content: string;
+    onSaved?: (content: string) => void;
 }
 
 /**
@@ -37,7 +51,9 @@ interface PendingSave<T> {
 abstract class PendingSaves<T, I extends object> {
     protected pending = new Map<string, PendingSave<T>>();
     private lastRevision = 0;
-    private sentRevisions = new WeakMap<I, { id: string; revision: number }>();
+    /** The revision of the last change to each entity, kept when `pending` drops the change. */
+    private latestRevisions = new Map<string, number>();
+    private sentRevisions = new WeakMap<I, SentRevision>();
 
     getUnsavedContent(id: string) {
         const save = this.pending.get(id);
@@ -52,26 +68,41 @@ abstract class PendingSaves<T, I extends object> {
         }
     }
 
-    /** Drops the changes that `items`, as returned by `collectItems()`, saved. */
+    /**
+     * Drops the changes that `items`, as returned by `collectItems()`, saved, and runs the
+     * `onSaved` of each.
+     */
     markSaved(items: I[] | undefined) {
         for (const item of items ?? []) {
             const sent = this.sentRevisions.get(item);
-            if (sent && this.pending.get(sent.id)?.revision === sent.revision) {
+            if (sent && this.latestRevisions.get(sent.id) === sent.revision) {
                 this.pending.delete(sent.id);
+                this.latestRevisions.delete(sent.id);
+                sent.onSaved?.(sent.content);
             }
         }
     }
 
-    protected schedule(id: string, entity: T, getContent: () => string) {
-        this.pending.set(id, { entity, getContent, revision: ++this.lastRevision });
+    protected schedule(
+        id: string,
+        entity: T,
+        getContent: () => string,
+        onSaved?: (content: string) => void
+    ) {
+        const revision = ++this.lastRevision;
+        this.pending.set(id, { entity, getContent, onSaved, revision });
+        this.latestRevisions.set(id, revision);
     }
 
     /** One item for each change, with the content read at the time of the call. */
     protected collectItems(toItem: (id: string, entity: T, content: string) => I) {
         const items: I[] = [];
         for (const [ id, save ] of this.pending) {
-            const item = toItem(id, save.entity, readContent(save));
-            this.sentRevisions.set(item, { id, revision: save.revision });
+            const content = readContent(save);
+            const item = toItem(id, save.entity, content);
+            this.sentRevisions.set(item, {
+                id, revision: save.revision, content, onSaved: save.onSaved
+            });
             items.push(item);
         }
 
@@ -88,8 +119,11 @@ export default class AttachmentSaves
     implements AttachmentEditor {
     private noteId: string | undefined;
 
-    /** @param scheduleUpdate schedules a save of the text note. */
-    constructor(private scheduleUpdate: () => void) {
+    /**
+     * @param getUpdate returns the spaced update that saves the note.
+     * @param componentId the component that sends the saves.
+     */
+    constructor(private getUpdate: () => NoteUpdate, readonly componentId?: string) {
         super();
     }
 
@@ -105,9 +139,17 @@ export default class AttachmentSaves
         return !!this.noteId && attachment.ownerId === this.noteId;
     }
 
-    scheduleSave(attachment: FAttachment, getContent: () => string) {
-        this.schedule(attachment.attachmentId, attachment, getContent);
-        this.scheduleUpdate();
+    scheduleSave(
+        attachment: FAttachment,
+        getContent: () => string,
+        onSaved?: (content: string) => void
+    ) {
+        this.schedule(attachment.attachmentId, attachment, getContent, onSaved);
+        this.getUpdate().scheduleUpdate();
+    }
+
+    postponeSave() {
+        this.getUpdate().resetUpdateTimer();
     }
 
     /** The attachments to save with the note, read at the time of the call. */
@@ -143,8 +185,8 @@ export class NoteSaves extends PendingSaves<FNote, SavedNote> implements NoteEdi
         return note.noteId !== this.getHostNoteId() && note.isContentAvailable();
     }
 
-    scheduleSave(note: FNote, getContent: () => string) {
-        this.schedule(note.noteId, note, getContent);
+    scheduleSave(note: FNote, getContent: () => string, onSaved?: (content: string) => void) {
+        this.schedule(note.noteId, note, getContent, onSaved);
         this.setSaveState(note.noteId, "unsaved");
         this.scheduleUpdate();
     }
@@ -194,6 +236,34 @@ export class NoteSaves extends PendingSaves<FNote, SavedNote> implements NoteEdi
 }
 
 /**
+ * The writes that inline sources, such as Mermaid diagrams, hold back until their source stops
+ * changing. The text note saves them into its model first, since they are part of its content.
+ */
+export class InlineSourceSaves {
+    private readonly pending = new Set<() => void>();
+
+    /** @param scheduleUpdate schedules a save of the text note. */
+    constructor(private readonly scheduleUpdate: () => void) {}
+
+    /** Holds `write` until {@link flush}, or until the source writes it itself. */
+    add(write: () => void) {
+        this.pending.add(write);
+        this.scheduleUpdate();
+    }
+
+    delete(write: () => void) {
+        this.pending.delete(write);
+    }
+
+    /** Makes the held writes now. */
+    flush() {
+        for (const write of [ ...this.pending ]) {
+            write();
+        }
+    }
+}
+
+/**
  * Saves the changes that content shown outside a text note, such as a canvas drawing in the full
  * detail of its attachment, makes to the attachments of `note`.
  */
@@ -203,7 +273,7 @@ export function useAttachmentEditor(
 ): AttachmentEditor {
     const parentComponent = useContext(ParentComponent);
     const [ saves ] = useState(() => {
-        const saves = new AttachmentSaves(() => spacedUpdate.scheduleUpdate());
+        const saves = new AttachmentSaves(() => spacedUpdate, parentComponent?.componentId);
         saves.setNoteId(note.noteId);
         return saves;
     });
@@ -212,6 +282,11 @@ export function useAttachmentEditor(
 
     const prepare = useCallback(() => saves.collect(), [ saves ]);
     const commit = useCallback(async (attachments: SavedAttachments) => {
+        // A deleted note is gone from `froca`, and the server refuses its changes.
+        if (!(note.noteId in froca.notes)) {
+            saves.markSaved(attachments);
+            return;
+        }
         protected_session_holder.touchProtectedSessionIfNecessary(note);
         for (const attachment of attachments) {
             await server.post(
@@ -258,7 +333,8 @@ export function useNoteEditor(noteContext: NoteContext | null | undefined): Note
     const [ spacedUpdate ] = useState(() => new SpacedUpdate<SavedNote[]>({
         key: null,
         prepare: () => saves.collect(),
-        commit: (notes) => saves.save(notes, ({ note, content }) => {
+        commit: (notes) => saves.save(notes, async ({ note, content }) => {
+            if (!(note.noteId in froca.notes)) return;
             protected_session_holder.touchProtectedSessionIfNecessary(note);
             return server.put(`notes/${note.noteId}/data`, { content }, saves.componentId);
         })

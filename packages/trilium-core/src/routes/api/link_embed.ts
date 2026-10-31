@@ -9,7 +9,7 @@ import type { Request } from "../../http_interface";
 import { parse } from "node-html-parser";
 
 import { ValidationError } from "../../errors.js";
-import { trimIcoToSmallestEntry } from "../../services/ico.js";
+import { pngInsideIco, trimIcoToSmallestEntry } from "../../services/ico.js";
 import imageService from "../../services/image.js";
 import { storePictureBytes } from "../../services/image_download.js";
 import { type InspectedImage, inspectImage, UNKNOWN_FORMAT } from "../../services/image_inspect.js";
@@ -22,6 +22,17 @@ import { decodeUtf8 } from "../../services/utils/binary.js";
 const MAX_RESPONSE_SIZE = 512 * 1024; // 512KB
 /** An oEmbed answer is a handful of fields; anything approaching this is not one. */
 const MAX_OEMBED_SIZE = 64 * 1024; // 64KB
+/** Largest YouTube thumbnail kept. A larger one is skipped for the next size down. */
+const MAX_VIDEO_THUMBNAIL_SIZE = 300 * 1024; // 300KB
+/**
+ * YouTube's thumbnail sizes, largest first, with the longest edge each must have. YouTube returns
+ * 404 and a 120x90 placeholder for a size the video does not have.
+ */
+const YOUTUBE_THUMBNAIL_SIZES = [
+    { name: "maxresdefault", minEdge: 1280 },
+    { name: "sddefault", minEdge: 640 },
+    { name: "hqdefault", minEdge: 0 }
+] as const;
 
 /**
  * How much of a favicon to fetch.
@@ -47,7 +58,7 @@ const MAX_FAVICON_SIZE = 64 * 1024; // 64KB
  */
 const FAVICON_TARGET_EDGE = 48;
 
-/** Longest edge of the preview image kept in the note; larger images are scaled down to fit. */
+/** Longest edge of a web page's cover image kept in the note; larger ones are scaled to fit. */
 const IMAGE_MAX_DIMENSION = 256;
 /** Quality used when re-encoding an opaque preview image to JPEG. */
 const IMAGE_JPEG_QUALITY = 75;
@@ -200,12 +211,20 @@ async function downloadFavicon(faviconUrl: string): Promise<DownloadedPicture | 
         return undefined;
     }
 
-    // An icon directory gives up the sizes nothing will look at; anything else is kept as it came.
-    const bytes = trimIcoToSmallestEntry(downloaded.bytes, FAVICON_TARGET_EDGE) ?? downloaded.bytes;
+    return asFavicon(downloaded.bytes);
+}
 
-    // The ceiling is on what is kept, not on what arrived: a file that is one large picture has
-    // nothing to give up, and is the case this refuses.
-    return bytes.byteLength <= MAX_FAVICON_SIZE ? asPicture(bytes) : undefined;
+/**
+ * Keeps the part of a favicon a preview draws: the smallest entry of an icon directory, as a plain
+ * PNG when that entry is one, and any other picture as it is. Returns undefined if the bytes are
+ * not a picture or what is kept is too large.
+ */
+function asFavicon(bytes: Uint8Array): DownloadedPicture | undefined {
+    const trimmed = trimIcoToSmallestEntry(bytes, FAVICON_TARGET_EDGE) ?? bytes;
+    const kept = pngInsideIco(trimmed) ?? trimmed;
+
+    // The limit applies to what is kept, so an icon directory with one large entry is refused.
+    return kept.byteLength <= MAX_FAVICON_SIZE ? asPicture(kept) : undefined;
 }
 
 /**
@@ -475,37 +494,60 @@ function rankFavicon(rel: string, href: string, type: string | undefined, sizes:
 }
 
 /**
- * Fetches YouTube metadata via the public oEmbed endpoint.
- * This works reliably unlike scraping youtube.com (which blocks bots).
+ * Fetches YouTube metadata via the public oEmbed endpoint, with the site's favicon and the video's
+ * thumbnail. oEmbed works reliably, unlike scraping youtube.com (which blocks bots).
  */
 async function fetchYouTubeMetadata(url: string, videoId: string): Promise<FetchedPreview> {
-    const metadata: LinkEmbedMetadata = {
-        url,
-        siteName: "YouTube",
-        embedType: "youtube"
+    const [ details, favicon, image ] = await Promise.all([
+        fetchYouTubeDetails(url),
+        downloadFavicon("https://www.youtube.com/favicon.ico"),
+        downloadYouTubeThumbnail(videoId)
+    ]);
+
+    return {
+        metadata: { url, siteName: "YouTube", embedType: "youtube", ...details },
+        favicon,
+        image
     };
+}
 
-    const favicon = await downloadFavicon("https://www.youtube.com/favicon.ico");
-
-    let thumbnailUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-
+/** The video's title and channel name from oEmbed, or a generic title when oEmbed fails. */
+async function fetchYouTubeDetails(
+    url: string
+): Promise<Pick<LinkEmbedMetadata, "title" | "description">> {
     try {
-        const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+        const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}`
+            + "&format=json";
         const response = await request.fetchResource(oembedUrl, { maxBytes: MAX_OEMBED_SIZE });
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = JSON.parse(asText(response));
-        if (data.title) metadata.title = data.title;
-        if (data.author_name) metadata.description = data.author_name;
-        if (data.thumbnail_url) thumbnailUrl = data.thumbnail_url;
+        return { title: data.title || undefined, description: data.author_name || undefined };
     } catch {
-        metadata.title = "YouTube Video";
+        return { title: "YouTube Video" };
+    }
+}
+
+/**
+ * Downloads the largest thumbnail YouTube has for the video, at most 1280x720. The JPEG is stored
+ * as served, so no decoder is needed and every runtime keeps the same picture.
+ */
+async function downloadYouTubeThumbnail(videoId: string): Promise<DownloadedPicture | undefined> {
+    for (const { name, minEdge } of YOUTUBE_THUMBNAIL_SIZES) {
+        const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/${name}.jpg`;
+        const downloaded = await downloadBinary(
+            thumbnailUrl, MAX_VIDEO_THUMBNAIL_SIZE, "image/jpeg");
+        if (!downloaded) continue;
+
+        const inspected = inspectImage(downloaded.bytes);
+        if (inspected.format === UNKNOWN_FORMAT) continue;
+        if (minEdge && !isAtLeast(inspected, minEdge)) continue;
+
+        return { bytes: downloaded.bytes };
     }
 
-    // The thumbnail is stored like any other preview image: it is what Card display mode shows, and
-    // hotlinking it would tell YouTube every time the note is opened.
-    return { metadata, favicon, image: await downloadPreviewImage(thumbnailUrl) };
+    return undefined;
 }
 
 async function fetchOpenGraphData(url: string) {
@@ -586,7 +628,7 @@ async function getMetadata(req: Request) {
     // A YouTube link stays resolved even when oEmbed is unreachable: the player embeds from the
     // video ID alone, so the preview is worth showing with or without the title and channel.
     if (videoId) {
-        return await storePictures(noteIdParam, url, await fetchYouTubeMetadata(url, videoId));
+        return await resolveYouTubePreview(noteIdParam, url, videoId);
     }
 
     try {
@@ -615,6 +657,22 @@ async function getMetadata(req: Request) {
         getLog().info(`Failed to fetch link preview metadata: ${e}`);
         return unresolvedMetadata(validatedUrl);
     }
+}
+
+/**
+ * The metadata of a preview for a YouTube video, with its thumbnail and favicon stored as attachments
+ * of the note `noteId`.
+ */
+export async function resolveYouTubePreview(noteId: string, url: string, videoId: string) {
+    return await storePictures(noteId, url, await fetchYouTubeMetadata(url, videoId));
+}
+
+/**
+ * Stores a favicon the caller already holds as an attachment of the note `noteId`, named after the
+ * site of `pageUrl`, and returns its URL. Returns undefined if the bytes are not a usable favicon.
+ */
+export async function storeFavicon(noteId: string, pageUrl: string, bytes: Uint8Array) {
+    return await storePicture(noteId, asFavicon(bytes), "favicon", safeHostname(pageUrl));
 }
 
 /**

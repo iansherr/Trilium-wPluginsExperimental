@@ -1,24 +1,42 @@
-import { type EditorConfig, getCkLocale, SnippetDefinition, type TextTransformationConfig } from "@triliumnext/ckeditor5";
+import {
+    type AttachmentUploadHost, type ContentEmbedHost, type EditorConfig, getCkLocale,
+    type IconPickerRequest, type LinkDialogRequest, type LinkEmbedHost, SnippetDefinition,
+    type TextTransformationConfig
+} from "@triliumnext/ckeditor5";
 import emojiDefinitionsUrl from "@triliumnext/ckeditor5/src/emoji_definitions/en.json?url";
 import { ALLOWED_PROTOCOLS, DISPLAYABLE_LOCALE_IDS, formatShortcut, IMAGE_UPLOAD_SUBTYPES, joinShortcut, KATEX_MACROS, MIME_TYPE_AUTO, normalizeMimeTypeForCKEditor } from "@triliumnext/commons";
 import i18next from "i18next";
 
+import type { CommandMappings, CommandNames } from "../../../components/app_context.js";
+import { buildReferenceConfig, type ReferenceSource } from "../../../services/block_reference.js";
 import { copyHtmlWithToast, copyTextWithToast } from "../../../services/clipboard_ext.js";
+import { getUploadBoxSize } from "../../../services/content_renderer.js";
+import { prompt } from "../../../services/dialog.js";
+import { isExperimentalFeatureEnabled } from "../../../services/experimental_features.js";
 import { t } from "../../../services/i18n.js";
 import imageService from "../../../services/image.js";
-import { getMermaidConfig } from "../../../services/mermaid.js";
+import { getNoteImageSourceToLoad } from "../../../services/image_urls.js";
+import linkService from "../../../services/link.js";
+import { detectEmbedType, fetchMetadata, renderEmbedPreview, renderMentionPreview, unresolvedMetadata } from "../../../services/link_embed.js";
 import { default as mimeTypesService, getHighlightJsNameForMime } from "../../../services/mime_types.js";
 import options from "../../../services/options.js";
 import { sanitizeNoteContentHtml } from "../../../services/sanitize_content.js";
+import server from "../../../services/server.js";
+import { getSourceEmbedTypeByLanguage, SOURCE_EMBED_TYPES } from "../../../services/source_embeds.js";
 import { ensureMimeTypesForHighlighting, isSyntaxHighlightEnabled } from "../../../services/syntax_highlight.js";
 import { getTaskStateDefinitions, openCustomTaskStateConfig } from "../../../services/task_states.js";
-import { isMac, isMobile, openInAppHelpFromUrl } from "../../../services/utils.js";
+import { formatDateTime, isMac, isMobile } from "../../../services/utils.js";
 import { resolveContentLanguage } from "../../../utils/formatters.js";
+import { FLOATING_LAYER_SELECTOR } from "../../react/floating_layers.js";
+import { convertImageToDrawing } from "../canvas/image_to_drawing.js";
 import SAMPLE_DIAGRAMS from "../mermaid/sample_diagrams.js";
 import buildAiAssistantStream, { type AiNoteLocationProvider, buildAiAssistantQuickActions } from "./ai_assistant_stream.js";
 import diffAiResponse from "./ai_diff.js";
+import { buildChildNoteHost, type ChildNoteParent } from "./child_note.js";
+import { createColorMenuHost } from "./color_menu.js";
 import { buildFontColorConfig, buildTableColorConfig } from "./color_palette.js";
 import { createEmojiList, createNoteMentionList, createSlashCommandList } from "./mention_list_view.js";
+import { getShownToolbarIsland } from "./mobile_editor_toolbar.js";
 import { buildQuoteTransformation, resolveQuoteSetting } from "./quotes.js";
 import { buildCustomTransformations, parseCustomReplacements } from "./replacements.js";
 import { buildToolbarConfig } from "./toolbar.js";
@@ -36,13 +54,40 @@ export interface BuildEditorOptions {
     contentLanguage: string | null;
     templates: SnippetDefinition[];
     /**
-     * Names the note the editor is open on, for the AI assistant to say where a run is writing and
-     * for the `@` list to create a child note under.
+     * Names the note the editor is open on, for the AI assistant to say where a run is writing.
      * A getter rather than the note itself: switching notes reuses the editor, so anything captured
      * here would name the note that happened to be open when it was built.
      */
     getNoteLocation?: AiNoteLocationProvider;
+    /**
+     * The note the editor is open on, for the "New child note" button and the `@` list to create a
+     * child note under. A getter for the same reason as `getNoteLocation`.
+     */
+    getChildNoteParent?: () => ChildNoteParent | undefined;
+    /** The ID of the note the editor is open on. A getter for the same reason as `getNoteLocation`. */
+    getNoteId?: () => string | undefined;
+    /** The ID of the component that hosts the editor, which changes the editor makes are sent as. */
+    getComponentId?: () => string | undefined;
+    /** Triggers `command` with `data` on the component that hosts the editor. */
+    triggerHostCommand?: <K extends CommandNames>(
+        command: K, data?: CommandMappings[K]
+    ) => Promise<unknown> | undefined | null;
+    /** Shows the icon picker the editor asks for, as `inlineIcon.showPicker` does. */
+    showIconPicker?: (request: IconPickerRequest) => (() => void) | null;
+    /** Shows the link dialog, as `internalLink.showDialog` does. */
+    showLinkDialog?: (request: LinkDialogRequest) => (() => void) | null;
+    /** The note that the block and tab references the editor copies point to. */
+    referenceSource?: ReferenceSource;
+    /**
+     * What renders the embeds of the editor and acts on them. A getter: the handlers hold the
+     * state of the component that hosts the editor, which changes as it renders.
+     */
+    getContentEmbedHandlers?: () => ContentEmbedHandlers | undefined;
 }
+
+/** The members of `contentEmbed` that the component hosting the editor implements. */
+export type ContentEmbedHandlers =
+    Omit<ContentEmbedHost, "pickNote" | "inlineLanguages" | "renderInlinePreview" | "sanitizeHtml">;
 
 export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfig> {
     // `undefined` when the AI features are off or no LLM provider is configured. Decided once:
@@ -51,6 +96,11 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
     const config: EditorConfig = {
         licenseKey: OPEN_SOURCE_LICENSE_KEY,
         placeholder: t("editable_text.placeholder"),
+        // An editor inside a shadow root, such as a presentation slide's, would otherwise mount its
+        // balloons and toolbars in that root, out of reach of the app's stylesheets.
+        ui: {
+            overlayContainer: document.body
+        },
         codeBlock: {
             languages: buildListOfLanguages()
         },
@@ -68,12 +118,21 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
             enableMathField: options.get("mathFieldEnabled") !== "false"
         },
         mermaid: {
-            lazyLoad: async () => (await import("mermaid")).default, // FIXME
-            config: getMermaidConfig(),
-            samples: SAMPLE_DIAGRAMS,
-            openHelp: () => openInAppHelpFromUrl("s1aBHPd79XYj")
+            samples: SAMPLE_DIAGRAMS
+        },
+        contentEmbed: {
+            pickNote: bindHostCommand(opts, "addIncludeNoteToText"),
+            inlineLanguages: SOURCE_EMBED_TYPES.map((type) => type.language),
+            renderInlinePreview: (language, source, container) => {
+                void getSourceEmbedTypeByLanguage(language)?.renderPreview(source, container);
+            },
+            sanitizeHtml: sanitizeNoteContentHtml,
+            ...bindContentEmbedHandlers(opts.getContentEmbedHandlers)
         },
         image: {
+            insert: {
+                type: "auto"
+            },
             styles: {
                 options: [
                     "inline",
@@ -108,27 +167,15 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
                 }
             ],
             toolbar: [
-                // Image styles, see https://ckeditor.com/docs/ckeditor5/latest/features/images/images-styles.html#demo.
-                "imageStyle:inline",
-                "imageStyle:alignCenter",
-                {
-                    name: "imageStyle:wrapText",
-                    title: "Wrap text",
-                    items: ["imageStyle:alignLeft", "imageStyle:alignRight"],
-                    defaultItem: "imageStyle:alignRight"
-                },
-                {
-                    name: "imageStyle:block",
-                    title: "Block align",
-                    items: ["imageStyle:alignBlockLeft", "imageStyle:alignBlockRight"],
-                    defaultItem: "imageStyle:alignBlockLeft"
-                },
+                "imagePosition",
                 "|",
                 "imageResize:25",
                 "imageResize:50",
                 "imageResize:original",
                 "|",
-                "toggleImageCaption"
+                "toggleImageCaption",
+                "|",
+                "convertImageToDrawing"
             ],
             upload: {
                 // Derived rather than listed, so what the editor inserts as a picture and what the
@@ -163,7 +210,7 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
             }
         },
         alignment: {
-            options: [ "left", "right", "center", "justify"]
+            options: [ "left", "center", "right", "justify" ]
         },
         ...buildFontColorConfig(),
         link: {
@@ -201,11 +248,49 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
             copy: copyTextWithToast,
             copyHtml: copyHtmlWithToast
         },
+        // Reads `customDateTimeFormat` on each call, so a changed format applies to open editors.
+        formatDateTime: (date, format) => formatDateTime(date, format ?? options.get("customDateTimeFormat")),
+        referenceLink: {
+            getTitle: linkService.getReferenceLinkTitle,
+            getTitleSync: linkService.getReferenceLinkTitleSync,
+            renderTitle: (element, href, storedTitle) => {
+                void linkService.loadReferenceLinkTitle($(element), href, opts.getNoteId?.(), storedTitle);
+            },
+            fixLink: (storedTitle, fix) => {
+                void opts.triggerHostCommand?.("showEditLinkDialog", {
+                    text: storedTitle,
+                    hasSelection: false,
+                    fixLink: true,
+                    async addLink(notePath) {
+                        fix(`#${notePath}`);
+                    }
+                });
+            }
+        },
+        linkEmbed: buildLinkEmbedHost(opts.getNoteId),
+        getNoteId: opts.getNoteId,
+        attachmentUpload: buildAttachmentUploadHost(opts.getComponentId),
+        internalLink: { showDialog: (request) => opts.showLinkDialog?.(request) ?? null },
+        // The link dialog's note suggestions render in the page's body.
+        hostedBalloon: { keepOpenSelector: FLOATING_LAYER_SELECTOR },
+        childNote: buildChildNoteHost(() => opts.getChildNoteParent?.()),
+        markdownImport: { open: bindHostCommand(opts, "pasteMarkdownIntoText") },
+        inlineIcon: { showPicker: (request) => opts.showIconPicker?.(request) ?? null },
+        ...(opts.referenceSource && buildReferenceConfig(opts.referenceSource)),
+        imageToDrawing: {
+            async convert(src) {
+                const noteId = opts.getNoteId?.();
+                return noteId ? convertImageToDrawing(noteId, src, opts.getComponentId?.()) : null;
+            }
+        },
+        cutToNote: {
+            cut: bindHostCommand(opts, "cutIntoNote"),
+            saveNow: bindHostCommand(opts, "saveNoteDetailNow")
+        },
         slashCommand: {
-            // Drop CKEditor's built-in slash commands whose title/icon the palette re-defines: the
-            // Mermaid one (generic icon) and the list ones (Title Case titles, normalized to
-            // sentence case).
-            removeCommands: ["insertMermaidCommand", "bulletedList", "numberedList"],
+            // Drop CKEditor's built-in list slash commands, whose Title Case titles the palette
+            // re-defines in sentence case, and those of the experimental features that are off.
+            removeCommands: ["bulletedList", "numberedList", ...getDisabledExperimentalCommands()],
             list: createSlashCommandList
         },
         snippets: {
@@ -248,8 +333,10 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
     // Global on/off switch for content-area hints (bottom-corner popups on task
     // checkboxes, collapsible summaries, drag handles). Plugins consult this via
     // `editor.config.get("contentHintsEnabled")` and skip registering their hint
-    // managers when it's false.
-    (config as Record<string, unknown>).contentHintsEnabled = options.get("textNoteContentHintsEnabled") === "true";
+    // managers when it's false. The mobile layout leaves them out: they show keyboard
+    // shortcuts, and the caret sets them off on every tap.
+    (config as Record<string, unknown>).contentHintsEnabled = !isMobile()
+        && options.get("textNoteContentHintsEnabled") === "true";
 
     // Whether a URL typed or pasted into the note is auto-detected and turned into a link preview.
     // A getter rather than a boolean: the LinkEmbed plugin calls it each time a URL is detected, so
@@ -266,6 +353,10 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
     };
     const imageToolbar = (config.image as { toolbar: (string | object)[] }).toolbar;
     imageToolbar.push("|", ...(imageService.isImageCopySupported() ? ["copyImageToClipboard"] : []), "downloadImage");
+
+    // Loads a changed note image from a new URL, so the browser does not show the copy it loaded
+    // before.
+    config.imageEditingSource = { resolve: getNoteImageSourceToLoad };
 
     // Embed internal images as data: URIs when content is copied out to external apps, while
     // keeping internal Trilium paste reference-based (see the ClipboardImageEmbed plugin). The
@@ -315,17 +406,86 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
                 allowSpaces: true,
                 list: () => createNoteMentionList({
                     allowCreatingNotes: true,
-                    getParentNotePath: () => opts.getNoteLocation?.()?.notePath
+                    getChildNoteParent: opts.getChildNoteParent
                 })
             }
         ] : []
     };
 
     config.toolbarGroupMenu = { host: () => createToolbarGroupMenuHost() };
+    config.colorMenu = { host: () => createColorMenuHost() };
+    config.listStartPrompt = async (label, current) =>
+        parseListStart(await prompt({ title: label, defaultValue: String(current) }));
+    config.tableColumnBar = { bottomObstacle: getShownToolbarIsland };
 
     return {
         ...config,
         ...buildToolbarConfig(opts.isClassicEditor, !!aiAssistantStream)
+    };
+}
+
+/** The `contentEmbed` members that call the handlers `getHandlers()` returns at the time. */
+function bindContentEmbedHandlers(
+    getHandlers: () => ContentEmbedHandlers | undefined = () => undefined
+): ContentEmbedHandlers {
+    return {
+        loadNote: (...args) => getHandlers()?.loadNote(...args),
+        loadAttachment: (...args) => getHandlers()?.loadAttachment(...args),
+        loadInline: (...args) => getHandlers()?.loadInline(...args),
+        flushInline: () => getHandlers()?.flushInline(),
+        loadUnknown: (...args) => getHandlers()?.loadUnknown(...args),
+        focusAttachment: (attachmentId) => getHandlers()?.focusAttachment(attachmentId),
+        getAttachmentHref: async (attachmentId) =>
+            (await getHandlers()?.getAttachmentHref(attachmentId)) ?? null,
+        openMenu: (embed, anchor) => getHandlers()?.openMenu(embed, anchor),
+        getTools: (embed) => getHandlers()?.getTools(embed) ?? null,
+        enter: (embed, edge) => getHandlers()?.enter(embed, edge) ?? false
+    };
+}
+
+/** The slash commands of the experimental features that are off. */
+function getDisabledExperimentalCommands(): string[] {
+    return isExperimentalFeatureEnabled("extendedCodeBlocks") ? [] : [ "extended-code-block" ];
+}
+
+/** A callback that triggers `command` on the component that hosts the editor, and waits for it. */
+function bindHostCommand(opts: BuildEditorOptions, command: CommandNames) {
+    return async () => {
+        await opts.triggerHostCommand?.(command);
+    };
+}
+
+/** The upload services of the editor, sending its uploads as changes of `getComponentId()`. */
+function buildAttachmentUploadHost(getComponentId?: () => string | undefined): AttachmentUploadHost {
+    return {
+        async getHeaders() {
+            // Sent as a change of the host, which then does not redraw the links and embeds it shows.
+            const headers = await server.getHeaders({ "trilium-component-id": getComponentId?.() });
+            const sent: Record<string, string> = {};
+            for (const [ name, value ] of Object.entries(headers)) {
+                if (value) {
+                    sent[name] = value;
+                }
+            }
+            return sent;
+        },
+        getLocalUpload: server.getLocalUpload,
+        getEmbedBoxSize: getUploadBoxSize
+    };
+}
+
+/** The link preview services of the editor, for the note `getNoteId()` names. */
+function buildLinkEmbedHost(getNoteId?: () => string | undefined): LinkEmbedHost {
+    return {
+        async fetchMetadata(url) {
+            // The pictures of a preview are stored as attachments of the note being edited, so
+            // without a note the URL stays a plain link, as for any preview that cannot be built.
+            const noteId = getNoteId?.();
+            return noteId ? await fetchMetadata(url, noteId) : unresolvedMetadata(url);
+        },
+        detectEmbedType,
+        renderEmbed: renderEmbedPreview,
+        renderMention: renderMentionPreview
     };
 }
 
@@ -343,6 +503,12 @@ export async function buildConfig(opts: BuildEditorOptions): Promise<EditorConfi
  * we actually have a pair for the language, so an unmapped locale keeps falling through to
  * CKEditor's default rather than losing quote replacement altogether.
  */
+/** The number a list starts at, from the text of a prompt: a whole number of 0 or more, or `null`. */
+function parseListStart(value: string | null) {
+    const text = value?.trim() ?? "";
+    return /^\d+$/.test(text) ? Number(text) : null;
+}
+
 function buildTransformationsConfig(contentLanguage: string | null): TextTransformationConfig {
     const remove: string[] = [];
     if (options.get("textNotePunctuationReplacementsEnabled") !== "true") remove.push("typography");
@@ -389,8 +555,7 @@ function getEnglishEditorMessages(): Record<string, string> {
 
 function buildListOfLanguages() {
     const userLanguages = mimeTypesService
-        .getMimeTypes()
-        .filter((mt) => mt.enabled)
+        .getEnabledMimeTypes()
         // The `env=frontend`/`env=backend` JavaScript variants are Trilium script environments,
         // which are meaningless inside a (display-only) code block. Plain `text/javascript`
         // already provides JavaScript highlighting, so omit the script-specific variants here.

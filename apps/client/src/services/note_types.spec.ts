@@ -19,7 +19,10 @@ vi.mock("./experimental_features.js", () => ({
 }));
 
 import { isExperimentalFeatureEnabled } from "./experimental_features.js";
-import noteTypesService, { isCurrentNoteType, selectableNoteTypes } from "./note_types";
+import noteTypesService, {
+    currentNoteTypeOption, isCurrentNoteType, type NoteTypeOption, noteTypeOptionIcon,
+    selectableNoteTypes
+} from "./note_types";
 
 const llmFlag = vi.mocked(isExperimentalFeatureEnabled);
 
@@ -328,9 +331,19 @@ describe("getUserTemplates", () => {
         // The template is not among the new ones -> no badge.
         withTemplates([userTpl.noteId]);
         const restore = withTemplatesRoot([]);
+        const triggerCommand = vi.spyOn(appContext, "triggerCommand").mockImplementation(async () => undefined);
         try {
             const items: any[] = await noteTypesService.getNoteTypeItems("cmd2" as never);
-            expect(items.some((i) => i.kind === "header")).toBe(true);
+            const header = items.find((i) => i.kind === "header" && i.title === "note_type_chooser.templates");
+            expect(header).toBeTruthy();
+            // The heading's one action opens the Content Manager.
+            expect(header.actions).toHaveLength(1);
+            const [ manage ] = header.actions;
+            expect(manage.icon).toBe("bx bx-cog");
+            expect(manage.caption).toBe("note_type_chooser.manage_templates");
+            manage.callback(new MouseEvent("click"));
+            expect(triggerCommand).toHaveBeenCalledWith("showOptions", { section: "_optionsContentManager" });
+
             const tplItem = items.find((i) => i.templateNoteId === userTpl.noteId);
             expect(tplItem).toBeTruthy();
             expect(tplItem.title).toBe("My Template");
@@ -340,6 +353,7 @@ describe("getUserTemplates", () => {
             // Old template -> no "new" badge.
             expect(tplItem.badges).toBeUndefined();
         } finally {
+            triggerCommand.mockRestore();
             restore();
         }
     });
@@ -666,5 +680,36 @@ describe("selectableNoteTypes", () => {
             expect(types.some((nt) => nt.type === "llmChat")).toBe(false);
             expect(types.some((nt) => nt.type === "text")).toBe(true);
         }
+    });
+});
+
+describe("currentNoteTypeOption and noteTypeOptionIcon", () => {
+    function option(id: string, title: string): NoteTypeOption {
+        return { id, title, icon: "bx bx-note", group: "type", options: { type: "text" } };
+    }
+
+    /**
+     * The stored option can be gone: removed from the list, or its template note deleted. A note
+     * is made from the first option offered rather than from nothing.
+     */
+    it("falls back to the first offered option", () => {
+        const offered = [ option("type:text:text/html", "Text"), option("note:mine", "Mine") ];
+
+        expect(currentNoteTypeOption(offered, "note:mine")?.title).toBe("Mine");
+        expect(currentNoteTypeOption(offered, "type:canvas:application/json")?.title).toBe("Text");
+        expect(currentNoteTypeOption(offered, undefined)?.title).toBe("Text");
+        expect(currentNoteTypeOption([], "type:text:text/html")).toBeUndefined();
+    });
+
+    /**
+     * A note type carries a bare icon class, while a template note's comes from `FNote.getIcon()`
+     * with `tn-icon` in front. The picker writes neither prefix, so both have to read alike.
+     */
+    it("gives an option's icon as the icon picker would write it", () => {
+        const template = { ...option("note:mine", "Mine"), icon: "tn-icon bx bx-user" };
+
+        expect(noteTypeOptionIcon(template)).toBe("bx bx-user");
+        expect(noteTypeOptionIcon(option("type:text:text/html", "Text"))).toBe("bx bx-note");
+        expect(noteTypeOptionIcon(undefined)).toBeUndefined();
     });
 });

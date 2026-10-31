@@ -1,9 +1,10 @@
 import "./CollectionProperties.css";
 
 import { SearchResultDetails, SearchResultDetailsResponse } from "@triliumnext/commons";
+import clsx from "clsx";
 import { t } from "i18next";
-import { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { ComponentChildren, createContext } from "preact";
+import { useContext, useRef, useState } from "preact/hooks";
 
 import appContext from "../../components/app_context";
 import FNote from "../../entities/fnote";
@@ -11,19 +12,24 @@ import dialogService from "../../services/dialog";
 import server from "../../services/server";
 import toast from "../../services/toast";
 import { getErrorMessage, isShare } from "../../services/utils";
-import { ViewTypeOptions } from "../collections/interface";
+import { resolveViewType, ViewTypeOptions } from "../collections/interface";
 import { searchTermsFor } from "../collections/search/SearchResultCard";
 import ActionButton from "../react/ActionButton";
+import { Card } from "../react/Card";
 import Dropdown from "../react/Dropdown";
 import { FormDropdownDivider, FormListItem } from "../react/FormList";
 import { useNoteContext, useNoteLabel, useNoteProperty, useTriliumEvent } from "../react/hooks";
 import Icon from "../react/Icon";
-import { CheckBoxProperty, ViewProperty } from "../react/NotePropertyMenu";
+import Modal from "../react/Modal";
+import {
+    CheckBoxProperty, NumberProperty, PropertyHelp, ViewProperty, ViewPropertySection
+} from "../react/NotePropertyMenu";
 import { bookPropertiesConfig } from "./collection-properties-config";
 
 export const ICON_MAPPINGS: Record<ViewTypeOptions, string> = {
     grid: "bx bxs-grid",
     list: "bx bx-list-ul",
+    searchPreview: "bx bx-news",
     calendar: "bx bx-calendar",
     table: "bx bx-table",
     geoMap: "bx bx-map-alt",
@@ -35,6 +41,7 @@ export const ICON_MAPPINGS: Record<ViewTypeOptions, string> = {
 export const VIEW_TYPE_MAPPINGS: Record<ViewTypeOptions, string> = {
     grid: t("book_properties.grid"),
     list: t("book_properties.list"),
+    searchPreview: t("book_properties.search-preview"),
     calendar: t("book_properties.calendar"),
     table: t("book_properties.table"),
     geoMap: t("book_properties.geo-map"),
@@ -45,8 +52,31 @@ export const VIEW_TYPE_MAPPINGS: Record<ViewTypeOptions, string> = {
 
 const MAX_OPEN_TABS = 50;
 
+/** Whether a collection shows its archived notes, which every view offers. */
+export const INCLUDE_ARCHIVED_PROPERTY: CheckBoxProperty = {
+    type: "checkbox",
+    icon: "bx bx-archive",
+    label: t("book_properties.include_archived_notes"),
+    bindToLabel: "includeArchived"
+};
+
+/**
+ * How many levels below its children a collection shows, for the views that show a whole subtree.
+ * Offered in a view's properties dialog only.
+ */
+export const MAX_NESTING_DEPTH_PROPERTY: NumberProperty & PropertyHelp = {
+    type: "number",
+    icon: "bx bx-subdirectory-right",
+    label: t("book_properties_config.max-nesting-depth"),
+    helpTooltip: t("book_properties_config.max-nesting-depth-description"),
+    bindToLabel: "maxNestingDepth",
+    disabled: (note) => note.type === "search"
+};
+
 interface CollectionPropertiesProps {
     note: FNote;
+    /** The view's controls on the left of the bar, after the view type switcher and the settings. */
+    leftChildren?: ComponentChildren;
     centerChildren?: ComponentChildren;
     rightChildren?: ComponentChildren;
     /** Entries appended below a divider at the end of the settings dropdown. */
@@ -54,18 +84,25 @@ interface CollectionPropertiesProps {
 }
 
 /**
+ * Which of its own controls {@link CollectionProperties} shows, for a collection embedded where its view
+ * type cannot change or its settings are out of place, such as on a presentation slide.
+ */
+export const CollectionControls = createContext({ viewTypeSwitcher: true, viewOptions: true });
+
+/**
  * The bar above a collection that switches its view, sets its options and holds the view's own
  * controls, such as a calendar's navigation. A shared page keeps only the view's own controls, as a
  * visitor cannot change the note, and has no bar for a view without any.
  */
 export default function CollectionProperties(props: CollectionPropertiesProps) {
-    return isShare && !props.centerChildren && !props.rightChildren
+    return isShare && !props.leftChildren && !props.centerChildren && !props.rightChildren
         ? null
         : <CollectionPropertiesBar {...props} />;
 }
 
 function CollectionPropertiesBar({
     note,
+    leftChildren,
     centerChildren,
     rightChildren,
     optionsChildren
@@ -73,14 +110,20 @@ function CollectionPropertiesBar({
     const [ viewType, setViewType ] = useViewType(note);
     const noteType = useNoteProperty(note, "type");
     const [ isOpening, setIsOpening ] = useState(false);
+    const controls = useContext(CollectionControls);
 
     return ([ "book", "search" ].includes(noteType ?? "") &&
         <div className="collection-properties">
             <div className="left-container">
                 {!isShare && <>
-                    <ViewTypeSwitcher viewType={viewType} setViewType={setViewType} />
-                    <ViewOptions note={note} viewType={viewType} optionsChildren={optionsChildren} />
+                    {controls.viewTypeSwitcher && (
+                        <ViewTypeSwitcher noteType={noteType} viewType={viewType} setViewType={setViewType} />
+                    )}
+                    {controls.viewOptions && (
+                        <ViewOptions note={note} viewType={viewType} optionsChildren={optionsChildren} />
+                    )}
                 </>}
+                {leftChildren}
             </div>
             <div className="center-container">
                 {centerChildren}
@@ -162,12 +205,32 @@ async function getResultDetails(searchNote: FNote, noteIds: string[]) {
 
 export function useViewType(note: FNote | null | undefined) {
     const [ viewType, setViewType ] = useNoteLabel(note, "viewType");
-    const defaultViewType = (note?.type === "search" ? "list" : "grid");
-    const viewTypeWithDefault = (viewType ?? defaultViewType) as ViewTypeOptions;
-    return [ viewTypeWithDefault, setViewType ] as const;
+    return [ resolveViewType(note, viewType) ?? "grid", setViewType ] as const;
 }
 
-function ViewTypeSwitcher({ viewType, setViewType }: { viewType: ViewTypeOptions, setViewType: (newValue: ViewTypeOptions) => void }) {
+function ViewTypeSwitcher({ noteType, viewType, setViewType }: {
+    noteType: string | null | undefined;
+    viewType: ViewTypeOptions;
+    setViewType: (newValue: ViewTypeOptions) => void;
+}) {
+    // The search preview fetches a saved search's result details, so only search notes offer it.
+    // The basic views stay above the divider, the richer collection views below it.
+    const isSearchNote = noteType === "search";
+    const basicViewTypes: ViewTypeOptions[] = isSearchNote
+        ? [ "searchPreview", "list", "grid" ]
+        : [ "grid", "list" ];
+    const otherViewTypes = (Object.keys(VIEW_TYPE_MAPPINGS) as ViewTypeOptions[])
+        .filter((key) => key !== "searchPreview" && !basicViewTypes.includes(key));
+    const renderViewType = (key: ViewTypeOptions) => (
+        <FormListItem
+            key={key}
+            onClick={() => setViewType(key)}
+            checked={viewType === key}
+            checkable
+            icon={ICON_MAPPINGS[key]}
+            badges={key === "dashboard" ? [{ text: t("note_types.beta-feature") }] : undefined}
+        >{VIEW_TYPE_MAPPINGS[key]}</FormListItem>
+    );
     // Keyboard shortcut
     const dropdownContainerRef = useRef<HTMLDivElement>(null);
     const { ntxId: ownNtxId } = useNoteContext();
@@ -184,16 +247,9 @@ function ViewTypeSwitcher({ viewType, setViewType }: { viewType: ViewTypeOptions
                 {VIEW_TYPE_MAPPINGS[viewType]}
             </>}
         >
-            {Object.entries(VIEW_TYPE_MAPPINGS).map(([ key, label ]) => (
-                <FormListItem
-                    key={key}
-                    onClick={() => setViewType(key as ViewTypeOptions)}
-                    selected={viewType === key}
-                    disabled={viewType === key}
-                    icon={ICON_MAPPINGS[key as ViewTypeOptions]}
-                    badges={key === "dashboard" ? [{ text: t("note_types.beta-feature") }] : undefined}
-                >{label}</FormListItem>
-            ))}
+            {basicViewTypes.map(renderViewType)}
+            <FormDropdownDivider />
+            {otherViewTypes.map(renderViewType)}
         </Dropdown>
     );
 }
@@ -223,17 +279,61 @@ function ViewOptions({ note, viewType, optionsChildren }: {
                 bindToLabel: "subtreeHidden"
             } as CheckBoxProperty} />
 
-            <ViewProperty note={note} property={{
-                type: "checkbox",
-                icon: "bx bx-archive",
-                label: t("book_properties.include_archived_notes"),
-                bindToLabel: "includeArchived"
-            } as CheckBoxProperty} />
+            <ViewProperty note={note} property={INCLUDE_ARCHIVED_PROPERTY} />
 
             {optionsChildren && <>
                 <FormDropdownDivider />
                 {optionsChildren}
             </>}
         </Dropdown>
+    );
+}
+
+/**
+ * Which notes a collection gathers, as opposed to how its view draws them: a card shared by the
+ * properties dialogs, placed after their General card.
+ */
+export function IncludedNotesCard({ note, archivedLabel }: {
+    note: FNote;
+    /** Names the archived toggle in the view's own words, such as a board's cards and columns. */
+    archivedLabel?: string;
+}) {
+    const archivedProperty = archivedLabel
+        ? { ...INCLUDE_ARCHIVED_PROPERTY, label: archivedLabel }
+        : INCLUDE_ARCHIVED_PROPERTY;
+
+    return (
+        <Card className="collection-included-notes" heading={t("book_properties.included_notes")}>
+            <ViewPropertySection note={note} property={archivedProperty} />
+            <ViewPropertySection note={note} property={MAX_NESTING_DEPTH_PROPERTY} />
+        </Card>
+    );
+}
+
+/**
+ * The dialog holding a collection's settings beyond its bar, such as its templates, as a column of
+ * cards.
+ */
+export function CollectionPropertiesDialog({ className, title, show, stackable, onHidden, children }: {
+    className: string;
+    title: string;
+    show: boolean;
+    /** Opens over a dialog already shown, such as the new-event sheet on a phone. */
+    stackable?: boolean;
+    onHidden: () => void;
+    children: ComponentChildren;
+}) {
+    return (
+        <Modal
+            className={clsx("collection-properties-dialog", className)}
+            title={title}
+            size="lg"
+            scrollable
+            show={show}
+            stackable={stackable}
+            onHidden={onHidden}
+        >
+            {children}
+        </Modal>
     );
 }

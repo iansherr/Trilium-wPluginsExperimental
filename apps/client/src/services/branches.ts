@@ -17,18 +17,19 @@ interface Response {
     message: string;
 }
 
+/** Moves the branches before `beforeBranchId`. Returns whether every move went through. */
 async function moveBeforeBranch(branchIdsToMove: string[], beforeBranchId: string) {
     branchIdsToMove = filterRootNote(branchIdsToMove);
     branchIdsToMove = filterSearchBranches(branchIdsToMove);
 
     const beforeBranch = froca.getBranch(beforeBranchId);
     if (!beforeBranch) {
-        return;
+        return false;
     }
 
     if (beforeBranch.noteId === "root" || utils.isLaunchBarConfig(beforeBranch.noteId)) {
         toastService.showError(t("branches.cannot-move-notes-here"));
-        return;
+        return false;
     }
 
     for (const branchIdToMove of branchIdsToMove) {
@@ -36,25 +37,27 @@ async function moveBeforeBranch(branchIdsToMove: string[], beforeBranchId: strin
 
         if (!resp.success) {
             toastService.showError(resp.message);
-            return;
+            return false;
         }
     }
+    return true;
 }
 
+/** Moves the branches after `afterBranchId`. Returns whether every move went through. */
 async function moveAfterBranch(branchIdsToMove: string[], afterBranchId: string) {
     branchIdsToMove = filterRootNote(branchIdsToMove);
     branchIdsToMove = filterSearchBranches(branchIdsToMove);
 
     const afterNote = await froca.getBranch(afterBranchId)?.getNote();
     if (!afterNote) {
-        return;
+        return false;
     }
 
     const forbiddenNoteIds = ["root", hoistedNoteService.getHoistedNoteId(), "_lbRoot", "_lbAvailableLaunchers", "_lbVisibleLaunchers"];
 
     if (forbiddenNoteIds.includes(afterNote.noteId)) {
         toastService.showError(t("branches.cannot-move-notes-here"));
-        return;
+        return false;
     }
 
     branchIdsToMove.reverse(); // need to reverse to keep the note order
@@ -64,20 +67,22 @@ async function moveAfterBranch(branchIdsToMove: string[], afterBranchId: string)
 
         if (!resp.success) {
             toastService.showError(resp.message);
-            return;
+            return false;
         }
     }
+    return true;
 }
 
+/** Moves the movable branches under the note of `newParentBranchId`. Returns whether the move went through. */
 async function moveToParentNote(branchIdsToMove: string[], newParentBranchId: string, componentId?: string) {
     const newParentBranch = froca.getBranch(newParentBranchId);
     if (!newParentBranch) {
-        return;
+        return false;
     }
 
     if (newParentBranch.noteId === "_lbRoot") {
         toastService.showError(t("branches.cannot-move-notes-here"));
-        return;
+        return false;
     }
 
     const movableBranchIds: string[] = [];
@@ -92,7 +97,7 @@ async function moveToParentNote(branchIdsToMove: string[], newParentBranchId: st
     }
 
     if (movableBranchIds.length === 0) {
-        return;
+        return false;
     }
 
     const resp = await server.put<Response>(`branches/move-to/${newParentBranchId}`, { branchIds: movableBranchIds }, componentId);
@@ -100,6 +105,7 @@ async function moveToParentNote(branchIdsToMove: string[], newParentBranchId: st
     if (!resp.success) {
         toastService.showError(resp.message);
     }
+    return resp.success;
 }
 
 /**
@@ -144,10 +150,6 @@ async function deleteNotes(branchIdsToDelete: string[], forceDeleteAllClones = f
         totalCount: noteCountToDelete,
         taskId: utils.randomString(10)
     }, componentId);
-
-    if (eraseNotes) {
-        utils.reloadFrontendApp("erasing notes requires reload");
-    }
 
     return true;
 }
@@ -196,7 +198,7 @@ async function activateNeighbouringNotePath(branchIdsToDelete: string[], deleteA
 /**
  * Finds the child of `parentNoteId` closest to `noteId` that is still there once the given branches
  * are deleted: the next sibling, else the previous one. Archived siblings are skipped, since the
- * tree can be set to hide them.
+ * tree can be set to hide them, and so is `_hidden`, which the tree hides under root.
  */
 function findSurvivingSibling(
     parentNoteId: string,
@@ -222,6 +224,7 @@ function findSurvivingSibling(
     const survives = (branch: FBranch) =>
         !branchIdsToDelete.includes(branch.branchId)
         && !(deleteAllClones && deletedNoteIds.has(branch.noteId))
+        && branch.noteId !== "_hidden"
         && !froca.getNoteFromCache(branch.noteId)?.isArchived;
 
     const candidates = [
@@ -385,6 +388,15 @@ async function cloneNoteAfter(noteId: string, afterBranchId: string) {
     }
 }
 
+// beware that the first arg is noteId and the second is branchId!
+async function cloneNoteBefore(noteId: string, beforeBranchId: string) {
+    const resp = await server.put<Response>(`notes/${noteId}/clone-before/${beforeBranchId}`);
+
+    if (!resp.success) {
+        toastService.showError(resp.message);
+    }
+}
+
 export default {
     moveBeforeBranch,
     moveAfterBranch,
@@ -392,6 +404,7 @@ export default {
     deleteNotes,
     moveNodeUpInHierarchy,
     cloneNoteAfter,
+    cloneNoteBefore,
     cloneNoteToBranch,
     cloneNoteToParentNote
 };

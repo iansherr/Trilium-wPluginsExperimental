@@ -77,6 +77,19 @@ vi.mock("../../services/utils", async (importActual) => {
 
 vi.mock("../../services/experimental_features", () => ({ isExperimentalFeatureEnabled: () => false }));
 
+vi.mock("../../services/keyboard_actions", async (importActual) => {
+    const actual = await importActual<typeof import("../../services/keyboard_actions")>();
+    return {
+        ...actual,
+        default: {
+            ...actual.default,
+            getAction: async (actionName: string) => (actionName === "findInText"
+                ? { actionName, effectiveShortcuts: [ "Ctrl+F" ] }
+                : undefined)
+        }
+    };
+});
+
 // The modal itself is Bootstrap-driven; the popup's own state is what it hands over.
 interface ModalStubProps {
     title?: ComponentChildren;
@@ -144,9 +157,10 @@ function fakeNote(labels: string[] = [], isOptions = false) {
 let container: HTMLDivElement;
 let parent: Component;
 
-async function openPopup(
-    data: { noteIdOrPath: string, viewScope?: ViewScope, showNoteTypeSwitcher?: boolean }
-) {
+async function openPopup(data: {
+    noteIdOrPath: string, viewScope?: ViewScope, showNoteTypeSwitcher?: boolean,
+    selectTitle?: boolean
+}) {
     await act(async () => {
         await parent.handleEvent("openInPopup", data as never);
     });
@@ -158,7 +172,22 @@ async function attachmentsReloaded(attachmentId: string) {
         await parent.handleEvent("entitiesReloaded", {
             loadResults: {
                 getAttachmentRows: () => [ { attachmentId } ],
-                getAttributeRows: () => []
+                getAttributeRows: () => [],
+                isNoteReloaded: () => false
+            }
+        } as never);
+    });
+}
+
+/** An entity reload of one note, deleted or not. */
+async function noteReloaded(noteId: string, isDeleted: boolean) {
+    await act(async () => {
+        await parent.handleEvent("entitiesReloaded", {
+            loadResults: {
+                getAttachmentRows: () => [],
+                getAttributeRows: () => [],
+                isNoteReloaded: (id: string) => id === noteId,
+                getEntityRow: (_entityName: string, id: string) => (id === noteId ? { noteId, isDeleted } : undefined)
             }
         } as never);
     });
@@ -334,6 +363,17 @@ describe("PopupEditor", () => {
         expect(modal()?.dataset.shown).toBe("false");
     });
 
+    it("closes when the note it shows is deleted, and only then", async () => {
+        await openPopup({ noteIdOrPath: "root/n1" });
+
+        await noteReloaded("other", true);
+        await noteReloaded("n1", false);
+        expect(modal()?.dataset.shown).toBe("true");
+
+        await noteReloaded("n1", true);
+        expect(modal()?.dataset.shown).toBe("false");
+    });
+
     it("stays put when there is no note to maximize", async () => {
         await openPopup({ noteIdOrPath: "root/n1" });
         const context = lastContext();
@@ -377,6 +417,28 @@ describe("PopupEditor", () => {
         await act(async () => container.querySelector<HTMLElement>(".hidden-stub")?.click());
         expect(modal()?.dataset.shown).toBe("false");
         expect(document.body.classList.contains("popup-editor-open")).toBe(false);
+    });
+
+    it("selects the title instead of the content when asked to, for that open only", async () => {
+        const handleEvent = vi.spyOn(parent, "handleEvent");
+        const focusCalls = () =>
+            handleEvent.mock.calls.filter(([ name ]) => name.startsWith("focus"));
+        const selectTitle = [ "focusAndSelectTitle", { isNewNote: true, ntxId: "_popup-editor" } ];
+        const focusContent = [ "focusOnDetail", { ntxId: "_popup-editor" } ];
+
+        await openPopup({ noteIdOrPath: "root/n1", selectTitle: true });
+        expect(focusCalls()).toEqual([]);
+        await act(async () => container.querySelector<HTMLElement>(".shown-stub")?.click());
+        expect(focusCalls()).toEqual([ selectTitle ]);
+
+        // Opened in the popup already on show, which fires no `shown` event.
+        handleEvent.mockClear();
+        await openPopup({ noteIdOrPath: "root/n2" });
+        expect(focusCalls()).toEqual([ focusContent ]);
+
+        handleEvent.mockClear();
+        await openPopup({ noteIdOrPath: "root/n3", selectTitle: true });
+        expect(focusCalls()).toEqual([ selectTitle ]);
     });
 
     it("opens a nested popup over itself, which answers only its own command and context", async () => {
@@ -505,6 +567,7 @@ describe("PopupEditor", () => {
 
     it("gives mobile its own toolbar and hides the buttons that make no sense in a popup", async () => {
         expect(container.querySelector(".mobile-toolbar-stub")).toBeNull();
+        expect(container.querySelector(".popup-editor-scroll")?.classList.contains("scroll-edge-fade")).toBe(false);
 
         mocks.isMobile.mockReturnValue(true);
         const mobileContainer = document.body.appendChild(document.createElement("div"));
@@ -517,8 +580,38 @@ describe("PopupEditor", () => {
             );
         });
 
-        expect(mobileContainer.querySelector(".mobile-toolbar-stub")).not.toBeNull();
+        // The fields and the note scroll above the toolbar, which stays at the foot of the dialog
+        // as it does on a text note.
+        const scroll = mobileContainer.querySelector(".popup-editor-scroll");
+        const toolbar = mobileContainer.querySelector(".mobile-toolbar-stub");
+        expect(scroll?.querySelector(".note-detail-stub")).not.toBeNull();
+        expect(scroll?.classList.contains("scroll-edge-fade")).toBe(true);
+        expect(toolbar).not.toBeNull();
+        expect(scroll?.contains(toolbar)).toBe(false);
+        expect(scroll?.nextElementSibling).toBe(toolbar);
+
         render(null, mobileContainer);
         mobileContainer.remove();
+    });
+
+    it("searches its own note on Ctrl+F, leaving the tab behind alone", async () => {
+        await openPopup({ noteIdOrPath: "root/n1" });
+        const findBar = modal()?.querySelector(".find-replace-widget");
+        expect(findBar).not.toBeNull();
+        expect(container.querySelector(".popup-editor-scroll")?.contains(findBar ?? null)).toBe(false);
+
+        const onDocument = vi.fn();
+        document.addEventListener("keydown", onDocument);
+        const detail = modal()?.querySelector(".note-detail-stub");
+        expect(detail).not.toBeNull();
+        await vi.waitFor(() => {
+            detail?.dispatchEvent(new KeyboardEvent("keydown", {
+                key: "f", code: "KeyF", ctrlKey: true, bubbles: true, cancelable: true
+            }));
+            expect(mocks.triggerCommand).toHaveBeenCalledWith("findInText", { ntxId: "_popup-editor" });
+        });
+        // The global binding would name the active tab instead.
+        expect(onDocument).not.toHaveBeenCalled();
+        document.removeEventListener("keydown", onDocument);
     });
 });

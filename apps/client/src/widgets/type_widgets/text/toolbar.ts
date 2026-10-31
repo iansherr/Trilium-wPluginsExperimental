@@ -1,5 +1,6 @@
 import utils from "../../../services/utils.js";
 import options from "../../../services/options.js";
+import { isExperimentalFeatureEnabled } from "../../../services/experimental_features.js";
 import { t } from "../../../services/i18n.js";
 import { IconAlignCenter } from "@ckeditor/ckeditor5-icons";
 
@@ -42,26 +43,99 @@ export function buildToolbarConfig(isClassicToolbar: boolean, aiAssistant: boole
     }
 }
 
+/**
+ * The bar above the virtual keyboard: scrolling rows whose only nested group is the insert menu,
+ * which holds the least used insertions. Undo and redo lead the main row, since a virtual keyboard
+ * has no key for either. The `textFormatting` button swaps in a second row of the formatting
+ * applied to text, which `TextFormattingToolbar` builds.
+ */
 export function buildMobileToolbar(aiAssistant: boolean) {
-    const classicConfig = buildClassicToolbar(false, aiAssistant);
-    const items: string[] = [];
-
-    for (const item of classicConfig.toolbar.items) {
-        if (typeof item === "object" && "items" in item) {
-            for (const subitem of item.items) {
-                items.push(subitem);
-            }
-        } else {
-            items.push(item);
-        }
-    }
-
     return {
-        ...classicConfig,
         toolbar: {
-            ...classicConfig.toolbar,
-            items
-        }
+            items: [
+                "undo",
+                "redo",
+                // Shown while the selection is in a widget, in place of the widget's balloon toolbar.
+                "contextToolbar",
+                "|",
+                "blockType",
+                {
+                    ...buildInsertGroup(),
+                    // Groups of three fill the rows of tiles.
+                    asMenu: { layout: "tiles" },
+                    items: [
+                        // The image and the to-do list are also under the paperclip and in the block
+                        // type menu, and these blocks in the latter, where a reader might not look.
+                        // The size grid of `insertTable` needs a pointer that hovers over its cells.
+                        "addImage", "insertTableMenu", "todoList",
+                        "|",
+                        "codeBlock", "blockQuote", "admonition",
+                        "|",
+                        "collapsible", "tabs", "multicolumnLayout", ...getExtendedCodeBlockItems(),
+                        "|",
+                        "horizontalLine", "pageBreak", "footnote",
+                        "|",
+                        "math", "drawingCanvas", "mermaid",
+                        "|",
+                        "bookmark", "childNote", "contentEmbed",
+                        "|",
+                        "specialCharacters", "emoji", "insertIcon",
+                        "|",
+                        "dateTime", "insertTemplate", "markdownImport"
+                    ]
+                },
+                "textFormatting",
+                "|",
+                // The most used after the blocks and text formatting, so they show without scrolling.
+                // One button for links to notes and to addresses, which the link dialog tells apart.
+                "addLink",
+                "attachMenu",
+                "|",
+                "outdent",
+                "indent",
+                "moveBlockUp",
+                "moveBlockDown",
+                ...getSortSelectionItems(),
+                ...(aiAssistant ? ["|", "aiAssistantMenu"] : [])
+            ]
+        },
+        textFormattingToolbar: [
+            "bold",
+            "italic",
+            "underline",
+            "strikethrough",
+            "code",
+            "|",
+            // Turns the selection into a link.
+            "addLink",
+            "|",
+            "superscript",
+            "subscript",
+            "kbd",
+            "|",
+            "fontSizeMenu",
+            "colorMenu",
+            "|",
+            "removeFormat",
+            "formatPainter",
+            "|",
+            // Of the block, but set as the look of selected text is.
+            "alignment:left",
+            "alignment:center",
+            "alignment:right",
+            "alignment:justify",
+            "|",
+            // Acts on the selection, which brings this row up.
+            "cuttonote"
+        ],
+        // The row of the `contextToolbar` button in a list, as a list has no toolbar of its own. It
+        // replaces the main row, so it repeats the indentation and the moves, used most in a list.
+        listToolbar: [
+            "outdent", "indent", "moveBlockUp", "moveBlockDown", ...getSortSelectionItems(),
+            "|",
+            "listTypeMenu", "listStartAt", "listReversed"
+        ],
+        attachMenu: { camera: true }
     };
 }
 
@@ -93,8 +167,7 @@ export function buildClassicToolbar(multilineToolbar: boolean, aiAssistant: bool
                 // down among the last items the assistant was grouped away at every ordinary note
                 // width.
                 ...(aiAssistant ? ["aiAssistant"] : []),
-                "imageUpload",
-                "fileUpload",
+                "attachMenu",
                 "blockQuote",
                 "admonition",
                 "insertTable",
@@ -105,12 +178,20 @@ export function buildClassicToolbar(multilineToolbar: boolean, aiAssistant: bool
                 "footnote",
                 {
                     ...buildInsertGroup(),
-                    items: ["link", "linkEmbed", "bookmark", "internallink", "contentEmbed", "|", "collapsible", "tabs", "multicolumnLayout", "math", "drawingCanvas", "mermaid", "horizontalLine", "pageBreak", "|", "dateTime", "specialCharacters", "emoji", "insertIcon"]
+                    items: [
+                        "link", "bookmark", "internallink", "childNote", "contentEmbed",
+                        "|",
+                        "collapsible", "tabs", "multicolumnLayout", ...getExtendedCodeBlockItems(),
+                        "math", "drawingCanvas", "mermaid", "horizontalLine", "pageBreak",
+                        "|",
+                        "dateTime", "specialCharacters", "emoji", "insertIcon"
+                    ]
                 },
                 "|",
                 buildAlignmentToolbar(),
                 "outdent",
                 "indent",
+                ...getSortSelectionItems(),
                 "|",
                 "insertTemplate",
                 "markdownImport",
@@ -167,8 +248,7 @@ export function buildFloatingToolbar(aiAssistant: boolean) {
             "numberedList",
             "todoList",
             "|",
-            "imageUpload",
-            "fileUpload",
+            "attachMenu",
             "blockQuote",
             "admonition",
             "codeBlock",
@@ -176,12 +256,18 @@ export function buildFloatingToolbar(aiAssistant: boolean) {
             "footnote",
             {
                 ...buildInsertGroup(),
-                items: ["link", "linkEmbed", "bookmark", "internallink", "contentEmbed", "|", "collapsible", "tabs", "multicolumnLayout", "math", "drawingCanvas", "mermaid", "horizontalLine", "pageBreak", "dateTime"]
+                items: [
+                    "link", "bookmark", "internallink", "childNote", "contentEmbed",
+                    "|",
+                    "collapsible", "tabs", "multicolumnLayout", ...getExtendedCodeBlockItems(),
+                    "math", "drawingCanvas", "mermaid", "horizontalLine", "pageBreak", "dateTime"
+                ]
             },
             "|",
             buildAlignmentToolbar(),
             "outdent",
             "indent",
+            ...getSortSelectionItems(),
             "|",
             "insertTemplate",
             "markdownImport",
@@ -211,6 +297,16 @@ function buildInsertGroup() {
         // the `ToolbarGroupMenu` plugin) opens it as the app's menu of icon-and-label rows instead.
         asMenu: true
     };
+}
+
+/** The button that inserts an extended code block, while its experimental feature is on. */
+function getExtendedCodeBlockItems(): string[] {
+    return isExperimentalFeatureEnabled("extendedCodeBlocks") ? [ "extendedCodeBlock" ] : [];
+}
+
+/** The button that sorts the selection, while its experimental feature is on. */
+function getSortSelectionItems(): string[] {
+    return isExperimentalFeatureEnabled("sortSelection") ? [ "sortSelection" ] : [];
 }
 
 function buildAlignmentToolbar() {

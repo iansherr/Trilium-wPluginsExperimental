@@ -2,9 +2,22 @@ import { ComponentChild } from "preact";
 import { act } from "preact/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import contextMenu, { type ContextMenuOptions, type MenuItem } from "../../menus/context_menu";
 import { renderInto } from "../../test/render";
-import { Card, CardFrame, CardSection, OptionCardSection } from "./Card";
+import {
+    Card, CardFrame, CardSection, ChoiceCardSection, ItemCreationRow, OptionCardSection
+} from "./Card";
 import { FilterProvider } from "./filter";
+
+const menuState = vi.hoisted(() => ({ dismissedByLastPress: false }));
+vi.mock("../../menus/context_menu", () => ({
+    default: {
+        show: vi.fn(),
+        get dismissedByLastPress() {
+            return menuState.dismissedByLastPress;
+        }
+    }
+}));
 
 describe("Card", () => {
     it("carries a heading, a sentence and controls of its own, and drops the heading line with nothing on it", () => {
@@ -134,6 +147,45 @@ describe("OptionCardSection", () => {
         // at every width.
         expect(draw(<OptionCardSection label="Backup" href="#root/_hidden/_options" />))
             .not.toContain("tn-card-option-wide");
+        // The caller knows the control fits.
+        const inline = (
+            <OptionCardSection label="Density" inline><input type="text" /></OptionCardSection>
+        );
+        expect(draw(inline)).not.toContain("tn-card-option-wide");
+    });
+});
+
+describe("ChoiceCardSection", () => {
+    it("is a radio that a click, Enter or Space checks, with a check mark once checked", () => {
+        const onCheck = vi.fn();
+        const container = renderInto(
+            <Card>
+                <ChoiceCardSection isChecked={false} onCheck={onCheck} icon="bx bx-bookmark">
+                    intro
+                </ChoiceCardSection>
+                <ChoiceCardSection isChecked onCheck={vi.fn()}>outro</ChoiceCardSection>
+            </Card>
+        );
+        const [ unchecked, checked ] =
+            [ ...container.querySelectorAll<HTMLElement>(".tn-card-choice") ];
+        expect([ unchecked, checked ].map((section) => [
+            section?.getAttribute("role"),
+            section?.getAttribute("aria-checked"),
+            section?.tabIndex,
+            section?.textContent?.trim(),
+            !!section?.querySelector(".tn-card-choice-icon.bx-bookmark"),
+            !!section?.querySelector(".tn-card-choice-check.bx-check")
+        ])).toStrictEqual([
+            [ "radio", "false", 0, "intro", true, false ],
+            [ "radio", "true", 0, "outro", false, true ]
+        ]);
+
+        unchecked?.click();
+        const prevented = [ "Enter", " ", "a" ].map((key) => !unchecked?.dispatchEvent(
+            new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })
+        ));
+        expect(prevented).toStrictEqual([ true, true, false ]);
+        expect(onCheck).toHaveBeenCalledTimes(3);
     });
 });
 
@@ -327,6 +379,67 @@ describe("under a filter", () => {
                 </Card>
             </FilterProvider>
         );
+    }
+});
+
+describe("ItemCreationRow", () => {
+    const show = vi.mocked(contextMenu.show);
+    const items: MenuItem<string>[] = [ { title: "Alpha", handler: vi.fn() } ];
+
+    it("opens a button's menu against it on any press, marked open meanwhile", async () => {
+        show.mockClear();
+        const onClick = vi.fn();
+        const container = renderInto(<ItemCreationRow buttons={[
+            { label: "Add", onClick },
+            { label: "Add from", menu: items }
+        ]} />);
+        const [ plain, withMenu ] = container.querySelectorAll<HTMLButtonElement>(".tn-card-adder");
+        expect(plain.hasAttribute("aria-haspopup")).toBe(false);
+        expect(withMenu.getAttribute("aria-haspopup")).toBe("menu");
+        expect(withMenu.getAttribute("aria-expanded")).toBe("false");
+
+        await press(withMenu, 1);
+        const options = show.mock.lastCall?.[0] as ContextMenuOptions<string>;
+        expect(options).toMatchObject({ anchor: withMenu, centered: true, items });
+        expect(options.x).toBeUndefined();
+        act(() => options.onShow?.(document.createElement("div")));
+        expect(withMenu.getAttribute("aria-expanded")).toBe("true");
+        act(() => options.onHide?.());
+        expect(withMenu.getAttribute("aria-expanded")).toBe("false");
+
+        await press(withMenu, 0);
+        expect(show.mock.lastCall?.[0]).toMatchObject({ anchor: withMenu });
+
+        await press(plain, 1);
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(show).toHaveBeenCalledTimes(2);
+    });
+
+    it("leaves its menu closed after the press that put it away", async () => {
+        show.mockClear();
+        const container = renderInto(
+            <ItemCreationRow buttons={[ { label: "Add from", menu: items } ]} />);
+        const button = container.querySelector<HTMLButtonElement>(".tn-card-adder");
+        if (!button) throw new Error("No button.");
+
+        menuState.dismissedByLastPress = true;
+        try {
+            await press(button, 1);
+            expect(show).not.toHaveBeenCalled();
+        } finally {
+            menuState.dismissedByLastPress = false;
+        }
+
+        await press(button, 1);
+        expect(show).toHaveBeenCalledTimes(1);
+    });
+
+    /** Clicks `button`, letting the menu module load. A `detail` of 0 is a click from a key. */
+    async function press(button: HTMLButtonElement, detail: number) {
+        await act(async () => {
+            button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail }));
+            await import("../../menus/context_menu");
+        });
     }
 });
 

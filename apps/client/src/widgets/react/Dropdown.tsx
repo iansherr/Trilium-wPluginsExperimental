@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MenuItem } from "../../menus/context_menu";
 import { isMobile, isNarrowLayout, onNarrowLayoutChange } from "../../services/utils";
 import { focusListItem } from "./FormList";
-import { useTooltip, useUniqueName } from "./hooks";
+import { useBodyClass, useTooltip, useUniqueName } from "./hooks";
 import { suspendModalFocusTraps } from "./modal_focustrap";
 import Menu from "./Menu";
 import Popup, { type PopupProps } from "./Popup";
@@ -27,8 +27,13 @@ export interface DropdownProps extends Pick<HTMLAttributes<HTMLDivElement>, "id"
      * `handler`, then closes the menu.
      */
     items?: MenuItem<unknown>[];
-    /** For a {@link Dropdown} of {@link items}, offers an input at its top that filters them. */
+    /**
+     * For a {@link Dropdown} of {@link items}, or of children whose rows `MenuItemRows` draws,
+     * offers an input at its top that filters them.
+     */
     filterable?: boolean;
+    /** For a {@link filterable} menu above its toggle, keeps the rows in their own order. */
+    keepOrder?: boolean;
     title?: string;
     dropdownContainerStyle?: CSSProperties;
     dropdownContainerClassName?: string;
@@ -37,6 +42,11 @@ export interface DropdownProps extends Pick<HTMLAttributes<HTMLDivElement>, "id"
     /** If set to true, then the dropdown button will be considered an icon action (without normal border and sized for icons only). */
     iconAction?: boolean;
     noSelectButtonStyle?: boolean;
+    /**
+     * Leaves the look of the toggle to {@link buttonClassName} alone, without Bootstrap's `btn`, for a
+     * toggle on a surface that styles its own buttons, such as an `OverlayControlGroup`.
+     */
+    bareButton?: boolean;
     /** Disables the toggle, and closes the popup if it is open. */
     disabled?: boolean;
     text?: ComponentChildren;
@@ -53,6 +63,11 @@ export interface DropdownProps extends Pick<HTMLAttributes<HTMLDivElement>, "id"
     dropdownRef?: RefObject<DropdownHandle | null>;
     titlePosition?: "top" | "right" | "bottom" | "left";
     titleOptions?: Partial<Tooltip.Options>;
+    /**
+     * For a launcher bar menu: on a phone, dims the page above the bar and leaves the popup to the
+     * stylesheet, which pins it above the bar. On a tablet's wider mobile layout, the popup opens
+     * beside its toggle over the dimmed page. No effect on a desktop layout.
+     */
     mobileBackdrop?: boolean;
     /**
      * On a phone, shows the popup as a sheet rising from the bottom of the screen over a dimmed
@@ -105,6 +120,7 @@ export default function Dropdown(props: DropdownProps) {
                     isWanted={isWanted}
                     items={props.items}
                     filterable={props.filterable}
+                    keepOrder={props.keepOrder}
                     onSelect={(item, e) => {
                         item.handler?.(item, e);
                         if (!item.items) close();
@@ -134,7 +150,8 @@ export function DropdownPanel({ scrollable, ...props }: DropdownPanelProps) {
                     {...popupProps}
                     // Otherwise it grows with its content, as Bootstrap's dropdowns did.
                     capHeight={!!scrollable}
-                    placedByStylesheet={bottomSheet}
+                    placedByStylesheet={popupProps.placedByStylesheet}
+                    reveal
                     className={clsx("dropdown-menu show", className, bottomSheet && "mobile-bottom-menu")}
                     startAt={startAt}
                     onDismiss={dismiss}
@@ -152,7 +169,7 @@ export function DropdownPanel({ scrollable, ...props }: DropdownPanelProps) {
 interface PopupSlot {
     /** Placement, portal, backdrop and click handling, for the `Popup` or `Menu`. */
     popupProps: Pick<PopupProps, "anchor" | "placement" | "offset" | "portalClassName" | "backdropClassName"
-        | "elementRef" | "style" | "aria-labelledby" | "onClick">;
+        | "elementRef" | "style" | "aria-labelledby" | "onClick" | "placedByStylesheet">;
     className: string;
     bottomSheet: boolean;
     /** The item to start at, for a popup a key on the toggle opened. */
@@ -167,7 +184,7 @@ interface PopupSlot {
  * The toggle both kinds of dropdown share: the button, its tooltip, the open state and its
  * callbacks, the handle, and the phone's cover. `popup` draws what opens under it.
  */
-function DropdownToggle({ id, className, buttonClassName, title, text, dropdownContainerStyle, dropdownContainerClassName, dropdownContainerRef: externalContainerRef, hideToggleArrow, iconAction, disabled, noSelectButtonStyle, onShown, onHidden, placement, autoClose = true, buttonProps, dropdownRef, titlePosition, titleOptions, mobileBackdrop: mobileBackdropProp, mobileBottomSheet, backdrop, hasPopup, onToggleArrow, popup }: Omit<DropdownProps, "children"> & {
+function DropdownToggle({ id, className, buttonClassName, title, text, dropdownContainerStyle, dropdownContainerClassName, dropdownContainerRef: externalContainerRef, hideToggleArrow, iconAction, disabled, noSelectButtonStyle, bareButton, onShown, onHidden, placement, autoClose = true, buttonProps, dropdownRef, titlePosition, titleOptions, mobileBackdrop: mobileBackdropProp, mobileBottomSheet, backdrop, hasPopup, onToggleArrow, popup }: Omit<DropdownProps, "children"> & {
     hasPopup: "menu" | "true";
     /** Called for Up or Down on the toggle while the popup is up. */
     onToggleArrow?(popup: HTMLElement, edge: "first" | "last"): void;
@@ -175,19 +192,22 @@ function DropdownToggle({ id, className, buttonClassName, title, text, dropdownC
 }) {
     // The sheet is placed by the app's own rule and dims what is behind it, so it is asked for as
     // one thing and unpacked here. It follows the layout, as a tablet can turn while it is open.
-    const followsLayout = !!mobileBottomSheet && isMobile();
+    const followsLayout = (!!mobileBottomSheet || !!mobileBackdropProp) && isMobile();
     const [ narrow, setNarrow ] = useState(isNarrowLayout);
     useEffect(() => {
         if (!followsLayout) return;
         setNarrow(isNarrowLayout());
         return onNarrowLayoutChange(() => setNarrow(isNarrowLayout()));
     }, [ followsLayout ]);
-    const bottomSheet = followsLayout && narrow;
+    const bottomSheet = followsLayout && narrow && !!mobileBottomSheet;
+    // A launcher bar menu on a phone is pinned above the bar by `style.css`.
+    const pinnedAboveBar = followsLayout && narrow && !mobileBottomSheet;
     const mobileBackdrop = (!!mobileBackdropProp || !!mobileBottomSheet) && isMobile();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const triggerRef = useRef<HTMLButtonElement | null>(null);
     const popupRef = useRef<HTMLDivElement | null>(null);
     const [ shown, setShown ] = useState(false);
+    useBodyClass("backdrop-open", shown && (!!backdrop || mobileBackdrop));
     /** The item to start at once the popup shows, for a popup a key on the toggle opened. */
     const [ startAt, setStartAt ] = useState<"first" | "last">();
 
@@ -210,12 +230,22 @@ function DropdownToggle({ id, className, buttonClassName, title, text, dropdownC
     const shownRef = useRef(shown);
     const callbacks = useRef({ onShown, onHidden, hideTooltip });
     callbacks.current = { onShown, onHidden, hideTooltip };
+    const restoreFocusTraps = useRef<(() => void) | null>(null);
     const setOpen = useCallback((open: boolean) => {
         if (shownRef.current === open) return;
         shownRef.current = open;
+        // A dialog's focus trap would pull focus out of a popup that stands outside the dialog. The
+        // traps go before the render, since a bottom sheet takes focus in the effect that places it.
+        if (open) {
+            restoreFocusTraps.current = suspendModalFocusTraps();
+        }
         // Focus that the popup holds goes back to the toggle, as a native menu button's does; a
         // command that moved it elsewhere keeps it there.
         if (!open && popupRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
+        if (!open) {
+            restoreFocusTraps.current?.();
+            restoreFocusTraps.current = null;
+        }
         if (!open) setStartAt(undefined);
         setShown(open);
         if (open) {
@@ -260,11 +290,7 @@ function DropdownToggle({ id, className, buttonClassName, title, text, dropdownC
         return () => cover?.classList.remove("show", "global-menu-cover");
     }, [ shown, mobileBackdrop ]);
 
-    // A dialog's focus trap would pull focus out of a popup that stands outside the dialog.
-    useLayoutEffect(() => {
-        if (!shown) return;
-        return suspendModalFocusTraps();
-    }, [ shown ]);
+    useEffect(() => () => restoreFocusTraps.current?.(), []);
 
     const ariaId = useUniqueName("button");
     const toggleId = id ?? ariaId;
@@ -285,7 +311,9 @@ function DropdownToggle({ id, className, buttonClassName, title, text, dropdownC
             <button
                 {...buttonProps}
                 className={clsx(
-                    iconAction ? "icon-action" : "btn",
+                    iconAction ? "icon-action" : !bareButton && "btn",
+                    // `.icon-action` styles its disabled state by class, as `ActionButton` sets it.
+                    iconAction && disabled && "disabled",
                     !noSelectButtonStyle && "select-button",
                     buttonClassName,
                     !hideToggleArrow && "dropdown-toggle",
@@ -327,6 +355,7 @@ function DropdownToggle({ id, className, buttonClassName, title, text, dropdownC
                     // In a wrapper with the dropdown's classes, so CSS scoped under them still
                     // applies to the popup in the page's body. style.css stacks a portaled popup by
                     // `tn-dropdown-portal`, and its backdrop just under it.
+                    placedByStylesheet: bottomSheet || pinnedAboveBar,
                     portalClassName: clsx("tn-dropdown-portal", className),
                     backdropClassName: backdrop ? "tn-dropdown-backdrop" : undefined,
                     elementRef: popupRef,

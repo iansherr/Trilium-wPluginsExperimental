@@ -326,7 +326,8 @@ function viewNote(req: ShareRequest): ShareReply {
         headers: {
             ...noIndexHeaders(note),
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Content-Type": note.mime
+            "Content-Type": note.mime,
+            ...utils.getInlineContentHeaders(note.mime)
         },
         body: note.getContent()
     };
@@ -381,7 +382,7 @@ function downloadAttachment(req: ShareRequest): ShareReply {
  * visitor can read with the tokens to highlight and the query's error.
  */
 function searchInSubtree(req: ShareRequest): ShareReply {
-    const { searchString, ancestorNoteId } = req.query;
+    const { searchString, ancestorNoteId, includeArchivedNotes } = req.query;
     if (typeof searchString !== "string" || !searchString || typeof ancestorNoteId !== "string") {
         return jsonReply(400, { message: "'searchString' and 'ancestorNoteId' parameters are mandatory." });
     }
@@ -389,10 +390,11 @@ function searchInSubtree(req: ShareRequest): ShareReply {
 
     const searchContext = new SearchContext({
         fastSearch: false,
-        includeArchivedNotes: true,
+        includeArchivedNotes: includeArchivedNotes !== "false",
         fuzzyAttributeSearch: false,
         ignoreHoistedNote: true,
-        ancestorNoteId
+        ancestorNoteId,
+        allowRegex: false
     });
     const noteIds = searchService.findResultsWithQuery(searchString, searchContext)
         .filter((result) => {
@@ -458,7 +460,7 @@ function searchNotes(req: ShareRequest): ShareReply {
         return jsonReply(400, { message: "'search' parameter is mandatory." });
     }
 
-    const searchContext = new SearchContext({ ancestorNoteId });
+    const searchContext = new SearchContext({ ancestorNoteId, allowRegex: false });
     const searchResults = searchService.findResultsWithQuery(search, searchContext);
     const authorizedResults = searchResults
         // Apply the same per-note authorization as the direct content routes: drop protected
@@ -659,7 +661,7 @@ function serveImageBytes(content: string | Uint8Array | undefined, mime: string,
 
     return {
         status: 200,
-        headers: { ...headers, "Content-Type": mime },
+        headers: { ...headers, "Content-Type": mime, ...utils.getInlineContentHeaders(mime) },
         body: content
     };
 }

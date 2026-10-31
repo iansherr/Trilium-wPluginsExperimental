@@ -1,5 +1,8 @@
-import { Readability } from "@mozilla/readability";
-import { createLink, getPageLocationOrigin, randomString, type Rect } from "@/utils.js";
+import { type FloatingElementsStep, setFloatingElements } from "@/floating_elements.js";
+import {
+    createLink, descriptionLabels, getImages, getPageDescription, getPageLocationOrigin,
+    makeLinksAbsolute, type Rect
+} from "@/utils.js";
 
 export default defineContentScript({
     matches: [
@@ -10,44 +13,6 @@ export default defineContentScript({
             const titleElements = document.getElementsByTagName("title");
 
             return titleElements[0]?.text.trim() ?? document.title.trim();
-        }
-
-        function getReadableDocument() {
-            // Readability changes the document it parses, so it reads a copy of the page.
-            const documentCopy = document.cloneNode(true) as Document;
-            const readability = new Readability(documentCopy, {
-                // Returns the content as an element rather than as HTML.
-                serializer: (node) => node as HTMLElement
-            });
-
-            const article = readability.parse();
-
-            if (!article?.content) {
-                throw new Error('Could not parse HTML document with Readability');
-            }
-
-            return {
-                title: article.title,
-                body: article.content,
-            };
-        }
-
-        function getDocumentDates() {
-            let publishedDate: Date | null = null;
-            let modifiedDate: Date | null = null;
-
-            const articlePublishedTime = document.querySelector("meta[property='article:published_time']")?.getAttribute('content');
-            if (articlePublishedTime) {
-                publishedDate = new Date(articlePublishedTime);
-            }
-
-            const articleModifiedTime = document.querySelector("meta[property='article:modified_time']")?.getAttribute('content');
-            if (articleModifiedTime) {
-                modifiedDate = new Date(articleModifiedTime);
-            }
-
-            // TODO: if we didn't get dates from meta, then try to get them from JSON-LD
-            return { publishedDate, modifiedDate };
         }
 
         function getRectangleArea() {
@@ -177,45 +142,10 @@ export default defineContentScript({
             });
         }
 
-        function makeLinksAbsolute(container: HTMLElement) {
-            // `link.href` reads the URL the browser resolved against the page, and leaves
-            // `mailto:`, `tel:` and other non-web schemes unchanged.
-            for (const link of container.getElementsByTagName('a')) {
-                if (link.href) {
-                    link.setAttribute("href", link.href);
-                }
-            }
-        }
-
-        function getImages(container: HTMLElement) {
-            const images: {imageId: string, src: string}[] = [];
-
-            for (const img of container.getElementsByTagName('img')) {
-                if (!img.src) {
-                    continue;
-                }
-
-                const existingImage = images.find(image => image.src === img.src);
-
-                if (existingImage) {
-                    img.src = existingImage.imageId;
-                }
-                else {
-                    const imageId = randomString(20);
-
-                    images.push({
-                        imageId,
-                        src: img.src
-                    });
-
-                    img.src = imageId;
-                }
-            }
-
-            return images;
-        }
-
-        async function prepareMessageResponse(message: {name: string, noteId?: string, message?: string, tabIds?: string[]}) {
+        async function prepareMessageResponse(message: {
+            name: string, noteId?: string, message?: string, tabIds?: string[], x?: number, y?: number,
+            step?: FloatingElementsStep
+        }) {
             console.info(`Message: ${  message.name}`);
 
             if (message.name === "toast") {
@@ -256,8 +186,10 @@ export default defineContentScript({
                 const container = document.createElement('div');
 
                 const selection = window.getSelection();
+                // The popup asks on every opening, and Firefox reports no range after the page
+                // loses focus, so an empty selection is an answer, not an error.
                 if (!selection || selection.rangeCount === 0) {
-                    throw new Error('No selection available to clip');
+                    return undefined;
                 }
 
                 for (let i = 0; i < selection.rangeCount; i++) {
@@ -274,7 +206,9 @@ export default defineContentScript({
                     title: pageTitle(),
                     content: container.innerHTML,
                     images,
-                    pageUrl: getPageLocationOrigin() + location.pathname + location.search + location.hash
+                    pageUrl: getPageLocationOrigin() + location.pathname + location.search
+                        + location.hash,
+                    labels: descriptionLabels()
                 };
 
             }
@@ -284,30 +218,25 @@ export default defineContentScript({
                     devicePixelRatio: window.devicePixelRatio
                 };
             }
-            else if (message.name === "trilium-save-page") {
-                const {title, body} = getReadableDocument();
-
-                makeLinksAbsolute(body);
-
-                const images = getImages(body);
-
-                const labels = {};
-                const dates = getDocumentDates();
-                if (dates.publishedDate) {
-                    labels['publishedDate'] = dates.publishedDate.toISOString().substring(0, 10);
+            else if (message.name === "trilium-scroll-to") {
+                if (message.y !== undefined) {
+                    window.scrollTo({ left: message.x, top: message.y, behavior: "instant" });
                 }
-                if (dates.modifiedDate) {
-                    labels['modifiedDate'] = dates.modifiedDate.toISOString().substring(0, 10);
-                }
-
                 return {
-                    title,
-                    content: body.innerHTML,
-                    images,
-                    pageUrl: getPageLocationOrigin() + location.pathname + location.search,
-                    clipType: 'page',
-                    labels
+                    scrollX: window.scrollX,
+                    scrollY: window.scrollY,
+                    viewportHeight: window.innerHeight,
+                    viewportWidth: window.innerWidth,
+                    pageHeight: document.documentElement.scrollHeight,
+                    devicePixelRatio: window.devicePixelRatio
                 };
+            }
+            else if (message.name === "trilium-set-floating-elements" && message.step) {
+                setFloatingElements(message.step);
+                return true;
+            }
+            else if (message.name === "trilium-get-page-metadata") {
+                return { description: getPageDescription() };
             }
             else {
                 throw new Error(`Unknown command: ${  JSON.stringify(message)}`);

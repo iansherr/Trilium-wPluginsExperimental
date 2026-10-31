@@ -10,15 +10,23 @@ import {
     toWidgetEditable,
     type ViewDocumentEnterEvent,
     type ViewEditableElement,
+    type ViewElement,
     uid,
     Widget
 } from "ckeditor5";
 
 import { BLOCK_ID } from "../block_reference/block_reference_editing.js";
-import { CLASSES, ELEMENTS, TABS_WIDGET_PROPERTY } from "./constants.js";
+import FindReveal from "../find_reveal.js";
+import { markFocusedContainers } from "../widget_utils.js";
 import {
-    AssignTabReferenceCommand, InsertTabCommand, InsertTabsCommand, MoveTabCommand, RemoveTabCommand
+    ALIGNMENT_ATTRIBUTE, ALIGNMENT_DATA_ATTRIBUTE, CLASSES, DEFAULT_TAB_ALIGNMENT, ELEMENTS,
+    parseTabAlignment, TABS_WIDGET_PROPERTY
+} from "./constants.js";
+import {
+    AssignTabReferenceCommand, InsertTabCommand, InsertTabsCommand, MoveTabCommand,
+    MoveToTabCommand, RemoveTabCommand, TabAlignmentCommand
 } from "./tabs_commands.js";
+import TabsTitleBar from "./tabs_title_bar.js";
 
 /**
  * Schema, conversion, commands and key handling for tabs blocks. The active tab is editing-view
@@ -31,7 +39,7 @@ export default class TabsEditing extends Plugin {
     }
 
     public static get requires() {
-        return [Widget] as const;
+        return [ TabsTitleBar, Widget, FindReveal ] as const;
     }
 
     /** The tab each tabs block shows, keyed by the `tabs` model element. */
@@ -40,19 +48,27 @@ export default class TabsEditing extends Plugin {
     /** The editing-view ID prefix of each tab's title and panel, keyed by the `tab` model element. */
     private readonly tabIds = new WeakMap<ModelElement, string>();
 
+    /** The tab whose title each tabs block last scrolled into view, keyed by the `tabs` element. */
+    private readonly revealedTabs = new WeakMap<ModelElement, RevealedTab>();
+
     public init(): void {
         const editor = this.editor;
         editor.commands.add("tabs", new InsertTabsCommand(editor));
         editor.commands.add("insertTab", new InsertTabCommand(editor));
         editor.commands.add("removeTab", new RemoveTabCommand(editor));
-        editor.commands.add("moveTabLeft", new MoveTabCommand(editor, "left"));
-        editor.commands.add("moveTabRight", new MoveTabCommand(editor, "right"));
+        editor.commands.add("moveTabLeft", new MoveTabCommand(editor, "previous"));
+        editor.commands.add("moveTabRight", new MoveTabCommand(editor, "next"));
+        editor.commands.add("moveTab", new MoveTabCommand(editor));
+        editor.commands.add("moveToTab", new MoveToTabCommand(editor));
         editor.commands.add("assignTabReference", new AssignTabReferenceCommand(editor));
+        editor.commands.add("tabAlignment", new TabAlignmentCommand(editor));
 
         this.registerSchema();
         this.registerConversion();
         this.registerPostFixer();
         this.registerActiveTabTracking();
+        markFocusedContainers(editor, CLASSES.focusedTabs,
+            element => element.hasClass(CLASSES.tabs), { isInnermostOnly: true });
         this.registerEnterInTitle();
         this.registerFindReveal();
     }
@@ -105,7 +121,8 @@ export default class TabsEditing extends Plugin {
     private registerSchema() {
         const schema = this.editor.model.schema;
         schema.register(ELEMENTS.tabs, {
-            inheritAllFrom: "$blockObject"
+            inheritAllFrom: "$blockObject",
+            allowAttributes: ALIGNMENT_ATTRIBUTE
         });
         schema.register(ELEMENTS.tab, {
             allowIn: ELEMENTS.tabs,
@@ -152,6 +169,23 @@ export default class TabsEditing extends Plugin {
             converterPriority: "high"
         });
 
+        // The model holds the alignment only when it differs from the default.
+        conversion.for("upcast").attributeToAttribute({
+            view: { name: "div", key: ALIGNMENT_DATA_ATTRIBUTE },
+            model: {
+                key: ALIGNMENT_ATTRIBUTE,
+                value: (view: ViewElement) => {
+                    const value = view.getAttribute(ALIGNMENT_DATA_ATTRIBUTE);
+                    const alignment = parseTabAlignment(value);
+                    return alignment === DEFAULT_TAB_ALIGNMENT ? null : alignment;
+                }
+            }
+        });
+        conversion.for("downcast").attributeToAttribute({
+            model: { name: ELEMENTS.tabs, key: ALIGNMENT_ATTRIBUTE },
+            view: ALIGNMENT_DATA_ATTRIBUTE
+        });
+
         conversion.for("dataDowncast").elementToElement({
             model: ELEMENTS.tabs,
             view: (_model, { writer }) => writer.createContainerElement("div", { class: CLASSES.tabs })
@@ -174,7 +208,9 @@ export default class TabsEditing extends Plugin {
             view: (_model, { writer }) => {
                 const div = writer.createContainerElement("div", { class: CLASSES.tabs });
                 writer.setCustomProperty(TABS_WIDGET_PROPERTY, true, div);
-                return toWidget(div, writer, { label: t("Tabs"), hasSelectionHandle: true });
+                toWidget(div, writer, { label: t("Tabs"), hasSelectionHandle: true });
+                editor.plugins.get(TabsTitleBar).addBar(writer, div);
+                return div;
             }
         });
         conversion.for("editingDowncast").elementToElement({
@@ -191,18 +227,27 @@ export default class TabsEditing extends Plugin {
                 // global `aria-current` and `aria-controls` attributes carry the tab semantics.
                 const tab = model.parent as ModelElement;
                 const id = this.getTabId(tab);
+                const isActive = this.isActiveTab(tab);
+                const classes = isActive ? [CLASSES.tabTitle, CLASSES.activeTitle] : [CLASSES.tabTitle];
                 const title: ViewEditableElement & PlaceholderableViewElement =
                     writer.createEditableElement("div", {
-                        class: CLASSES.tabTitle,
+                        class: classes.join(" "),
                         id: `${id}-title`,
                         "aria-controls": `${id}-panel`,
-                        ...(this.isActiveTab(tab) ? { "aria-current": "true" } : {})
+                        ...(isActive ? { "aria-current": "true" } : {})
                     });
                 title.placeholder = t("Tab title");
                 enableViewPlaceholder({
                     view: editor.editing.view,
                     element: title,
                     keepOnFocus: true
+                });
+                // A title clips its overflow, so it shows its start again once the caret leaves.
+                title.on("change:isFocused", (_evt, _name, isFocused) => {
+                    const domTitle = editor.editing.view.domConverter.mapViewToDom(title);
+                    if (!isFocused && domTitle) {
+                        domTitle.scrollLeft = 0;
+                    }
                 });
                 return toWidgetEditable(title, writer, { label: t("Tab title") });
             }
@@ -285,16 +330,11 @@ export default class TabsEditing extends Plugin {
         }, { priority: "lowest" });
     }
 
-    /** Shows the tab that holds the highlighted find-in-note result, without moving the caret. */
+    /** Shows the tab that holds the match the find shows, without moving the caret. */
     private registerFindReveal() {
-        const plugins = this.editor.plugins;
-        const state = plugins.has("FindAndReplaceEditing") ? plugins.get("FindAndReplaceEditing").state : undefined;
-        if (!state) {
-            return;
-        }
-
-        this.listenTo(state, "change:highlightedResult", (_evt, _name, highlighted) => {
-            this.showTabsAround(highlighted?.marker?.getStart());
+        const findReveal = this.editor.plugins.get(FindReveal);
+        this.listenTo(findReveal, "change:position", (_evt, _name, position) => {
+            this.showTabsAround(position);
         });
     }
 
@@ -308,8 +348,13 @@ export default class TabsEditing extends Plugin {
         }
     }
 
+    /**
+     * Marks the active tab of each of `blocks`. Scrolls its title into view when another tab
+     * became active or the active tab moved.
+     */
     private updateActiveClasses(blocks: Set<ModelElement>) {
         const editing = this.editor.editing;
+        const titleBar = this.editor.plugins.get(TabsTitleBar);
         editing.view.change(writer => {
             for (const tabs of blocks) {
                 const active = this.getActiveTab(tabs);
@@ -320,12 +365,22 @@ export default class TabsEditing extends Plugin {
                     if (!view || !title) {
                         continue;
                     }
-                    if (tab === active) {
-                        writer.addClass(CLASSES.activeTab, view);
-                        writer.setAttribute("aria-current", "true", title);
-                    } else {
+                    if (tab !== active) {
                         writer.removeClass(CLASSES.activeTab, view);
+                        writer.removeClass(CLASSES.activeTitle, title);
                         writer.removeAttribute("aria-current", title);
+                        continue;
+                    }
+
+                    writer.addClass(CLASSES.activeTab, view);
+                    writer.addClass(CLASSES.activeTitle, title);
+                    writer.setAttribute("aria-current", "true", title);
+                    // A block shows its first tab until a tab is activated.
+                    const shown = this.revealedTabs.get(tabs)
+                        ?? { tab: tabs.getChild(0), index: 0 };
+                    if (tab !== shown.tab || tab.index !== shown.index) {
+                        titleBar.revealTitleAfterRender(title);
+                        this.revealedTabs.set(tabs, { tab, index: tab.index });
                     }
                 }
             }
@@ -352,6 +407,11 @@ export default class TabsEditing extends Plugin {
             evt.stop();
         }, { priority: "high" });
     }
+}
+
+interface RevealedTab {
+    tab: ModelNode | null;
+    index: number | null;
 }
 
 /** Adds every tabs block that encloses `position`. */

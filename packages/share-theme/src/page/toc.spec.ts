@@ -9,6 +9,7 @@ describe("setupToC", () => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
         vi.useRealTimers();
+        history.replaceState(null, "", location.pathname);
     });
 
     it("marks the entry of the last heading scrolled past, whatever the heading levels", () => {
@@ -21,6 +22,38 @@ describe("setupToC", () => {
 
         scrollTo(900);
         expect(activeEntry()).toBe("more");
+    });
+
+    it("scrolls the ToC pane to center the marked entry once it leaves the pane", () => {
+        // A pane 100px tall whose entries are 20px tall and 40px apart.
+        const headings = Array.from({ length: 10 }, (_, i): [ number, string, number ] => [ 2, `h${i}`, 100 + i * 400 ]);
+        const scrollTo = renderPage(headings, (pane) => {
+            Object.defineProperty(pane, "clientHeight", { value: 100 });
+            pane.getBoundingClientRect = () => DOMRect.fromRect({ y: 0, height: 100 });
+            for (const [ index, entry ] of [ ...pane.querySelectorAll("a") ].entries()) {
+                entry.getBoundingClientRect = () => DOMRect.fromRect({ y: index * 40 - pane.scrollTop, height: 20 });
+            }
+        });
+        const tocPane = document.getElementById("toc-pane");
+        if (!tocPane) {
+            throw new Error("The ToC pane is missing.");
+        }
+
+        // h1 and h2 are inside the pane, so it does not move.
+        scrollTo(520);
+        scrollTo(920);
+        expect(activeEntry()).toBe("h2");
+        expect(tocPane.scrollTop).toBe(0);
+
+        // h7 is at 280px, below the pane: it moves to the middle, 40px from the top.
+        scrollTo(2920);
+        expect(activeEntry()).toBe("h7");
+        expect(tocPane.scrollTop).toBe(240);
+
+        // Scrolling back up to h1, at 40px - 240px, brings the pane back with it.
+        scrollTo(520);
+        expect(activeEntry()).toBe("h1");
+        expect(tocPane.scrollTop).toBe(0);
     });
 
     it("keeps the copy in the navigation pane in step, and closes the pane on a click", () => {
@@ -128,6 +161,19 @@ describe("setupToC", () => {
         expect(scrollIntoView).not.toHaveBeenCalled();
     });
 
+    it("leaves the block of a block link out of the section's address", async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        vi.stubGlobal("navigator", { clipboard: { writeText } });
+        renderPage([ [ 2, "intro", 100 ] ]);
+        const expected = new URL(`${location.pathname}?lang=en#intro`, location.href).href;
+        history.replaceState(null, "", "?block=a:b&lang=en");
+
+        headingLink("intro").click();
+
+        expect(location.href).toBe(expected);
+        await vi.waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(expected));
+    });
+
     it("leaves a click with a modifier key or another button to the browser", () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
         vi.stubGlobal("navigator", { clipboard: { writeText } });
@@ -172,7 +218,10 @@ describe("setupToC", () => {
  * distance from the top of the page, sets the table of contents up and returns a function that
  * scrolls the page.
  */
-function renderPage(headings: [ level: number, slug: string, offsetTop: number ][]) {
+function renderPage(
+    headings: [ level: number, slug: string, offsetTop: number ][],
+    prepareTocPane?: (pane: HTMLElement) => void
+) {
     const link = (slug: string) => `<a href="#${encodeURIComponent(slug)}">${slug}</a>`;
     document.body.innerHTML = `
         <div>
@@ -180,9 +229,11 @@ function renderPage(headings: [ level: number, slug: string, offsetTop: number ]
                 ${headings.map(([ level, slug ]) => `<h${level} id="${slug}">${slug}${anchor(slug)}`
                     + `</h${level}>`).join("")}
             </div>
-            <ul id="toc">
-                ${headings.map(([ , slug ]) => `<li>${link(slug)}</li>`).join("")}
-            </ul>
+            <div id="toc-pane">
+                <ul id="toc">
+                    ${headings.map(([ , slug ]) => `<li>${link(slug)}</li>`).join("")}
+                </ul>
+            </div>
             <nav class="tree-toc">
                 ${headings.map(([ , slug ]) => `<div>${link(slug)}</div>`).join("")}
             </nav>
@@ -194,6 +245,11 @@ function renderPage(headings: [ level: number, slug: string, offsetTop: number ]
         if (heading) {
             heading.getBoundingClientRect = () => DOMRect.fromRect({ y: offsetTop - scrolled });
         }
+    }
+
+    const tocPane = document.getElementById("toc-pane");
+    if (prepareTocPane && tocPane) {
+        prepareTocPane(tocPane);
     }
 
     setupToC();

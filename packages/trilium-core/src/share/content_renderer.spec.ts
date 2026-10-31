@@ -1,4 +1,4 @@
-import { trimIndentation } from "@triliumnext/commons";
+import { CANVAS_ATTACHMENT_MIME, trimIndentation } from "@triliumnext/commons";
 import {
     getChildLinks, getChildLinksLayout, getContentClasses, getHtmlSnippets, getPageHead, getPrevNextLinks, getSiteLogo
 } from "@triliumnext/share-theme/model/page";
@@ -16,8 +16,8 @@ import * as utils from "../services/utils/index.js";
 import { buildNote } from "../test/becca_easy_mocking.js";
 import { buildShareNote, buildShareNotes } from "../test/shaca_mocking.js";
 import {
-    assetUrlFragment, ensureShareHighlighting, getContent, preparePageContent, readShareTemplate,
-    renderCode, renderNoteContent, renderNoteForExport, type Result
+    assetUrlFragment, ensureShareHighlighting, getContent, preparePageContent, renderCode,
+    renderNoteContent, renderNoteForExport, renderShareTemplate, type Result
 } from "./content_renderer.js";
 import type SNote from "./shaca/entities/snote.js";
 import shaca from "./shaca/shaca.js";
@@ -36,6 +36,13 @@ describe("content_renderer", () => {
         const note = buildShareNote({ isProtected: true });
         const result = getContent(note);
         expect(result.content).toStrictEqual("<p>Protected note cannot be displayed</p>");
+    });
+
+    it("prints none of a collection's own content, which a type switch leaves behind", () => {
+        const note = buildShareNote({
+            type: "book", mime: "", content: "<script>alert(1)</script><p>Was a code note</p>"
+        });
+        expect(getContent(note)).toMatchObject({ isEmpty: true, content: "" });
     });
 
     describe("Text note", () => {
@@ -588,17 +595,26 @@ describe("content_renderer", () => {
             expect(page).toMatch(/<img src="plain.png" alt="[^"]+" loading="lazy">/);
         });
 
-        it("leaves an include-note section untouched when the referenced note is missing", () => {
+        it("replaces a missing note or attachment, or an unknown kind, with a public message", () => {
             const note = buildShareNote({
                 id: "missingRefHost",
-                content: `<p>host</p><section class="include-note" data-note-id="ghostNote" data-box-size="medium">&nbsp;</section>`
+                content: `<p>host</p>`
+                    + `<section class="include-note" data-note-id="ghostNote"`
+                    + ` data-box-size="medium">&nbsp;</section>`
+                    + `<figure class="include-note" data-attachment-id="ghostAtt"`
+                    + ` data-trilium-block-id="b1"></figure>`
+                    + `<section data-trilium-embed="note-card" data-note-id="ghostNote"`
+                    + ` data-trilium-block-id="b2"><p>Fallback</p>`
+                    + `<section data-trilium-embed="nested"><p>Inner</p></section></section>`
             });
-            const result = getContent(note);
-            if (typeof result.content !== "string") throw new Error("expected string content");
-            // The missing note is skipped: the section stays, nothing is expanded or reference-linked.
-            expect(result.content).toContain("host");
-            expect(result.content).toContain(`data-note-id="ghostNote"`);
-            expect(result.content).not.toContain("reference-link");
+
+            const content = getContent(note).content;
+
+            const message = t("content_renderer.content-not-available");
+            expect(content).toBe(`<p>host</p>`
+                + `<div class="include-note-unavailable">${message}</div>`
+                + `<div class="include-note-unavailable" data-trilium-block-id="b1">${message}</div>`
+                + `<div class="include-note-unavailable" data-trilium-block-id="b2">${message}</div>`);
         });
 
         it("renders an embedded large code note without hanging or re-parsing it as HTML (#9717)", () => {
@@ -681,10 +697,13 @@ describe("content_renderer", () => {
             expect(auto.innerHTML).toContain("hljs-tag");
         });
 
-        it("highlights an embedded code note in its own language", async () => {
+        it("renders an embedded code note with CodeMirror, in its own language", async () => {
             await ensureShareHighlighting();
             buildShareNotes([
-                { id: "pycode", type: "code", mime: "text/x-python", content: `<t t-name="x"></t>` }
+                {
+                    id: "pycode", type: "code", mime: "text/x-python",
+                    content: `x = "<t t-name='x'>"`
+                }
             ]);
             const note = buildShareNote({
                 content: '<section class="include-note" data-note-id="pycode" '
@@ -693,20 +712,61 @@ describe("content_renderer", () => {
 
             const result = getContent(note);
             if (typeof result.content !== "string") throw new Error("expected string content");
-            const code = parse(result.content, { blockTextElements: {} }).querySelector("code");
-            expect(code?.classList.contains("language-text-x-python")).toBe(true);
-            expect(code?.innerHTML).toContain("hljs-string");
-            expect(code?.innerHTML).not.toContain("hljs-tag");
+            const code = parse(result.content, { blockTextElements: {} })
+                .querySelector("pre.code-preview > code.code-preview-content");
+            expect(code?.text).toBe(`x = "<t t-name='x'>"`);
+            expect(code?.querySelectorAll("span:not(.code-preview-line)")
+                .map((token) => token.getAttribute("class")))
+                .toEqual(expect.arrayContaining([ expect.stringMatching(/^l\d+ d\d+$/) ]));
+            expect(result.content).not.toContain("hljs");
         });
 
-        it("renders an embedded picture as an image, any other attachment as a download", () => {
+        it("numbers the lines of a code embed as it sets, else by the option", async () => {
+            await ensureShareHighlighting();
+            buildShareNotes([
+                { id: "pylines", type: "code", mime: "text/x-python", content: "x = 1" }
+            ]);
+            const hasLineNumbers = (attributes: string) => {
+                const result = getContent(buildShareNote({
+                    content: `<section class="include-note" data-note-id="pylines"${attributes}>`
+                        + "&nbsp;</section>"
+                }));
+                if (typeof result.content !== "string") throw new Error("expected string content");
+                const preview = parse(result.content).querySelector("pre.code-preview");
+                if (!preview) throw new Error("expected a code preview");
+                return !preview.classList.contains("code-preview-no-line-numbers");
+            };
+
+            expect(hasLineNumbers("")).toBe(true);
+            expect(hasLineNumbers(' data-code-line-numbers="true"')).toBe(true);
+            expect(hasLineNumbers(' data-code-line-numbers="false"')).toBe(false);
+            mockOptions({ codeLineNumbersEnabled: "false" });
+            try {
+                expect(hasLineNumbers("")).toBe(false);
+                expect(hasLineNumbers(' data-code-line-numbers="true"')).toBe(true);
+            } finally {
+                vi.restoreAllMocks();
+            }
+        });
+
+        it("renders a picture or drawing embed as an image, any other embed as a download", () => {
             const embed = (id: string) =>
                 `<section class="include-note" data-attachment-id="${id}">&nbsp;</section>`;
+            const drawing = {
+                role: "file", mime: CANVAS_ATTACHMENT_MIME, title: "Canvas.excalidraw"
+            };
             const note = buildShareNote({
-                content: embed("embedPic1") + embed("embedPdf1") + embed("embedGone"),
+                content: embed("embedPic1") + embed("embedPdf1") + embed("embedGone")
+                    + embed("embedDraw1") + embed("embedDraw2"),
                 attachments: [
                     { id: "embedPic1", role: "image", mime: "image/png", title: "my photo.png" },
-                    { id: "embedPdf1", role: "file", mime: "application/pdf", title: "report.pdf" }
+                    { id: "embedPdf1", role: "file", mime: "application/pdf", title: "report.pdf" },
+                    { id: "embedDraw1", ...drawing },
+                    {
+                        id: "drawPicture", role: "image", mime: "image/svg+xml",
+                        title: "embedDraw1.svg"
+                    },
+                    { id: "embedDraw2", ...drawing }
                 ]
             });
 
@@ -715,6 +775,14 @@ describe("content_renderer", () => {
             const src = "api/attachments/embedPic1/image/my%20photo.png";
             expect(content).toContain(`<section class="include-note" data-attachment-id="embedPic1">`
                 + `<img src="${src}" alt="my photo.png"></section>`);
+            expect(content).toContain(
+                `<section class="include-note" data-attachment-id="embedDraw1">`
+                + `<img src="api/attachments/drawPicture/image/embedDraw1.svg" `
+                + `alt="Canvas.excalidraw"></section>`);
+            expect(content).toContain(
+                `<section class="include-note" data-attachment-id="embedDraw2">`
+                + `<a class="reference-link attachment-link role-file" `
+                + `href="api/attachments/embedDraw2/download">`);
             expect(content).toContain(`<section class="include-note" data-attachment-id="embedPdf1">`
                 + `<a class="reference-link attachment-link role-file"`);
             expect(content).toContain(`href="api/attachments/embedPdf1/download"`);
@@ -1149,23 +1217,75 @@ describe("content_renderer", () => {
             expect(emptyResult.isEmpty).toBeTruthy();
         });
 
-        it("wraps code in <pre><code>", () => {
-            const result: Result = {
-                header: "",
-                content: "\tHello\nworld"
-            };
-            renderCode(result);
+        it("escapes the code until ensureShareHighlighting() loads CodeMirror", async () => {
+            // A fresh copy of the module, which no test has loaded CodeMirror into.
+            vi.resetModules();
+            const { renderCode: renderUnloaded } = await import("./content_renderer.js");
+
+            const result: Result = { header: "", content: "\tHello\nworld" };
+            renderUnloaded(result);
             expect(result.isEmpty).toBeFalsy();
             expect(result.content).toBe("<pre><code>\tHello\nworld</code></pre>");
-        });
 
-        it("escapes HTML-significant characters so the content cannot be re-parsed as markup", () => {
-            const result: Result = {
+            const markup: Result = {
                 header: "",
                 content: `const x: Array<Map<string, number>> = a < b && c > d; // <div>`
             };
-            renderCode(result);
-            expect(result.content).toBe(`<pre><code>const x: Array&lt;Map&lt;string, number&gt;&gt; = a &lt; b &amp;&amp; c &gt; d; // &lt;div&gt;</code></pre>`);
+            renderUnloaded(markup, "application/typescript");
+            expect(markup.content).toBe(`<pre><code class="language-application-typescript">`
+                + "const x: Array&lt;Map&lt;string, number&gt;&gt; = a &lt; b &amp;&amp; c &gt; d; "
+                + "// &lt;div&gt;</code></pre>");
+        });
+
+        it("renders a code note as CodeMirror shows it, with line numbers", async () => {
+            await ensureShareHighlighting();
+            const render = (content: string, mime?: string) => {
+                const result: Result = { header: "", content };
+                renderCode(result, mime);
+                return parse(String(result.content), { blockTextElements: {} })
+                    .querySelector("pre");
+            };
+
+            const python = render("def x():\n    return \"<a>\"", "text/x-python");
+            expect(python?.getAttribute("class")).toBe("code-preview code-preview-wrap");
+            expect([ "l", "d" ].map((key) => python?.getAttribute(`data-code-theme-${key}`)))
+                .toEqual([ "vs-code-light", "vs-code-dark" ]);
+            expect(python?.querySelectorAll(".code-preview-line").map((line) => line.text))
+                .toEqual([ "def x():", "    return \"<a>\"" ]);
+            expect(python?.querySelector(".code-preview-line span")?.getAttribute("class"))
+                .toMatch(/^l\d+ d\d+$/);
+            expect(python?.innerHTML).toContain("&lt;a&gt;");
+
+            // No MIME type, a language that is not enabled, and code too long to highlight.
+            const long = Array.from({ length: 600 }, () => "x = 1").join("\n");
+            const plain = [
+                render("x = 1"), render("x = 1", "text/x-cobol"), render(long, "text/x-python")
+            ];
+            expect(plain.map((pre) => pre?.querySelectorAll(".code-preview-line span").length))
+                .toEqual([ 0, 0, 0 ]);
+            expect(plain[2]?.querySelectorAll(".code-preview-line").length).toBe(600);
+        });
+
+        it("wraps the lines by the `#wrapLines` label of the note, else by the option", async () => {
+            await ensureShareHighlighting();
+            const isWrapped = (note?: SNote) => {
+                const result: Result = { header: "", content: "x" };
+                renderCode(result, "text/plain", note);
+                return String(result.content)
+                    .startsWith(`<pre class="code-preview code-preview-wrap"`);
+            };
+            const labeled = (value: string) => buildShareNote({ type: "code", "#wrapLines": value });
+
+            expect(isWrapped()).toBe(true);
+            expect(isWrapped(labeled("false"))).toBe(false);
+            expect(isWrapped(labeled(""))).toBe(true);
+            mockOptions({ codeLineWrapEnabled: "false" });
+            try {
+                expect(isWrapped()).toBe(false);
+                expect(isWrapped(labeled("true"))).toBe(true);
+            } finally {
+                vi.restoreAllMocks();
+            }
         });
     });
 
@@ -1175,18 +1295,27 @@ describe("content_renderer", () => {
             const pythonBlock = () => buildShareNote({
                 content: `<pre><code class="language-text-x-python">def x(): pass</code></pre>`
             });
+            const pythonNote = () => {
+                const result: Result = { header: "", content: "def x(): pass" };
+                renderCode(result, "text/x-python");
+                return String(result.content);
+            };
+            const highlightedToken = /<span class="l\d+ d\d+">/;
 
             getOption.mockReturnValue(JSON.stringify([ "text/x-python" ]));
             const first = ensureShareHighlighting();
             expect(ensureShareHighlighting()).toBe(first);
             await first;
             expect(getContent(pythonBlock()).content).toContain("hljs-keyword");
+            expect(pythonNote()).toMatch(highlightedToken);
 
             getOption.mockReturnValue(JSON.stringify([ "text/x-go" ]));
             const second = ensureShareHighlighting();
             expect(second).not.toBe(first);
             await second;
             expect(getContent(pythonBlock()).content).not.toContain("hljs");
+            expect(pythonNote()).toContain("code-preview-line");
+            expect(pythonNote()).not.toMatch(highlightedToken);
 
             getOption.mockRestore();
             await ensureShareHighlighting();
@@ -1246,10 +1375,16 @@ describe("content_renderer", () => {
             `);
 
             expect(headings).toStrictEqual([
-                { level: 1, text: "Intro", slug: "intro", href: "#intro" },
-                { level: 2, text: "Q&A now", slug: "q-amp-a-now", href: "#q-amp-a-now" },
-                { level: 3, text: "Spans two lines", slug: "spans-two-lines", href: "#spans-two-lines" },
-                { level: 2, text: "Intro", slug: "intro-1", href: "#intro-1" }
+                { level: 1, text: "Intro", html: "Intro", slug: "intro", href: "#intro" },
+                {
+                    level: 2, text: "Q&A now", html: "Q&amp;A <strong>now</strong>",
+                    slug: "q-amp-a-now", href: "#q-amp-a-now"
+                },
+                {
+                    level: 3, text: "Spans two lines", html: "Spans two lines",
+                    slug: "spans-two-lines", href: "#spans-two-lines"
+                },
+                { level: 2, text: "Intro", html: "Intro", slug: "intro-1", href: "#intro-1" }
             ]);
             expect(content).toContain(
                 `<h2 class="x" id="q-amp-a-now">Q&amp;A <strong>now</strong>`
@@ -1268,15 +1403,35 @@ describe("content_renderer", () => {
             `);
 
             expect(headings).toStrictEqual([
-                { level: 2, text: "Footnotes", slug: "footnote-label", href: "#footnote-label" },
-                { level: 2, text: "Footnotes", slug: "footnotes-1", href: "#footnotes-1" },
-                { level: 3, text: "Part one", slug: "part%20one", href: "#part%2520one" }
+                { level: 2, text: "Footnotes", html: "Footnotes", slug: "footnote-label", href: "#footnote-label" },
+                { level: 2, text: "Footnotes", html: "Footnotes", slug: "footnotes-1", href: "#footnotes-1" },
+                { level: 3, text: "Part one", html: "Part one", slug: "part%20one", href: "#part%2520one" }
             ]);
             expect(content).toContain(
                 `<h2 id="footnote-label" class="sr-only">Footnotes`
                 + `<a class="toc-anchor" href="#footnote-label"`);
             expect(content).toContain(`<h2 id="footnotes-1">Footnotes<a class="toc-anchor" href="#footnotes-1"`);
             expect(content).toContain(`<h3 id="part%20one">Part one<a class="toc-anchor" href="#part%2520one"`);
+        });
+
+        it("keeps the inline formatting of a heading for the table of contents, and nothing unsafe", () => {
+            const { headings } = prepare(trimIndentation`
+                <h2>Call <code class="x" style="color:red">fetchNote()</code> <em>first</em></h2>
+                <h2><a href="javascript:alert(1)">Link</a> <img src=x onerror="alert(1)"><span class="tn-icon bx bx-star"></span>x</h2>
+                <h2>Before<script>alert(1)</script><style>h2{}</style> <b onclick="alert(1)">after</b></h2>
+                <h2><iframe src="https://example.com"></iframe>&lt;script&gt; as text</h2>
+            `);
+
+            expect(headings.map(({ html }) => html)).toStrictEqual([
+                // An allowed tag loses its attributes.
+                "Call <code>fetchNote()</code> <em>first</em>",
+                // Any other element is unwrapped to its text, a link included: it would nest in the entry's.
+                "Link x",
+                // A script or a style goes with its content.
+                "Before <b>after</b>",
+                "&lt;script&gt; as text"
+            ]);
+            expect(headings[0].text).toBe("Call fetchNote() first");
         });
 
         it("gives an image without alt text the generic one and lazy loading, keeping its own", () => {
@@ -1476,7 +1631,7 @@ describe("content_renderer", () => {
             const note = shaca.getNote(noteId);
             const { header, content, isEmpty } = getContent(note);
 
-            const html = ejs.render(readShareTemplate("page"), {
+            const html = renderShareTemplate("page", {
                 note,
                 header,
                 content,
@@ -1514,14 +1669,33 @@ describe("content_renderer", () => {
                 headings: [],
                 toc: [],
                 isPageInNavigation: false
-            }, {
-                includer: (path: string) => ({
-                    template: readShareTemplate(path)
-                })
             });
 
             return parse(html).querySelectorAll("#childLinks a");
         }
+    });
+
+    describe("renderShareTemplate", () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it("compiles a template once per text, passing include data down nested includes", () => {
+            const templates: Record<string, string> = {
+                outer: `<%= title %>:<%- include("item", { depth: 1 }) %>`,
+                item: `[<%= depth %><% if (depth < 3) { %><%- include("item", { depth: depth + 1 }) %><% } %>]`
+            };
+            vi.spyOn(getShareProvider(), "readTemplate").mockImplementation((name) => templates[name]);
+            const compile = vi.spyOn(ejs, "compile");
+
+            expect(renderShareTemplate("outer", { title: "T" })).toBe("T:[1[2[3]]]");
+            expect(renderShareTemplate("outer", { title: "U" })).toBe("U:[1[2[3]]]");
+            expect(compile).toHaveBeenCalledTimes(2);
+
+            templates.item = `(<%= title %>)`;
+            expect(renderShareTemplate("outer", { title: "V" })).toBe("V:(V)");
+            expect(compile).toHaveBeenCalledTimes(3);
+        });
     });
 });
 
@@ -1847,6 +2021,16 @@ describe("content_renderer pages", () => {
         expect(document.querySelector("#fnref1")?.getAttribute("href")).toBe("#fn1");
         expect(document.querySelector("p")?.text).toBe("mention1 Gone");
         expect(document.querySelector("code")?.classList.contains("hljs")).toBe(false);
+    });
+
+    it("keeps links to a bookmark of the note itself", () => {
+        const result = getContent(buildShareNote({
+            content: `<h3><a id="schema-note"></a>Note</h3><p>See <a href="#schema-note">Note</a>.</p>`
+        }));
+
+        const document = parse(String(result.content));
+        expect(document.querySelector("#schema-note")?.tagName).toBe("A");
+        expect(document.querySelector("p a")?.getAttribute("href")).toBe("#schema-note");
     });
 
     it("detects the language of a code block naming none, unless it is too long", async () => {

@@ -1,22 +1,28 @@
 import {
+    enableViewPlaceholder,
+    type LocaleTranslate,
     type ModelElement,
     type ModelNode,
     type ModelPosition,
     type ModelWriter,
+    type PlaceholderableViewElement,
     Plugin,
     toWidget,
     toWidgetEditable,
-    type ViewElement,
+    type ViewEditableElement,
     Widget
 } from "ckeditor5";
 
 import NestedLimitSelection from "../nested_limit_selection.js";
+import { markFocusedContainers } from "../widget_utils.js";
 import {
-    COLUMN_RATIOS, ELEMENTS, getColumnCount, getDefaultRatios, LAYOUT_CLASS, LAYOUT_WIDGET_PROPERTY,
-    MAX_COLUMNS, MIN_COLUMNS, RATIOS_ATTRIBUTE, RATIOS_DATA_ATTRIBUTE
+    COLUMN_CLASS, COLUMN_RATIOS, ELEMENTS, FOCUSED_LAYOUT_CLASS, getColumnCount, getDefaultRatios,
+    LAYOUT_CLASS, LAYOUT_WIDGET_PROPERTY, MAX_COLUMNS, MIN_COLUMNS, RATIOS_ATTRIBUTE,
+    RATIOS_DATA_ATTRIBUTE
 } from "./constants.js";
 import {
-    ColumnLayoutCommand, InsertMulticolumnLayoutCommand, RemoveMulticolumnLayoutCommand,
+    ColumnLayoutCommand, InsertLayoutColumnCommand, InsertMulticolumnLayoutCommand,
+    MoveLayoutColumnCommand, MoveToLayoutColumnCommand, RemoveMulticolumnLayoutCommand,
     setColumnCount
 } from "./multicolumn_commands.js";
 
@@ -39,10 +45,15 @@ export default class MulticolumnEditing extends Plugin {
         editor.commands.add("multicolumnLayout", new InsertMulticolumnLayoutCommand(editor));
         editor.commands.add("columnLayout", new ColumnLayoutCommand(editor));
         editor.commands.add("removeMulticolumnLayout", new RemoveMulticolumnLayoutCommand(editor));
+        editor.commands.add("insertLayoutColumn", new InsertLayoutColumnCommand(editor));
+        editor.commands.add("moveLayoutColumn", new MoveLayoutColumnCommand(editor));
+        editor.commands.add("moveToLayoutColumn", new MoveToLayoutColumnCommand(editor));
 
         this.registerSchema();
         this.registerConversion();
         this.registerPostFixer();
+        markFocusedContainers(editor, FOCUSED_LAYOUT_CLASS,
+            element => element.hasClass(LAYOUT_CLASS));
     }
 
     private registerSchema() {
@@ -63,14 +74,14 @@ export default class MulticolumnEditing extends Plugin {
         const conversion = editor.conversion;
         const t = editor.t;
 
-        // High priority runs the upcasts before General HTML Support, which also matches sections.
+        // High priority runs the upcasts before General HTML Support, which also matches `<div>`s.
         conversion.for("upcast").elementToElement({
-            view: { name: "section", classes: LAYOUT_CLASS },
+            view: { name: "div", classes: LAYOUT_CLASS },
             model: ELEMENTS.layout,
             converterPriority: "high"
         });
         conversion.for("upcast").elementToElement({
-            view: matchColumn,
+            view: { name: "div", classes: COLUMN_CLASS },
             model: ELEMENTS.column,
             converterPriority: "high"
         });
@@ -82,19 +93,20 @@ export default class MulticolumnEditing extends Plugin {
         conversion.for("dataDowncast").elementToElement({
             model: ELEMENTS.layout,
             view: (_model, { writer }) =>
-                writer.createContainerElement("section", { class: LAYOUT_CLASS })
+                writer.createContainerElement("div", { class: LAYOUT_CLASS })
         });
         conversion.for("dataDowncast").elementToElement({
             model: ELEMENTS.column,
-            view: (_model, { writer }) => writer.createContainerElement("section")
+            view: (_model, { writer }) =>
+                writer.createContainerElement("div", { class: COLUMN_CLASS })
         });
 
         conversion.for("editingDowncast").elementToElement({
             model: ELEMENTS.layout,
             view: (_model, { writer }) => {
-                const section = writer.createContainerElement("section", { class: LAYOUT_CLASS });
-                writer.setCustomProperty(LAYOUT_WIDGET_PROPERTY, true, section);
-                return toWidget(section, writer, {
+                const layout = writer.createContainerElement("div", { class: LAYOUT_CLASS });
+                writer.setCustomProperty(LAYOUT_WIDGET_PROPERTY, true, layout);
+                return toWidget(layout, writer, {
                     label: t("Multicolumn layout"),
                     hasSelectionHandle: true
                 });
@@ -102,9 +114,17 @@ export default class MulticolumnEditing extends Plugin {
         });
         conversion.for("editingDowncast").elementToElement({
             model: ELEMENTS.column,
-            view: (_model, { writer }) => {
-                const section = writer.createEditableElement("section");
-                return toWidgetEditable(section, writer, { label: t("Column") });
+            view: (model, { writer }) => {
+                const column: ViewEditableElement & PlaceholderableViewElement =
+                    writer.createEditableElement("div", { class: COLUMN_CLASS });
+                column.placeholder = getColumnPlaceholder(t, model.index);
+                enableViewPlaceholder({
+                    view: editor.editing.view,
+                    element: column,
+                    isDirectHost: false,
+                    keepOnFocus: true
+                });
+                return toWidgetEditable(column, writer, { label: t("Column") });
             }
         });
     }
@@ -141,13 +161,17 @@ export default class MulticolumnEditing extends Plugin {
     }
 }
 
-/** Matches a `<section>` directly inside a layout. Columns have no class of their own. */
-function matchColumn(element: ViewElement) {
-    const parent = element.parent;
-    if (element.name === "section" && parent?.is("element") && parent.hasClass(LAYOUT_CLASS)) {
-        return { name: true };
+/**
+ * The placeholder of the column at `index`, which names its position. A layout has at most
+ * `MAX_COLUMNS` (four) columns. A column in a layout always has an index.
+ */
+function getColumnPlaceholder(t: LocaleTranslate, index: number | null) {
+    switch (index) {
+        case 0: return t("Type the content of the first column");
+        case 1: return t("Type the content of the second column");
+        case 2: return t("Type the content of the third column");
+        default: return t("Type the content of the fourth column");
     }
-    return null;
 }
 
 function collectLayoutsAround(position: ModelPosition, layouts: Set<ModelElement>) {

@@ -36,16 +36,23 @@ interface Diagram {
     /** The element the drawings go into. */
     element: HTMLElement;
     source: string;
+    /** The block ID of a code block, which its drawing keeps for links to the block. */
+    blockId?: string;
 }
 
 /** The diagrams on the page, each with the element its drawing replaces. */
 function findDiagrams() {
     const placeholders: Omit<Diagram, "element">[] = [];
 
-    for (const block of document.querySelectorAll("#content pre")) {
-        const code = block.querySelector(":scope > code.language-mermaid");
+    for (const block of document.querySelectorAll<HTMLElement>("#content pre")) {
+        const code = block.querySelector<HTMLElement>(":scope > code.language-mermaid");
         if (code) {
-            placeholders.push({ placeholder: block, source: code.textContent });
+            placeholders.push({
+                placeholder: block,
+                source: code.textContent,
+                // A code block keeps its block ID on `<code>`, a Mermaid embed on `<pre>`.
+                blockId: block.dataset.triliumBlockId ?? code.dataset.triliumBlockId
+            });
         }
     }
 
@@ -60,6 +67,9 @@ function findDiagrams() {
     return placeholders.map((placeholder): Diagram => {
         const element = document.createElement("div");
         element.classList.add("mermaid");
+        if (placeholder.blockId) {
+            element.dataset.triliumBlockId = placeholder.blockId;
+        }
         return { ...placeholder, element };
     });
 }

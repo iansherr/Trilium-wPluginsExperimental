@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { ComponentChildren, createContext, RefObject } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
+import { onSystemBack } from "../../services/system_back";
 import utils from "../../services/utils";
 import ActionButton from "./ActionButton";
 import { useWindowSize } from "./hooks";
@@ -130,6 +131,16 @@ interface MasterDetailHeaderProps {
 export function MasterDetailHeader({
     inPage, onBack, backTitle, pageTitle, listTitle, listIcon, listActions, pageActions
 }: MasterDetailHeaderProps) {
+    const back = useRef(onBack);
+    back.current = onBack;
+    useEffect(() => {
+        if (!inPage) return;
+        return onSystemBack(() => {
+            back.current();
+            return true;
+        });
+    }, [ inPage ]);
+
     return (
         <div class="tn-master-detail-header">
             {inPage ? (
@@ -205,11 +216,18 @@ export function MasterDetailModal({ backTitle, listIcon, listActions, children, 
         switchMobileView(title === null ? "list" : "page");
     }, [ switchMobileView ]);
 
-    // Opens on the list, whatever page a previous show was left on.
+    // Opens on the list, whatever page a previous show was left on. Hiding closes the page, so that a
+    // modal kept in the DOM (`keepInDom`) leaves no page for the system back gesture to act on.
+    const pageRef = useRef(page);
+    pageRef.current = page;
+    const wasShown = useRef(false);
     useEffect(() => {
         if (modalProps.show) {
             resetMobileView("list");
+        } else if (wasShown.current) {
+            pageRef.current?.close();
         }
+        wasShown.current = modalProps.show;
     }, [ modalProps.show, resetMobileView ]);
 
     return (

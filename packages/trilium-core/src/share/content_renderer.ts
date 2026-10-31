@@ -1,7 +1,10 @@
+import type { PreviewThemeSlot } from "@triliumnext/codemirror/src/code_preview.js";
 import {
-    getAttachmentEmbedHref, getEmbedKey, getNestedEmbedOptions, getNoteEmbedHref, isHttpUrl,
-    isImageAttachmentRole, MIME_TYPE_AUTO, normalizeMimeTypeForCKEditor, readLinkPreviewData,
-    renderLinkEmbedHtml, renderLinkMentionHtml, resolveContentEmbed, resolveEnabledMimeTypes,
+    BLOCK_ID_ATTRIBUTE, CANVAS_ATTACHMENT_MIME, CONTENT_EMBED_KIND_ATTRIBUTE,
+    getAttachmentEmbedHref, getDrawingPictureTitle, getEmbedKey,
+    getNestedEmbedOptions, getNoteEmbedHref, isHttpUrl, isImageAttachmentRole, MIME_TYPE_AUTO,
+    type MimeType, normalizeMimeTypeForCKEditor, readLinkPreviewData, renderLinkEmbedHtml,
+    renderLinkMentionHtml, resolveContentEmbed, resolveEnabledMimeTypes, SHARE_CODE_PREVIEW_THEMES,
     SHARE_HOSTED_NOTE_TYPES, SHARE_HOSTED_VIEW_TYPES, shouldSyntaxHighlight, sliceToBlockReference
 } from "@triliumnext/commons";
 import { renderToHtml as renderMarkdownToHtml } from "@triliumnext/commons/src/lib/markdown_renderer.js";
@@ -13,7 +16,6 @@ import {
     type NavigationItem, type PageHeading, type ShareNote
 } from "@triliumnext/share-theme/model/page";
 import ejs from "ejs";
-import escapeHtml from "escape-html";
 import { t } from "i18next";
 import { HTMLElement, type Node as ParsedNode, Options, parse, TextNode } from "node-html-parser";
 
@@ -370,9 +372,7 @@ function renderNoteContentInternal(note: SNote | BNote, renderArgs: RenderArgs) 
         toc: getTableOfContents(headings),
         isPageInNavigation: hasActiveItem(navigation)
     };
-    return ejs.render(readShareTemplate("page"), pageOpts, {
-        includer: (path) => ({ template: readShareTemplate(path) })
-    });
+    return renderShareTemplate("page", pageOpts);
 }
 
 /**
@@ -408,16 +408,27 @@ export function preparePageContent(
     const headings = elements.map((element) => {
         const slug = element.id || slugs[slugIndex++];
         const text = element.text.replace(/\s+/g, " ").trim();
+        const html = sanitize.sanitizeHtmlCustom(element.innerHTML, HEADING_FORMATTING)
+            .replace(/\s+/g, " ").trim();
         const href = `#${encodeURIComponent(slug)}`;
-        const heading = { level: Number(element.tagName.slice(1)), text, slug, href };
+        const heading = { level: Number(element.tagName.slice(1)), text, html, slug, href };
         element.setAttribute("id", slug);
         element.insertAdjacentHTML("beforeend", `<a class="toc-anchor" href="${href}"`
-            + ` aria-label="${escapeHtml(options.headingLinkLabel)}">`
+            + ` aria-label="${utils.escapeHtml(options.headingLinkLabel)}">`
             + `<span class="tn-icon bx bx-link" aria-hidden="true"></span></a>`);
         return heading;
     });
     return { content: document.toString(), headings };
 }
+
+/**
+ * The inline formatting a table of contents entry keeps, without attributes. Any other element
+ * gives up its tag but keeps its text, a link included, since the entry is a link itself.
+ */
+const HEADING_FORMATTING = {
+    allowedTags: [ "b", "code", "em", "i", "kbd", "mark", "s", "strong", "sub", "sup", "u" ],
+    allowedAttributes: {}
+};
 
 /**
  * Returns the share theme's EJS template of that name, such as `page` or `404`. The platform
@@ -426,6 +437,30 @@ export function preparePageContent(
 export function readShareTemplate(name: string) {
     return getShareProvider().readTemplate(name);
 }
+
+/**
+ * Renders the share theme's EJS template of that name with `data`. Each template text compiles
+ * once, so a template edited in development compiles again. The templates' `include()` resolves
+ * to the `include` passed in `data`, which the template's `with (locals)` block finds before EJS's
+ * own: EJS compiles an included template again on every call, and its `filename` cache needs
+ * `fs.existsSync`, which the browser build of EJS lacks.
+ */
+export function renderShareTemplate(name: string, data: ejs.Data): string {
+    const template = readShareTemplate(name);
+    let render = compiledShareTemplates.get(template);
+    if (!render) {
+        render = ejs.compile(template);
+        compiledShareTemplates.set(template, render);
+    }
+
+    return render({
+        ...data,
+        include: (path: string, includeData?: ejs.Data) =>
+            renderShareTemplate(path, { ...data, ...includeData })
+    });
+}
+
+const compiledShareTemplates = new Map<string, ejs.TemplateFunction>();
 
 /**
  * Returns the prefix the share theme resolves built-in assets against. The share pages live one
@@ -498,6 +533,11 @@ export interface ShareRenderOptions {
      * out, and a missing block renders as a broken reference.
      */
     block?: string;
+    /**
+     * Whether a code note numbers its lines, as its embed's `data-code-line-numbers` sets, over
+     * the option.
+     */
+    hasCodeLineNumbers?: boolean;
 }
 
 export function getContent(note: SNote | BNote, options: ShareRenderOptions = {}) {
@@ -520,7 +560,7 @@ export function getContent(note: SNote | BNote, options: ShareRenderOptions = {}
     } else if (note.type === "code" && note.mime === "text/x-markdown") {
         renderMarkdown(result, note);
     } else if (note.type === "code") {
-        renderCode(result, note.mime);
+        renderCode(result, note.mime, note, options.hasCodeLineNumbers);
     } else if (note.type === "mermaid") {
         renderMermaid(result, note);
         hostNoteView(result, note, options);
@@ -533,7 +573,10 @@ export function getContent(note: SNote | BNote, options: ShareRenderOptions = {}
         && SHARE_HOSTED_VIEW_TYPES.includes(getViewType(note) ?? "")) {
         renderCollectionView(result, note, options);
     } else if (note.type === "book") {
+        // A collection shows its child notes. What its content still holds from a type it was
+        // switched from is never written into the page, which prints it as HTML.
         result.isEmpty = true;
+        result.content = "";
     } else if (note.type === "webView") {
         renderWebView(note, result);
     } else if ([ "noteMap", "relationMap", "render" ].includes(note.type)) {
@@ -557,7 +600,7 @@ function renderIndex(result: Result) {
     for (const childNote of rootNote.getChildNotes()) {
         const link = getShareLink(childNote, sanitize.sanitizeUrl);
         const target = link.isExternal ? ` target="_blank" rel="noopener noreferrer"` : "";
-        result.content += `<li><a class="${childNote.type}" href="${escapeHtml(link.href)}"${target}>`
+        result.content += `<li><a class="${childNote.type}" href="${utils.escapeHtml(link.href)}"${target}>`
             + `${childNote.escapedTitle}</a></li>`;
     }
 
@@ -571,9 +614,14 @@ function renderText(result: Result, note: SNote | BNote, options: ShareRenderOpt
     };
     const document = parse(result.content || "", parseOpts);
     if (options.block !== undefined && !sliceToBlockReference(document, options.block)) {
-        const message = escapeHtml(t("content_renderer.broken-block-reference"));
+        const message = utils.escapeHtml(t("content_renderer.broken-block-reference"));
         result.content = `<p class="block-reference-broken">${message}</p>`;
         return;
+    }
+
+    // The content of an embed of an unknown kind needs the renderer of its kind.
+    for (const embedEl of document.querySelectorAll(`section[${CONTENT_EMBED_KIND_ATTRIBUTE}]`)) {
+        replaceWithUnavailable(embedEl, parseOpts);
     }
 
     // Link previews keep their metadata in `data-*` attributes and are drawn as the app draws
@@ -616,40 +664,45 @@ function renderText(result: Result, note: SNote | BNote, options: ShareRenderOpt
         if (embed.kind === "attachment") {
             const attachment = getAttachment(embed.attachmentId);
             if (!attachment) {
-                embedEl.remove();
+                replaceWithUnavailable(embedEl, parseOpts);
             } else if (embed.asLink) {
                 const link = renderAttachmentLink(embed.attachmentId, attachment);
                 embedEl.replaceWith(...parse(link, parseOpts).childNodes);
             } else {
-                const html = renderAttachmentEmbed(embed.attachmentId, attachment);
+                const html = renderAttachmentEmbed(embed.attachmentId, attachment, getNote);
                 replaceEmbedContent(embedEl, parse(html, parseOpts).childNodes);
             }
             continue;
         }
 
         const embeddedNote = shaca.getNote(embed.noteId);
-        if (!embeddedNote) continue;
+        if (!embeddedNote) {
+            replaceWithUnavailable(embedEl, parseOpts);
+            continue;
+        }
 
         // An embed must not disclose what a direct request for the same note would refuse: a note
         // carrying `shareCredentials` the caller has not presented becomes a placeholder, and its
         // title is withheld too, since an embedded note need not appear in the visible share tree.
         if (options.canAccessEmbed && !options.canAccessEmbed(embeddedNote)) {
-            embedEl.replaceWith(...parse(`<p class="include-note-forbidden">${escapeHtml(t("content_renderer.included-note-requires-credentials"))}</p>`, parseOpts).childNodes);
+            embedEl.replaceWith(...parse(`<p class="include-note-forbidden">${utils.escapeHtml(t("content_renderer.included-note-requires-credentials"))}</p>`, parseOpts).childNodes);
             continue;
         }
 
         // The link-processing passes below resolve the reference link to the shared note.
         if (embed.asLink) {
-            const href = escapeHtml(getNoteEmbedHref(embed.noteId, embed.block));
-            const title = escapeHtml(embeddedNote.title);
+            const href = utils.escapeHtml(getNoteEmbedHref(embed.noteId, embed.block));
+            const title = utils.escapeHtml(embeddedNote.title);
             const link = `<a class="reference-link" href="${href}">${title}</a>`;
             embedEl.replaceWith(...parse(link, parseOpts).childNodes);
             continue;
         }
 
+        const lineNumbers = embedEl.getAttribute("data-code-line-numbers");
         const embeddedResult = getContent(embeddedNote, {
             ...getNestedEmbedOptions(embedContext, embed.block),
-            canAccessEmbed: options.canAccessEmbed
+            canAccessEmbed: options.canAccessEmbed,
+            hasCodeLineNumbers: lineNumbers == null ? undefined : lineNumbers !== "false"
         });
         if (typeof embeddedResult.content !== "string") continue;
 
@@ -663,8 +716,8 @@ function renderText(result: Result, note: SNote | BNote, options: ShareRenderOpt
         for (const linkEl of document.querySelectorAll("a")) {
             const href = linkEl.getAttribute("href");
 
-            // Preserve footnotes.
-            if (href?.startsWith("#fn")) {
+            // Preserve in-page anchors (footnotes, bookmarks): a link to a note starts with `#root`.
+            if (href?.startsWith("#") && !href.startsWith("#root")) {
                 continue;
             }
 
@@ -681,6 +734,10 @@ function renderText(result: Result, note: SNote | BNote, options: ShareRenderOpt
         for (const codeEl of document.querySelectorAll("pre code")) {
             if (codeEl.classList.contains("language-mermaid")) {
                 // Mermaid is handled on client-side, we don't want to break it by adding syntax highlighting.
+                continue;
+            }
+            // An embedded code note is already highlighted by `renderCode()`.
+            if (codeEl.classList.contains("code-preview-content")) {
                 continue;
             }
 
@@ -703,22 +760,45 @@ function replaceEmbedContent(embedEl: HTMLElement, content: ParsedNode[]) {
 }
 
 /**
- * What an embedded attachment shows: a picture as an image, anything else as the attachment link
- * that `handleAttachmentLink` then resolves.
+ * Replaces an embed that cannot show its content with a message that tells nothing about it: the
+ * page is public, and a note that is not shared counts as missing. The block ID stays, for links
+ * to the block.
  */
-function renderAttachmentEmbed(attachmentId: string, attachment: BAttachment | SAttachment) {
-    if (!isImageAttachmentRole(attachment.role)) {
+function replaceWithUnavailable(embedEl: HTMLElement, parseOpts: Partial<Options>) {
+    const message = utils.escapeHtml(t("content_renderer.content-not-available"));
+    const blockId = embedEl.getAttribute(BLOCK_ID_ATTRIBUTE);
+    const blockAttribute = blockId
+        ? ` ${BLOCK_ID_ATTRIBUTE}="${utils.escapeHtml(blockId)}"`
+        : "";
+    const html = `<div class="include-note-unavailable"${blockAttribute}>${message}</div>`;
+    embedEl.replaceWith(...parse(html, parseOpts).childNodes);
+}
+
+/**
+ * What an embedded attachment shows: a picture as an image, a canvas drawing as the picture that
+ * its note keeps of it, at the size of the picture, and anything else, or a drawing without a
+ * picture, as the attachment link that `handleAttachmentLink` then resolves.
+ */
+function renderAttachmentEmbed(
+    attachmentId: string,
+    attachment: BAttachment | SAttachment,
+    getNote: GetNoteFunction
+) {
+    const image = attachment.mime === CANVAS_ATTACHMENT_MIME
+        ? getNote(attachment.ownerId)?.getAttachmentByTitle(getDrawingPictureTitle(attachmentId))
+        : attachment;
+    if (!image?.attachmentId || !isImageAttachmentRole(image.role)) {
         return renderAttachmentLink(attachmentId, attachment);
     }
 
-    const src = `api/attachments/${attachmentId}/image/${encodeURIComponent(attachment.title)}`;
-    return `<img src="${src}" alt="${escapeHtml(attachment.title)}">`;
+    const src = `api/attachments/${image.attachmentId}/image/${encodeURIComponent(image.title)}`;
+    return `<img src="${src}" alt="${utils.escapeHtml(attachment.title)}">`;
 }
 
 /** The reference link to an attachment, which `handleAttachmentLink` then resolves. */
 function renderAttachmentLink(attachmentId: string, attachment: BAttachment | SAttachment) {
-    const href = escapeHtml(getAttachmentEmbedHref(attachment.ownerId, attachmentId));
-    return `<a class="reference-link" href="${href}">${escapeHtml(attachment.title)}</a>`;
+    const href = utils.escapeHtml(getAttachmentEmbedHref(attachment.ownerId, attachmentId));
+    return `<a class="reference-link" href="${href}">${utils.escapeHtml(attachment.title)}</a>`;
 }
 
 function handleAttachmentLink(linkEl: HTMLElement, href: string, getNote: GetNoteFunction, getAttachment: (id: string) => BAttachment | SAttachment | null) {
@@ -784,7 +864,7 @@ function cleanUpReferenceLinks(linkEl: HTMLElement, href: string, getNote: GetNo
     } else if (note.isProtected) {
         linkEl.innerHTML = "[protected]";
     } else {
-        linkEl.innerHTML = `<span><span class="${escapeHtml(note.getIcon())}"></span>${utils.escapeHtml(note.title)}</span>`;
+        linkEl.innerHTML = `<span><span class="${utils.escapeHtml(note.getIcon())}"></span>${utils.escapeHtml(note.title)}</span>`;
     }
 }
 
@@ -852,13 +932,25 @@ function highlightCodeBlock(codeEl: HTMLElement) {
     }
 }
 
+type CodePreviewModule = typeof import("@triliumnext/codemirror/src/code_preview.js");
+
 let registeredMimeTypesOption: string | null = null;
 let pendingRegistration: Promise<void> | null = null;
+/**
+ * The renderer of code notes, the share themes and the enabled MIME types, once
+ * `ensureShareHighlighting()` loads them.
+ */
+let codePreviews: {
+    module: CodePreviewModule;
+    themes: PreviewThemeSlot[];
+    enabledMimes: Set<string>;
+} | null = null;
 
 /**
  * Registers the highlight.js languages enabled in the `codeNotesMimeTypes` option and unregisters
- * the disabled ones, so `highlightAuto` considers only the enabled ones. The renderer is
- * synchronous, so callers await this before rendering a share page or a share-theme export.
+ * the disabled ones, so `highlightAuto` considers only the enabled ones. Loads the CodeMirror
+ * languages of the same MIME types for the code notes. The renderer is synchronous, so callers
+ * await this before rendering a share page or a share-theme export.
  */
 export function ensureShareHighlighting(): Promise<void> {
     const optionValue = options.getOptionOrNull("codeNotesMimeTypes");
@@ -868,9 +960,10 @@ export function ensureShareHighlighting(): Promise<void> {
 
     registeredMimeTypesOption = optionValue;
     pendingRegistration = Promise.resolve()
-        .then(() => {
+        .then(async () => {
             const enabledMimes = optionValue ? JSON.parse(optionValue) : null;
-            return syncMimeTypes(resolveEnabledMimeTypes(enabledMimes));
+            const mimeTypes = resolveEnabledMimeTypes(enabledMimes);
+            await Promise.all([ syncMimeTypes(mimeTypes), loadCodePreviews(mimeTypes) ]);
         })
         .catch((e: unknown) => {
             getLog().error(`Unable to register the languages for syntax highlighting: ${e}`);
@@ -879,12 +972,41 @@ export function ensureShareHighlighting(): Promise<void> {
     return pendingRegistration;
 }
 
+/** Loads the renderer of code notes, its themes and its languages for the enabled `mimeTypes`. */
+async function loadCodePreviews(mimeTypes: MimeType[]) {
+    const module = await import("@triliumnext/codemirror/src/code_preview.js");
+    const enabledMimes = mimeTypes.filter(({ enabled }) => enabled).map(({ mime }) => mime);
+    const [ themes ] = await Promise.all([
+        Promise.all(SHARE_CODE_PREVIEW_THEMES.map(async ({ id, key }) => ({
+            theme: await module.loadPreviewTheme(id), key
+        }))),
+        Promise.all(enabledMimes.map((mime) => module.loadPreviewLanguage(mime)))
+    ]);
+    codePreviews = { module, themes, enabledMimes: new Set(enabledMimes) };
+}
+
 /**
- * Renders a code note.
+ * Renders a code note as CodeMirror shows it, once `ensureShareHighlighting()` has loaded the
+ * renderer. Until then the code is escaped in a `<pre><code>`.
+ *
+ * @param note the note whose `#wrapLines` label sets the line wrapping, over the option.
+ * @param hasLineNumbers whether the lines are numbered, over the option.
  */
-export function renderCode(result: Result, mime?: string) {
+export function renderCode(
+    result: Result, mime?: string, note?: SNote | BNote, hasLineNumbers?: boolean
+) {
     if (typeof result.content !== "string" || !result.content?.trim()) {
         result.isEmpty = true;
+    } else if (codePreviews) {
+        const { module, themes, enabledMimes } = codePreviews;
+        const language = mime && enabledMimes.has(mime) && shouldSyntaxHighlight(result.content)
+            ? module.getLoadedPreviewLanguage(mime) ?? null
+            : null;
+        result.content = module.renderCodePreview(result.content, {
+            themes, language, isWrapped: isLineWrapped(note),
+            hasLineNumbers: hasLineNumbers
+                ?? options.getOptionOrNull("codeLineNumbersEnabled") !== "false"
+        });
     } else {
         // Escape the raw code so that any `<`/`>` it contains are not later re-parsed as HTML.
         // When such a code note is embedded into a shared text note, renderText re-parses the
@@ -893,10 +1015,17 @@ export function renderCode(result: Result, mime?: string) {
         // loop (#9717). The <code> wrapper and its `language-*` class additionally let renderText
         // apply syntax highlighting, bounded by shouldSyntaxHighlight().
         const languageClass = mime
-            ? ` class="language-${escapeHtml(normalizeMimeTypeForCKEditor(mime))}"`
+            ? ` class="language-${utils.escapeHtml(normalizeMimeTypeForCKEditor(mime))}"`
             : "";
-        result.content = `<pre><code${languageClass}>${escapeHtml(result.content)}</code></pre>`;
+        result.content = `<pre><code${languageClass}>${utils.escapeHtml(result.content)}</code></pre>`;
     }
+}
+
+function isLineWrapped(note: SNote | BNote | undefined) {
+    const label = note?.getLabelValue("wrapLines");
+    return label == null
+        ? options.getOptionOrNull("codeLineWrapEnabled") !== "false"
+        : label !== "false";
 }
 
 /**
@@ -914,7 +1043,7 @@ function renderMermaid(result: Result, note: SNote | BNote) {
 <hr>
 <details>
     <summary>Chart source</summary>
-    <pre class="mermaid-note-source">${escapeHtml(result.content)}</pre>
+    <pre class="mermaid-note-source">${utils.escapeHtml(result.content)}</pre>
 </details>
 </div>`;
 }
@@ -1024,8 +1153,8 @@ function buildExportRows(note: BNote, exportHosting: ExportHosting | undefined) 
 const SHARED_OPTIONS = [
     "locale", "formattingLocale", "firstDayOfWeek",
     "codeNoteTheme", "codeNoteThemeLight", "codeNoteThemeDark", "codeNoteThemeMatchesApp",
-    "codeLineWrapEnabled", "codeNoteTabWidth", "codeNoteIndentWithTabs",
-    "splitEditorOrientation"
+    "codeLineWrapEnabled", "codeLineNumbersEnabled", "codeNoteTabWidth",
+    "codeNoteIndentWithTabs", "splitEditorOrientation"
 ] as const;
 
 function renderImage(result: Result, note: SNote | BNote) {

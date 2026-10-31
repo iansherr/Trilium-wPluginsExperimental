@@ -13,7 +13,18 @@ describe("Markdown export", () => {
             "language-application-javascript-env-backend": "javascript",
             "language-text-x-asm-mips": "mips",
             "language-text-jsx": "jsx",
-            "language-text-html": "html"
+            "language-text-html": "html",
+            "language-text-plain": "plaintext",
+            "language-text-x-csrc": "c",
+            "language-text-x-c-src": "cpp",
+            "language-text-x-rustsrc": "rust",
+            "language-text-typescript-jsx": "tsx",
+            "language-text-x-toml": "toml",
+            "language-text-x-scala": "scala",
+            "language-text-jinja2": "jinja",
+            "language-text-x-literate-haskell": "literate-haskell",
+            "language-text-x-mysql": "mysql",
+            "language-text-x-mssql": "tsql"
         };
 
         for (const [ input, output ] of Object.entries(conversionTable)) {
@@ -116,13 +127,12 @@ describe("Markdown export", () => {
 
         // The fallback anchor is generated from the data attributes, so its href and title must be
         // HTML-escaped or a title like `A & B <x>` would break the exported markup. This escaping is
-        // done deterministically with escape-html, so it holds under both test environments.
+        // done deterministically with `escapeHtml()`, so it holds under both test environments.
         expect(exported).toContain('<a href="https://e.com/?a=1&amp;b=2">A &amp; B &lt;x&gt;</a>');
 
         // The section wrapper and its data attributes survive so the preview re-imports losslessly.
-        // The escaping of `<`/`>` inside data-title is left to turndown's serializer, which differs by
-        // environment (server/node uses domino and escapes them; standalone/happy-dom uses the browser
-        // serializer and leaves them raw). It is not asserted because both forms decode to the same value.
+        // The escaping of `<`/`>` inside data-title is left to Turnish's serializer and is not asserted,
+        // since the escaped and raw forms decode to the same value.
         expect(exported).toContain('<section class="link-embed" data-url="https://e.com/?a=1&amp;b=2" data-embed-type="opengraph"');
     });
 
@@ -777,6 +787,19 @@ describe("Markdown export", () => {
         expect(markdownExportService.toMarkdown(html)).toBe(expected);
     });
 
+    it("keeps bookmarks as HTML anchors, so links to them still resolve after an import", () => {
+        const html = `<h3><a id="schema-note"></a><code>Note</code></h3>`
+            + `<p>See <a href="#schema-note">the note</a>.<a id="end"></a></p>`
+            + `<p><a id="say-&quot;hi&quot;"></a>Quoted</p>`;
+
+        expect(markdownExportService.toMarkdown(html)).toBe(trimIndentation`\
+            ### <a id="schema-note"></a>\`Note\`
+
+            See [the note](#schema-note).<a id="end"></a>
+
+            <a id="say-&quot;hi&quot;"></a>Quoted`);
+    });
+
     it("drops the block ids of a text note, which Markdown has no syntax for", () => {
         const html = `<h2 data-trilium-block-id="h1">Title</h2>`
             + `<p data-trilium-block-id="p1">Text</p>`;
@@ -1001,6 +1024,15 @@ describe("Markdown export", () => {
                     y`);
         });
 
+        it("drops the tab alignment, which MkDocs content tabs cannot express", () => {
+            const html = "<div class=\"trilium-tabs\" data-trilium-tab-alignment=\"bottom\">" +
+                `${tab("Windows", "<p>a</p>")}</div>`;
+            expect(markdownExportService.toMarkdown(html)).toBe(trimIndentation`\
+                === "Windows"
+
+                    a`);
+        });
+
         it("exports the icons and formatting of a tab title as inline Markdown", () => {
             const html = tabs(
                 tab(`<span class="tn-icon bx bxl-chrome"></span>&nbsp;Chrome`, "<p>a</p>"),
@@ -1020,25 +1052,76 @@ describe("Markdown export", () => {
         });
     });
 
-    it("exports the columns of a multicolumn layout one after another", () => {
-        const html =
-            "<p>Before</p>" +
-            "<section class=\"trilium-multicolumn-layout\" data-trilium-column-ratios=\"1-3\">" +
-                "<section><p>First <strong>column</strong></p><ul><li>One</li></ul></section>" +
-                "<section><h2>Second</h2><p>Text</p></section>" +
-            "</section>" +
-            "<p>After</p>";
-        expect(markdownExportService.toMarkdown(html)).toBe(trimIndentation`\
-            Before
+    describe("multicolumn layouts", () => {
+        const column = (content: string) =>
+            `<div class="trilium-multicolumn-column">${content}</div>`;
+        const layout = (ratios: string, ...columns: string[]) =>
+            `<div class="trilium-multicolumn-layout" data-trilium-column-ratios="${ratios}">` +
+            `${columns.map(column).join("")}</div>`;
 
-            First **column**
+        it("writes each column as Markdown between the HTML tags of the layout", () => {
+            const html = `<p>Before</p>${layout("1-3",
+                "<p>First <strong>column</strong></p><ul><li>One</li></ul>",
+                "<h2>Second</h2><p>Text</p>"
+            )}<p>After</p>`;
+            expect(markdownExportService.toMarkdown(html)).toBe(trimIndentation`\
+                Before
 
-            *   One
+                <div class="trilium-multicolumn-layout" data-trilium-column-ratios="1-3">
+                <div class="trilium-multicolumn-column">
 
-            ## Second
+                First **column**
 
-            Text
+                *   One
 
-            After`);
+                </div>
+                <div class="trilium-multicolumn-column">
+
+                ## Second
+
+                Text
+
+                </div>
+                </div>
+
+                After`);
+        });
+
+        it("keeps a nested layout and the empty columns that Turndown would drop", () => {
+            const html = layout("1-1",
+                layout("1-2-1", "<p>Inner</p>", "<p>&nbsp;</p>", "<p>&nbsp;</p>"),
+                "<p>Outer</p>"
+            ) + layout("3-1", "<p>&nbsp;</p>", "<p>&nbsp;</p>");
+            expect(markdownExportService.toMarkdown(html)).toBe(trimIndentation`\
+                <div class="trilium-multicolumn-layout" data-trilium-column-ratios="1-1">
+                <div class="trilium-multicolumn-column">
+
+                <div class="trilium-multicolumn-layout" data-trilium-column-ratios="1-2-1">
+                <div class="trilium-multicolumn-column">
+
+                Inner
+
+                </div>
+                <div class="trilium-multicolumn-column">
+                </div>
+                <div class="trilium-multicolumn-column">
+                </div>
+                </div>
+
+                </div>
+                <div class="trilium-multicolumn-column">
+
+                Outer
+
+                </div>
+                </div>
+
+                <div class="trilium-multicolumn-layout" data-trilium-column-ratios="3-1">
+                <div class="trilium-multicolumn-column">
+                </div>
+                <div class="trilium-multicolumn-column">
+                </div>
+                </div>`);
+        });
     });
 });

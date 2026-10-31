@@ -1,4 +1,4 @@
-import { type Editor, isWidget, type ViewDocumentSelection, type ViewElement } from "ckeditor5";
+import { type Editor, isWidget, type Plugin, type ViewDocumentSelection, type ViewElement } from "ckeditor5";
 
 /**
  * Hack coming from https://github.com/ckeditor/ckeditor5/issues/4465
@@ -23,6 +23,21 @@ export function preventCKEditorHandling(domElement: HTMLElement, editor: Editor)
         //@ts-expect-error: We are accessing a private field.
         editor.editing.view._renderer.isFocused = false;
     }
+}
+
+/**
+ * Sets `_renderer.isFocused` back to `view.document.isFocused` on a press or key in the text,
+ * after `preventCKEditorHandling()` turned it off. The view ignores the events of widget UI
+ * (`data-cke-ignore-events`), so a press or key that the view sees is back in the text.
+ */
+export function restoreRendererFocusOnInput(plugin: Plugin) {
+    const view = plugin.editor.editing.view;
+    const restore = () => {
+        //@ts-expect-error: We are accessing a private field.
+        view._renderer.isFocused = view.document.isFocused;
+    };
+    plugin.listenTo(view.document, "mousedown", restore, { priority: "highest" });
+    plugin.listenTo(view.document, "keydown", restore, { priority: "highest" });
 }
 
 /**
@@ -77,4 +92,47 @@ export function findSelectedWidget(
 
 function isMarkedWidget(element: ViewElement, property: string) {
     return !!element.getCustomProperty(property) && isWidget(element);
+}
+
+/**
+ * Keeps `className` on the view elements that `isContainer` accepts and that hold the focused
+ * nested editable, like CKEditor keeps `ck-editor__nested-editable_focused` on the editable.
+ * With `isInnermostOnly`, only the closest such element gets it. Stylesheets match this class
+ * instead of a `:has()` on CKEditor's: that `:has()` re-checks large ancestors on each caret move.
+ */
+export function markFocusedContainers(
+    editor: Editor,
+    className: string,
+    isContainer: (element: ViewElement) => boolean,
+    { isInnermostOnly = false } = {}
+) {
+    const viewDocument = editor.editing.view.document;
+    let marked = new Set<ViewElement>();
+
+    viewDocument.registerPostFixer(writer => {
+        const containers = new Set<ViewElement>();
+        const editable = viewDocument.isFocused ? viewDocument.selection.editableElement : null;
+        for (const ancestor of editable?.getAncestors({ parentFirst: true }) ?? []) {
+            if (ancestor.is("element") && isContainer(ancestor)) {
+                containers.add(ancestor);
+                if (isInnermostOnly) break;
+            }
+        }
+
+        let isChanged = false;
+        for (const element of marked) {
+            if (!containers.has(element) && element.hasClass(className)) {
+                writer.removeClass(className, element);
+                isChanged = true;
+            }
+        }
+        for (const element of containers) {
+            if (!element.hasClass(className)) {
+                writer.addClass(className, element);
+                isChanged = true;
+            }
+        }
+        marked = containers;
+        return isChanged;
+    });
 }

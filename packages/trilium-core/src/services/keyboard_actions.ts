@@ -526,7 +526,7 @@ function getDefaultKeyboardActions() {
         {
             friendlyName: t("keyboard_action_names.show-backend-log"),
             actionName: "showBackendLog",
-            iconClass: "bx bx-detail",
+            iconClass: "bx bx-receipt",
             defaultShortcuts: [],
             description: t("keyboard_actions.show-backend-log"),
             scope: "window"
@@ -753,7 +753,7 @@ function getDefaultKeyboardActions() {
             actionName: "peekRightPane",
             friendlyName: t("keyboard_action_names.peek-right-pane"),
             iconClass: "bx bx-sidebar bx-flip-horizontal",
-            defaultShortcuts: [],
+            defaultShortcuts: ["Alt+]"],
             description: t("keyboard_actions.peek-right-pane"),
             scope: "window"
         },
@@ -840,6 +840,14 @@ function getDefaultKeyboardActions() {
             iconClass: "bx bx-sidebar",
             defaultShortcuts: [],
             description: t("keyboard_actions.toggle-left-note-tree-panel"),
+            scope: "window"
+        },
+        {
+            actionName: "peekLeftPane",
+            friendlyName: t("keyboard_action_names.peek-left-pane"),
+            iconClass: "bx bx-sidebar",
+            defaultShortcuts: ["Alt+["],
+            description: t("keyboard_actions.peek-left-pane"),
             scope: "window"
         },
         {

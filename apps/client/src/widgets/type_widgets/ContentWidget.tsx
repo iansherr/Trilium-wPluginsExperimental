@@ -18,15 +18,17 @@ import MediaSettings from "./options/media";
 import OtherSettings from "./options/other";
 import PasswordSettings from "./options/password";
 import PluginsSettings from "./options/plugins";
+import ResourcesSettings from "./options/resources";
 import SecuritySettings from "./options/security";
 import ShortcutSettings from "./options/shortcuts";
 import SpellcheckSettings from "./options/spellcheck";
 import SyncOptions from "./options/sync";
 import TextNoteSettings from "./options/text_notes";
+import TranscriptionSettings from "./options/transcription";
 import SpaceUsage from "./space_usage";
 import { TypeWidgetProps } from "./type_widget";
 
-export type OptionPages = "_optionsAppearance" | "_optionsShortcuts" | "_optionsTextNotes" | "_optionsCodeNotes" | "_optionsContentManager" | "_optionsMedia" | "_optionsSpellcheck" | "_optionsPassword" | "_optionsEtapi" | "_optionsBackup" | "_optionsDatabase" | "_optionsSync" | "_optionsDesktop" | "_optionsOther" | "_optionsLocalization" | "_optionsSecurity" | "_optionsAdvanced" | "_optionsLlm" | "_optionsPlugins";
+export type OptionPages = "_optionsAppearance" | "_optionsShortcuts" | "_optionsTextNotes" | "_optionsCodeNotes" | "_optionsContentManager" | "_optionsMedia" | "_optionsSpellcheck" | "_optionsTranscription" | "_optionsPassword" | "_optionsEtapi" | "_optionsBackup" | "_optionsDatabase" | "_optionsResources" | "_optionsSync" | "_optionsDesktop" | "_optionsOther" | "_optionsLocalization" | "_optionsSecurity" | "_optionsAdvanced" | "_optionsLlm" | "_optionsPlugins";
 
 /** The page behind each of these notes. Exported for the options search, which renders them all. */
 export const CONTENT_WIDGETS: Record<OptionPages | "_backendLog" | "_spaceUsage", (props: TypeWidgetProps) => JSX.Element> = {
@@ -37,10 +39,12 @@ export const CONTENT_WIDGETS: Record<OptionPages | "_backendLog" | "_spaceUsage"
     _optionsContentManager: ActiveContentSettings,
     _optionsMedia: MediaSettings,
     _optionsSpellcheck: SpellcheckSettings,
+    _optionsTranscription: TranscriptionSettings,
     _optionsPassword: PasswordSettings,
     _optionsEtapi: EtapiSettings,
     _optionsBackup: BackupSettings,
     _optionsDatabase: DatabaseSettings,
+    _optionsResources: ResourcesSettings,
     _optionsSync: SyncOptions,
     _optionsDesktop: DesktopSettings,
     _optionsOther: OtherSettings,

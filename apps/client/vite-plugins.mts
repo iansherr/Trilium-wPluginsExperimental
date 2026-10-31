@@ -3,9 +3,15 @@ import type { ServerResponse } from "node:http";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Node loads these without a bundler, so neither imports another source file.
+import { getThemeById } from "@triliumnext/codemirror/src/color_themes.js";
+import {
+    buildCodePreviewCss, readPreviewTheme
+} from "@triliumnext/codemirror/src/preview_theme.js";
 import type { ShareThemeManifest } from "@triliumnext/commons";
 import {
-    resolveShareThemeGroups, SHARE_HOSTED_NOTE_TYPES, SHARE_HOSTED_VIEW_TYPES
+    resolveShareThemeGroups, SHARE_CODE_PREVIEW_THEMES, SHARE_HOSTED_NOTE_TYPES,
+    SHARE_HOSTED_VIEW_TYPES
 } from "@triliumnext/commons/src/lib/share_hosting.js";
 import {
     buildVsCodeThemeCss, VS_CODE_DARK, VS_CODE_LIGHT
@@ -108,6 +114,155 @@ function replaceOnce(code: string, pattern: RegExp, replacer: (match: string, ..
         throw new Error(`strip-univer-emoji-data: ${pattern} no longer matches; update vite-plugins.mts.`);
     }
     return code.replace(pattern, replacer);
+}
+
+/**
+ * Rewrites the third-party selectors that make Chromium restyle a whole container each time an
+ * element is inserted into it, which in a large note is the whole note on every Enter: a `*`
+ * after `+`, `~` or a position pseudo-class, and a sibling or `:nth-*` compound without a class.
+ * Also a `*` or bare pseudo-element after `.ck-focused` or `.ck-blurred`, which restyles the
+ * whole note each time the editor gains or loses focus.
+ * `vite-plugins.spec.ts` checks every rewrite still matches the installed stylesheet.
+ */
+export function narrowThirdPartySelectors(): Plugin {
+    return {
+        name: "narrow-third-party-selectors",
+        enforce: "pre",
+        transform: (code, id) => narrowSelectorsSource(code, id)
+    };
+}
+
+/**
+ * Returns `code` with the rewrites of the stylesheet `id` applied, and `null` for other
+ * modules.
+ */
+export function narrowSelectorsSource(code: string, id: string): string | null {
+    const path = id.replace(/\\/g, "/").replace(/\?.*$/, "");
+    const stylesheet = THIRD_PARTY_STYLESHEETS.find(({ file }) =>
+        path.endsWith(`/node_modules/${file}`));
+    if (!stylesheet) {
+        return null;
+    }
+
+    let narrowed = code;
+    for (const { from, to, count } of stylesheet.rewrites) {
+        const found = narrowed.split(from).length - 1;
+        if (found !== count) {
+            throw new Error(`narrow-third-party-selectors: expected ${count} × "${from}" in `
+                + `${stylesheet.file}, found ${found}; update vite-plugins.mts.`);
+        }
+        narrowed = narrowed.replaceAll(from, to);
+    }
+    return narrowed;
+}
+
+interface SelectorRewrite {
+    from: string;
+    to: string;
+    /** How often `from` occurs in the installed stylesheet. */
+    count: number;
+}
+
+/**
+ * Bootstrap's minified selectors, the same in its LTR and RTL builds. Trilium uses no
+ * `.table-striped-columns` or `.has-validation`; floating labels need `.form-control` or
+ * `.form-select` on the field.
+ */
+const BOOTSTRAP_REWRITES: SelectorRewrite[] = [
+    // The cells only read the stripe's custom properties, so the row can set them.
+    {
+        from: ".table-striped>tbody>tr:nth-of-type(odd)>*",
+        to: ".table-striped>tbody>tr:nth-of-type(odd)",
+        count: 1
+    },
+    {
+        from: ".table-striped-columns>:not(caption)>tr>:nth-child(2n)",
+        to: ".table-striped-columns>:not(caption)>tr>td:nth-child(2n),"
+            + ".table-striped-columns>:not(caption)>tr>th:nth-child(2n)",
+        count: 1
+    },
+    {
+        from: ".form-floating>textarea:focus~",
+        to: ".form-floating>textarea.form-control:focus~",
+        count: 1
+    },
+    {
+        from: ".form-floating>textarea:not(:placeholder-shown)~",
+        to: ".form-floating>textarea.form-control:not(:placeholder-shown)~",
+        count: 1
+    },
+    {
+        from: ".form-floating>textarea:disabled~",
+        to: ".form-floating>textarea.form-control:disabled~",
+        count: 1
+    },
+    {
+        from: ".form-floating>:disabled~label",
+        to: ".form-floating>.form-select:disabled~label",
+        count: 1
+    },
+    {
+        from: ",.input-group.has-validation>:nth-last-child(n+3)"
+            + ":not(.dropdown-toggle):not(.dropdown-menu):not(.form-floating)",
+        to: "",
+        count: 1
+    }
+];
+
+/** CKEditor's nested selectors. Its UI views all carry the `ck` class. */
+const CKEDITOR_REWRITES: SelectorRewrite[] = [
+    { from: "&:not(.ck-hidden) ~ * {", to: "&:not(.ck-hidden) ~ .ck {", count: 1 },
+    { from: "& > * + * {", to: "& > .ck + .ck {", count: 2 },
+    { from: "& + * {", to: "&.ck + .ck {", count: 3 },
+    // The keys of a keystroke, with only text between them.
+    { from: "& + kbd {", to: "&:not(:first-child) {", count: 1 },
+    // A blurred editor shows its selection in the same color as a focused one.
+    {
+        from: "&.ck-blurred ::selection {\n"
+            + "    background: var(--ck-color-editable-blur-selection, #d9d9d9);\n  }",
+        to: "",
+        count: 1
+    },
+    // The icon's `svg *` rule reads its stroke from this variable.
+    {
+        from: "& svg * {\n    stroke: var(--ck-color-widget-blurred-border);\n  }",
+        to: "--ck-color-widget-type-around-button-icon: var(--ck-color-widget-blurred-border);",
+        count: 1
+    }
+];
+
+/**
+ * The stylesheets rewritten: `specifier` resolves to the file, `file` is its path in
+ * `node_modules`.
+ */
+export const THIRD_PARTY_STYLESHEETS = [
+    {
+        specifier: "bootstrap/dist/css/bootstrap.min.css",
+        file: "bootstrap/dist/css/bootstrap.min.css",
+        rewrites: [ clearAfterLegend("left"), ...BOOTSTRAP_REWRITES ]
+    },
+    {
+        specifier: "bootstrap/dist/css/bootstrap.rtl.min.css",
+        file: "bootstrap/dist/css/bootstrap.rtl.min.css",
+        rewrites: [ clearAfterLegend("right"), ...BOOTSTRAP_REWRITES ]
+    },
+    {
+        specifier: "ckeditor5/ckeditor5.css",
+        file: "ckeditor5/dist/ckeditor5.css",
+        rewrites: CKEDITOR_REWRITES
+    }
+];
+
+/**
+ * Bootstrap floats a `<legend>` to `side` and clears the element after it. Excalidraw's panels
+ * put each legend first in its `<fieldset>`, so the rewrite clears the other children instead.
+ */
+function clearAfterLegend(side: "left" | "right"): SelectorRewrite {
+    return {
+        from: `legend+*{clear:${side}}`,
+        to: `fieldset>:not(legend){clear:${side}}`,
+        count: 1
+    };
 }
 
 /** The share theme's sources, which the app build bundles into the files shared pages load. */
@@ -356,7 +511,7 @@ async function emitShareTheme(
     };
     for (const [ name, importers ] of Object.entries(LAZY_IMPORTERS)) {
         groups.shared[name] = importers.flatMap((importer) => {
-            const info = context.getModuleInfo(importer);
+            const info = context.getModuleInfo(normalizePath(importer));
             if (!info) {
                 throw new Error(`The share theme's '${name}' group names ${importer}, `
                     + "which the build does not include.");
@@ -405,20 +560,32 @@ async function emitShareTheme(
 
 /**
  * Serves `virtual:code-themes.css`: the VS Code highlighting themes code notes also use, one per
- * share theme mode. `:where()` keeps the block rules as weak as a stock highlight.js theme's, so
- * the share theme's own `.ck-content code` colors still win inside text notes.
+ * share theme mode, for the highlight.js code blocks of text notes and for the code notes that
+ * `renderCodePreview()` renders. `:where()` keeps the block rules as weak as a stock highlight.js
+ * theme's, so the share theme's own `.ck-content code` colors still win inside text notes.
  */
 function codeThemesPlugin(): Plugin {
     return {
         name: "share-theme-code-themes",
         resolveId: (id) => (id === CODE_THEMES_ID ? `\0${CODE_THEMES_ID}` : null),
         // The development server asks for `?direct` when `scripts.css` imports the themes.
-        load: (id) => (id.split("?")[0] === `\0${CODE_THEMES_ID}`
-            ? [
+        load: async (id) => {
+            if (id.split("?")[0] !== `\0${CODE_THEMES_ID}`) return null;
+
+            const codePreviewCss = await Promise.all(SHARE_CODE_PREVIEW_THEMES.map(
+                async ({ id: themeId, key, scope }) => {
+                    const definition = getThemeById(themeId);
+                    if (!definition) throw new Error(`Unknown code note theme "${themeId}".`);
+                    const theme = readPreviewTheme(themeId, await definition.load());
+                    return buildCodePreviewCss({ theme, key }, scope);
+                }
+            ));
+            return [
                 buildVsCodeThemeCss(VS_CODE_LIGHT, ":where(html.theme-light)"),
-                buildVsCodeThemeCss(VS_CODE_DARK, ":where(html.theme-dark)")
-            ].join("\n")
-            : null)
+                buildVsCodeThemeCss(VS_CODE_DARK, ":where(html.theme-dark)"),
+                ...codePreviewCss
+            ].join("\n");
+        }
     };
 }
 

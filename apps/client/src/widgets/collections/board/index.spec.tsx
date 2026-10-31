@@ -16,6 +16,7 @@ import contextMenu from "../../../menus/context_menu";
 import dialog from "../../../services/dialog";
 import server from "../../../services/server";
 import toast from "../../../services/toast";
+import ws from "../../../services/ws";
 import FBranch from "../../../entities/fbranch";
 import froca from "../../../services/froca";
 import attributes from "../../../services/attributes";
@@ -25,6 +26,7 @@ import LoadResults from "../../../services/load_results";
 import noteAttributeCache from "../../../services/note_attribute_cache";
 import searchService from "../../../services/search";
 import { buildNote } from "../../../test/easy-froca";
+import { highlightedTexts } from "../../../test/highlights";
 import { ParentComponent } from "../../react/react_utils";
 import BoardView, { BoardViewData, loadBoardEditing } from ".";
 import { getNoteTypeOptions, type NoteTypeOption } from "../../../services/note_types";
@@ -59,13 +61,12 @@ vi.mock("../../../services/utils", async (importOriginal) => ({
     isMobile: () => layout.onMobile
 }));
 
-vi.mock("../../../services/note_types", () => ({
+vi.mock("../../../services/note_types", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../services/note_types")>()),
     getNoteTypeOptions: vi.fn(async () => {
         templateReads++;
         return NOTE_TYPE_OPTIONS;
     }),
-    resolveNoteTypeOptions: (ids: string[], available: { id: string }[]) =>
-        ids.flatMap(id => available.filter(option => option.id === id)),
     noteTypeOptionGroupTitle: (group: string) => `group:${group}`,
     default: {}
 }));
@@ -163,7 +164,7 @@ const saved: BoardViewData[] = [];
  * config it was handed, so the `viewConfig` prop only changes identity if the caller passed a new
  * object. That is exactly the condition the board's refresh effect depends on.
  */
-function Harness({ note, noteIds, initialConfig }: { note: ReturnType<typeof buildNote>, noteIds: string[], initialConfig: BoardViewData }) {
+function Harness({ note, noteIds, initialConfig, isReadOnly }: { note: ReturnType<typeof buildNote>, noteIds: string[], initialConfig: BoardViewData, isReadOnly?: boolean }) {
     const [ state, setState ] = useState<{ config: BoardViewData }>({ config: initialConfig });
     const saveConfig = useCallback((config: BoardViewData) => {
         saved.push(config);
@@ -186,6 +187,7 @@ function Harness({ note, noteIds, initialConfig }: { note: ReturnType<typeof bui
             saveConfig={saveConfig}
             media="screen"
             onReady={() => {}}
+            isReadOnly={isReadOnly}
         />
     );
 }
@@ -258,11 +260,12 @@ describe("Collapsed board columns", () => {
     });
 
     /** A board whose first column is stored collapsed and holds two cards. */
-    async function setup({ keepCollapsed = false } = {}) {
+    async function setup({ keepCollapsed = false, hideAddColumn = false } = {}) {
         const note = buildNote({
             title: "Board",
             "#collection": "",
             "#viewType": "board",
+            ...(hideAddColumn ? { "#board:hideAddColumn": "true" } : {}),
             children: [
                 { id: "card1", title: "First", "#status": "To Do" },
                 { id: "card2", title: "Second", "#status": "To Do" },
@@ -701,6 +704,40 @@ describe("Collapsed board columns", () => {
         archived.mockRestore();
     });
 
+    it("leaves out the add-column button when hidden, and still opens its editor from the menu",
+        async () => {
+            const { mountPoint } = await setup({ hideAddColumn: true });
+            const show = vi.spyOn(contextMenu, "show").mockImplementation(async () => {});
+
+            expect(mountPoint.querySelector(".board-view-container")).not.toBeNull();
+            expect(mountPoint.querySelector(".board-add-column")).toBeNull();
+
+            mountPoint.querySelector(".board-view-container")
+                ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+            const items = show.mock.calls.at(-1)?.[0].items ?? [];
+            const addColumn = items.find(item =>
+                item && "uiIcon" in item && item.uiIcon === "bx bx-columns");
+            if (!addColumn || !("handler" in addColumn)) {
+                throw new Error("expected an add-column entry");
+            }
+
+            await act(async () => {
+                addColumn.handler?.(addColumn, {} as never);
+                await flush();
+            });
+            const editor = mountPoint.querySelector<HTMLInputElement>(".board-add-column input");
+            if (!editor) throw new Error("expected the add-column editor to be open");
+
+            await act(async () => {
+                editor.dispatchEvent(new FocusEvent("blur"));
+                editor.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+                await flush();
+            });
+            expect(mountPoint.querySelector(".board-add-column")).toBeNull();
+
+            show.mockRestore();
+        });
+
     /** A column and a card answer for their own presses, and the board does not speak over them. */
     it("leaves a press inside a column to the column", async () => {
         const { mountPoint } = await setup();
@@ -1108,6 +1145,18 @@ describe("Board column creation", () => {
 
         expect(saved.at(-1)?.columns?.map(c => c.value)).toEqual([ "To Do", "Done", "In Progress" ]);
         expect(columnTitles(container)).toEqual([ "To Do", "Done", "In Progress" ]);
+    });
+
+    it("sets every collapsed title upright once a column is named in CJK", async () => {
+        const { container } = await setup();
+        const board = container.querySelector<HTMLElement>(".board-view-container");
+        if (!board) throw new Error("expected the board container");
+        expect(board.classList.contains("cjk-titles")).toBe(false);
+
+        await addColumn(container, "English 中文 あい");
+
+        expect(columnTitles(container)).toContain("English 中文 あい");
+        expect(board.classList.contains("cjk-titles")).toBe(true);
     });
 });
 
@@ -1904,6 +1953,7 @@ describe("Board column rename", () => {
             .querySelector<HTMLTextAreaElement>(".board-new-item.inserting textarea");
         if (!field) throw new Error("expected the field for a new card to be open");
         field.value = "Made";
+        field.dispatchEvent(new Event("input", { bubbles: true }));
         await act(async () => {
             field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
             await flush();
@@ -1942,7 +1992,7 @@ describe("Board column rename", () => {
             await flush();
         });
 
-        return slot?.querySelector(".card-template-pill button")?.textContent ?? "";
+        return slot?.querySelector(".template-pill button")?.textContent ?? "";
     }
 
     /**
@@ -2171,7 +2221,7 @@ describe("Board column rename", () => {
 
         const field = column.querySelector<HTMLElement>(".board-new-item.inserting");
         expect(field?.querySelector(".title-editor-icon button")).toBeTruthy();
-        expect(field?.querySelector(".card-template-pill button")?.textContent).toContain("Text");
+        expect(field?.querySelector(".template-pill button")?.textContent).toContain("Text");
         expect(field?.querySelector("textarea")?.placeholder).toBeTruthy();
 
         // Escape takes it down again, having made nothing.
@@ -2503,7 +2553,7 @@ describe("Board column rename", () => {
         });
 
         const editor = slot?.querySelector<HTMLTextAreaElement>("textarea");
-        const pill = slot?.querySelector<HTMLElement>(".card-template-pill button");
+        const pill = slot?.querySelector<HTMLElement>(".template-pill button");
         if (!editor || !pill) throw new Error("expected the editor and its template pill");
 
         // The first the board offers, until something else is picked.
@@ -2517,13 +2567,13 @@ describe("Board column rename", () => {
 
         // The menu is portalled to the page, and the boards this file rendered before left theirs
         // behind, so it is the last one that belongs to the board under test.
-        const menu = [ ...document.querySelectorAll<HTMLElement>(".card-template-pill") ].at(-1);
+        const menu = [ ...document.querySelectorAll<HTMLElement>(".template-pill") ].at(-1);
         const items = [ ...(menu?.querySelectorAll<HTMLElement>(".dropdown-item") ?? []) ];
         expect(items.map(item => item.textContent?.trim())).toEqual([
             "Text", "Markdown", "Canvas", "Spreadsheet", "board_view.more-templates"
         ]);
         // The one a card would be made from is ticked, rather than standing out by its background.
-        expect(items.map(item => !!item.querySelector(".card-template-current")))
+        expect(items.map(item => !!item.querySelector(".menu-trailing-icon")))
             .toEqual([ true, false, false, false, false ]);
         expect(items.some(item => item.classList.contains("active"))).toBe(false);
 
@@ -2541,9 +2591,9 @@ describe("Board column rename", () => {
             $(pill.closest(".dropdown") as HTMLElement).children("button:not([aria-expanded=true])").trigger("click");
             await flush();
         });
-        const reopened = [ ...document.querySelectorAll<HTMLElement>(".card-template-pill") ].at(-1);
+        const reopened = [ ...document.querySelectorAll<HTMLElement>(".template-pill") ].at(-1);
         expect([ ...(reopened?.querySelectorAll(".dropdown-item") ?? []) ]
-            .map(item => !!item.querySelector(".card-template-current")))
+            .map(item => !!item.querySelector(".menu-trailing-icon")))
             .toEqual([ false, false, true, false, false ]);
 
         await type(editor, "Drawn");
@@ -2554,7 +2604,7 @@ describe("Board column rename", () => {
 
         expect(created).toHaveBeenCalledWith("Doing", "Drawn", "bottom", undefined,
             expect.objectContaining({ id: "type:canvas:application/json" }));
-        expect(slot?.querySelector(".card-template-pill button")?.textContent).toContain("Canvas");
+        expect(slot?.querySelector(".template-pill button")?.textContent).toContain("Canvas");
     });
 
     /**
@@ -2576,7 +2626,7 @@ describe("Board column rename", () => {
         });
 
         const editor = slot?.querySelector<HTMLTextAreaElement>("textarea");
-        const pill = slot?.querySelector<HTMLElement>(".card-template-pill button");
+        const pill = slot?.querySelector<HTMLElement>(".template-pill button");
         if (!editor || !pill) throw new Error("expected the editor and its pill");
         await type(editor, "Still here");
 
@@ -2767,7 +2817,7 @@ describe("Board column rename", () => {
             await flush();
         });
 
-        const pill = slot?.querySelector<HTMLElement>(".card-template-pill button");
+        const pill = slot?.querySelector<HTMLElement>(".template-pill button");
         if (!pill) throw new Error("expected the template pill");
         await act(async () => {
             pill.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
@@ -2775,7 +2825,7 @@ describe("Board column rename", () => {
             await flush();
         });
 
-        const menus = [ ...document.querySelectorAll<HTMLElement>(".card-template-pill") ];
+        const menus = [ ...document.querySelectorAll<HTMLElement>(".template-pill") ];
         const more = [ ...(menus.at(-1)?.querySelectorAll<HTMLElement>(".dropdown-item") ?? []) ]
             .find(item => item.textContent?.includes("more-templates"));
         if (!more) throw new Error("expected a way to the dialog");
@@ -2798,7 +2848,7 @@ describe("Board column rename", () => {
             .map(element => element.textContent);
         expect(named).toEqual([ "Text", "Markdown", "Canvas", "Spreadsheet" ]);
         expect(templates?.querySelectorAll(".tn-sortable-grip").length).toBe(4);
-        expect(templates?.querySelectorAll(".tn-sortable-adder").length).toBe(2);
+        expect(templates?.querySelectorAll(".tn-card-adder").length).toBe(2);
 
         // And the attributes the cards show, which the same dialog arranges.
         expect(dialog?.querySelector(".promoted-attributes-card")).toBeTruthy();
@@ -2876,7 +2926,7 @@ describe("Board column rename", () => {
 
     /** Picks one of the templates the pill offers, by where it stands in its menu. */
     async function pickTemplate(slot: HTMLElement | null | undefined, index: number) {
-        const pill = slot?.querySelector<HTMLElement>(".card-template-pill button");
+        const pill = slot?.querySelector<HTMLElement>(".template-pill button");
         if (!pill) throw new Error("expected the template pill");
 
         await act(async () => {
@@ -2887,7 +2937,7 @@ describe("Board column rename", () => {
 
         // The menu is portalled to the page, and the boards rendered before left theirs behind, so
         // the last one is the board under test.
-        const menu = [ ...document.querySelectorAll<HTMLElement>(".card-template-pill") ].at(-1);
+        const menu = [ ...document.querySelectorAll<HTMLElement>(".template-pill") ].at(-1);
         const items = [ ...(menu?.querySelectorAll<HTMLElement>(".dropdown-item") ?? []) ];
         await act(async () => {
             items[index].click();
@@ -3829,7 +3879,7 @@ describe("Board filtering", () => {
         // The matches arrive in score order; the board must keep branch order regardless.
         const note = await setup({ matched: [ "filtered3", "filtered1" ] });
 
-        expect(searchInSubtree).toHaveBeenCalledWith("#urgent", note.noteId);
+        expect(searchInSubtree).toHaveBeenCalledWith("#urgent", note.noteId, false);
         expect(cardTitles(0)).toEqual([ "First", "Third" ]);
         expect(cardTitles(1)).toEqual([]);
         expect(container.querySelectorAll(".board-column")).toHaveLength(2);
@@ -3932,8 +3982,8 @@ describe("Board filtering", () => {
             tokens: [ { token: "First", type: "plain" } ]
         });
 
-        const marks = [ ...container.querySelectorAll(".board-note .title .ck-find-result") ];
-        expect(marks.map(el => el.textContent)).toEqual([ "First" ]);
+        const titles = [ ...container.querySelectorAll(".board-note .title") ];
+        expect(titles.flatMap((title) => highlightedTexts("search-match", title))).toEqual([ "First" ]);
     });
 
     /**
@@ -4486,6 +4536,109 @@ describe("Switchable board grouping", () => {
         expect(columnTitles(mountPoint)).toEqual([ "Low", "High" ]);
         expect(columnIcons(mountPoint)).toEqual([ "bx bx-down-arrow", DEFAULT_COLUMN_ICON ]);
     });
+
+    /**
+     * `adoptLegacyColumns()` reads a config with `columns` and no `*ViewColumns` key as one written
+     * before the grouping could be switched. Deleting the last keyed list must not leave that shape.
+     */
+    it("keeps the default grouping's columns off a deleted grouping it was opened on", async () => {
+        delete noteAttributeCache.attributes["deleteBoard"];
+        const note = buildNote({
+            id: "deleteBoard",
+            title: "Board",
+            "#collection": "",
+            "#viewType": "board",
+            "#board:groupBy": "priority",
+            "#label:priority(inheritable)": "promoted,alias=Priority,single,select,options=High;Low",
+            children: [
+                { title: "First", "#status": "To Do", "#priority": "High" },
+                { title: "Second", "#status": "Done", "#priority": "Low" }
+            ]
+        });
+        const setLabel = vi.spyOn(attributes, "setLabel").mockResolvedValue(undefined);
+        // Every refresh asks the api this, which is where the test takes hold of it.
+        let api: BoardApi | undefined;
+        const hasStoredSince = BoardApi.prototype.hasStoredSince;
+        vi.spyOn(BoardApi.prototype, "hasStoredSince").mockImplementation(
+            function (this: BoardApi, config) {
+                api = this;
+                return hasStoredSince.call(this, config);
+            });
+
+        const mountPoint = document.createElement("div");
+        container = mountPoint;
+        document.body.appendChild(mountPoint);
+        const host = new Component();
+        await act(async () => {
+            render(
+                <ParentComponent.Provider value={host}>
+                    <Harness
+                        note={note}
+                        noteIds={[ ...note.getChildNoteIds() ]}
+                        initialConfig={CONFIG}
+                    />
+                </ParentComponent.Provider>,
+                mountPoint
+            );
+        });
+        await act(async () => { await flush(); });
+        await act(async () => { await flush(); });
+        expect(columnTitles(mountPoint)).toEqual([ "High", "Low" ]);
+        setLabel.mockClear();
+
+        // What `PromotedAttributesCard` deletes: the definition and every card's value. The
+        // deletion reaches froca once `ws.waitForMaxKnownEntityChangeId()` is awaited, or only
+        // after the request has returned where nothing waits for it.
+        const deleted = Object.values(froca.attributes).filter(attribute =>
+            attribute.name === "label:priority" || attribute.name === "priority");
+        let deletionArrived = false;
+        async function applyDeletion() {
+            if (deletionArrived) {
+                return;
+            }
+            deletionArrived = true;
+            for (const attribute of deleted) {
+                delete froca.attributes[attribute.attributeId];
+                for (const owner of [ note, ...note.getChildNoteIds().map(id => froca.notes[id]) ]) {
+                    owner.attributes = owner.attributes
+                        .filter(attributeId => attributeId !== attribute.attributeId);
+                    noteAttributeCache.attributes[owner.noteId] = noteAttributeCache
+                        .attributes[owner.noteId]?.filter(cached => cached !== attribute) ?? [];
+                }
+            }
+            const results = new LoadResults(deleted.map(attribute => ({
+                entityName: "attributes",
+                entityId: attribute.attributeId,
+                entity: {
+                    attributeId: attribute.attributeId, noteId: attribute.noteId, type: "label",
+                    name: attribute.name, isDeleted: true
+                }
+            }) as never));
+            for (const attribute of deleted) {
+                results.addAttribute(attribute.attributeId, "other");
+            }
+            await host.handleEvent("entitiesReloaded", { loadResults: results });
+        }
+        vi.spyOn(ws, "waitForMaxKnownEntityChangeId").mockImplementation(applyDeletion);
+
+        await act(async () => {
+            await api?.deleteGrouping("priority", async () => {});
+            await flush();
+        });
+        await act(async () => {
+            await applyDeletion();
+            await flush();
+        });
+        await act(async () => { await flush(); });
+        await act(async () => { await flush(); });
+
+        expect(api).toBeDefined();
+        expect(saved.at(-1)?.priorityViewColumns ?? []).toEqual([]);
+        expect(saved.at(-1)?.columns).toEqual(CONFIG.columns);
+        expect(setLabel).not.toHaveBeenCalledWith(
+            "deleteBoard", "label:priority", expect.anything(), expect.anything());
+        vi.restoreAllMocks();
+    });
 });
 
 describe("Board properties from the note menu", () => {
@@ -4520,13 +4673,13 @@ describe("Board properties from the note menu", () => {
         expect(isOpen()).toBe(false);
 
         await act(async () => {
-            await host.handleEvent("showBoardProperties", { ntxId: "ntx-2" });
+            await host.handleEvent("showCollectionProperties", { ntxId: "ntx-2" });
             await flush();
         });
         expect(isOpen()).toBe(false);
 
         await act(async () => {
-            await host.handleEvent("showBoardProperties", { ntxId: "ntx-1" });
+            await host.handleEvent("showCollectionProperties", { ntxId: "ntx-1" });
             await flush();
         });
         expect(isOpen()).toBe(true);
@@ -5629,12 +5782,13 @@ describe("BoardView, read-only", () => {
         }
     });
 
-    async function setup(host = new Component()) {
+    /** `forced` makes the board read-only through `isReadOnly`, as a slide does, instead of `#readOnly`. */
+    async function setup(host = new Component(), { forced = false } = {}) {
         const note = buildNote({
             title: "Board",
             "#collection": "",
             "#viewType": "board",
-            "#readOnly": "",
+            ...(forced ? {} : { "#readOnly": "" }),
             children: [
                 { id: "roCard1", title: "First", "#status": "To Do" },
                 { id: "roCard2", title: "Second", "#status": "Done" }
@@ -5646,7 +5800,7 @@ describe("BoardView, read-only", () => {
         await act(async () => {
             render(
                 <ParentComponent.Provider value={host}>
-                    <Harness note={note} noteIds={[ ...note.getChildNoteIds() ]} initialConfig={{}} />
+                    <Harness note={note} noteIds={[ ...note.getChildNoteIds() ]} initialConfig={{}} isReadOnly={forced || undefined} />
                 </ParentComponent.Provider>,
                 mountPoint
             );
@@ -5659,6 +5813,14 @@ describe("BoardView, read-only", () => {
     const menuTitles = (show: { mock: { calls: unknown[][] } }) =>
         ((show.mock.calls.at(-1)?.[0] as { items: { title?: string }[] } | undefined)?.items ?? [])
             .map((item) => item.title);
+
+    it("is read-only through `isReadOnly` even when its note can be edited", async () => {
+        const board = await setup(new Component(), { forced: true });
+        expect(board.querySelector(".board-note")).not.toBeNull();
+        expect(board.querySelector(".board-new-item")).toBeNull();
+        expect(board.querySelector(".board-add-column")).toBeNull();
+        expect(board.querySelector(".board-note .edit-icon")).toBeNull();
+    });
 
     it("offers no way to add a card or a column, nor to rename either", async () => {
         vi.mocked(getNoteTypeOptions).mockClear();

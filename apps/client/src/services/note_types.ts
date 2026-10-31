@@ -1,11 +1,10 @@
 import {
-    buildNoteTypeId, buildTemplateId, getCodeLanguageIcon, type NoteType as CommonNoteType, type NoteTypeId,
+    buildNoteTypeId, buildTemplateId, getCodeLanguageIcon, type NoteType, type NoteTypeId,
     type TemplatesResponse
 } from "@triliumnext/commons";
 
 import appContext from "../components/app_context.js";
 import type FNote from "../entities/fnote.js";
-import type { NoteType } from "../entities/fnote.js";
 import type { MenuCommandItem, MenuItem, MenuItemBadge, MenuSeparatorItem } from "../menus/context_menu.js";
 import type { TreeCommandNames } from "../menus/tree_context_menu.js";
 import { isExperimentalFeatureEnabled } from "./experimental_features.js";
@@ -130,7 +129,7 @@ export async function getNoteTypeOptions(): Promise<NoteTypeOption[]> {
         .filter((mapping) => !mapping.reserved && mapping.type !== "book")
         .filter((mapping) => mapping.type !== "llmChat" || isExperimentalFeatureEnabled("llm"))
         .map<NoteTypeOption>((mapping) => ({
-            id: buildNoteTypeId(mapping.type as CommonNoteType, mapping.mime),
+            id: buildNoteTypeId(mapping.type, mapping.mime),
             title: mapping.title,
             icon: `bx ${mapping.icon ?? "bx-note"}`,
             group: "type",
@@ -157,6 +156,25 @@ export function resolveNoteTypeOptions(ids: NoteTypeId[], available: NoteTypeOpt
         const option = byId.get(id);
         return option ? [ option ] : [];
     });
+}
+
+/**
+ * The option a new note is made from: the stored one if it is still offered, otherwise the first.
+ *
+ * A stored option can have been removed from the list, or its template note deleted.
+ */
+export function currentNoteTypeOption(offered: NoteTypeOption[], stored: string | undefined) {
+    return offered.find((option) => option.id === stored) ?? offered[0];
+}
+
+/**
+ * The icon a note made from `option` carries, in the form `IconPicker` writes.
+ *
+ * `FNote.getIcon()` prefixes its result with `tn-icon` and an `#iconClass` label does not, so a
+ * template note's icon needs that prefix removed to compare with a picked one.
+ */
+export function noteTypeOptionIcon(option: NoteTypeOption | undefined) {
+    return option?.icon.replace(/^tn-icon\s+/, "");
 }
 
 /** The name of the group an option stands in, for a list the reader picks from. */
@@ -317,8 +335,8 @@ function getBlankNoteTypes(command?: TreeCommandNames): MenuCommandItem<TreeComm
  */
 function getCodeLanguageItems(command?: TreeCommandNames): MenuItem<TreeCommandNames>[] {
     mimeTypes.loadMimeTypes();
-    const languages = mimeTypes.getMimeTypes()
-        .filter((mimeType) => mimeType.enabled && mimeType.mime !== MARKDOWN_NOTE_TYPE_MIME)
+    const languages = mimeTypes.getEnabledMimeTypes()
+        .filter((mimeType) => mimeType.mime !== MARKDOWN_NOTE_TYPE_MIME)
         .map<MenuItem<TreeCommandNames>>((mimeType) => ({
             title: escapeHtml(mimeType.title),
             uiIcon: getCodeLanguageIcon(mimeType),
@@ -351,7 +369,15 @@ function getTemplateItems(data: NoteTypeData, group: BuiltInTemplateGroup | "use
 }
 
 function getUserTemplates(command: TreeCommandNames | undefined, templateNotes: FNote[], newTemplates: Set<string>) {
-    const header: MenuItem<TreeCommandNames> = { title: t("note_type_chooser.templates"), kind: "header" };
+    const header: MenuItem<TreeCommandNames> = {
+        title: t("note_type_chooser.templates"),
+        kind: "header",
+        actions: [ {
+            icon: "bx bx-cog",
+            caption: t("note_type_chooser.manage_templates"),
+            callback: () => void appContext.triggerCommand("showOptions", { section: "_optionsContentManager" })
+        } ]
+    };
     return withLeading(header, getUserTemplateRows(command, templateNotes, newTemplates));
 }
 

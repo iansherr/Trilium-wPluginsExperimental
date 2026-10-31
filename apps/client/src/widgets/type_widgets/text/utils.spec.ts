@@ -15,6 +15,8 @@ vi.mock("../../../services/link", () => ({
 vi.mock("../../../services/content_renderer", () => ({
     default: {
         getRenderedContent: vi.fn(),
+        getRenderingType: vi.fn(),
+        isSelfUpdatingType: (type: string) => type === "canvasDrawing",
         disposeInteractiveContent: vi.fn(),
         mountInteractiveWidget: vi.fn()
     }
@@ -22,7 +24,12 @@ vi.mock("../../../services/content_renderer", () => ({
 vi.mock("./ContentEmbed", () => ({
     default: () => null,
     TinyContentEmbed: () => null,
+    ContentEmbedError: () => null,
     getNoteActions: vi.fn()
+}));
+vi.mock("../../../services/i18n", async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    t: (key: string, options?: object) => `${key} ${JSON.stringify(options)}`
 }));
 vi.mock("../../../services/attachment_actions", () => ({
     getOpenExternallyAction: vi.fn(),
@@ -42,18 +49,23 @@ import froca from "../../../services/froca";
 import link from "../../../services/link";
 import { registerContentEmbedTools } from "./content_embed_tools";
 import ContentEmbed, {
+    ContentEmbedError,
     getNoteActions,
     type ContentEmbedAction,
     type ContentEmbedProps,
     TinyContentEmbed,
     type TinyContentEmbedProps
 } from "./ContentEmbed";
+import EmbedHistories from "./embed_history";
 import {
     getAttachmentHref,
     loadEmbeddedAttachment,
     loadEmbeddedNote,
+    loadUnknownEmbed,
     openContentEmbedMenu,
     refreshEmbeddedNote,
+    setupTodoCheckboxTaps,
+    showsAttachmentSave,
     watchContentEmbeds
 } from "./utils";
 
@@ -124,7 +136,8 @@ describe("loadEmbeddedNote", () => {
         expect(content_renderer.getRenderedContent).toHaveBeenCalledWith(note, {
             interactive: true,
             embedsAsReferenceLinks: true,
-            mediaEnvironment: "embedded"
+            mediaEnvironment: "embedded",
+            hasDisplayModes: true
         });
         const mount = lastMount();
         expect(mount.type).toBe(ContentEmbed);
@@ -139,13 +152,23 @@ describe("loadEmbeddedNote", () => {
         });
     });
 
-    it("leaves the box alone for a note that no longer exists", async () => {
+    it("mounts a box that tells a note no longer exists", async () => {
         vi.mocked(froca.getNote).mockResolvedValue(null);
+        const wrapper = createWrapper();
 
-        await loadEmbeddedNote("noteY", $(createWrapper()), "small");
+        await loadEmbeddedNote("noteY", $(wrapper), "small");
 
+        expect(froca.getNote).toHaveBeenCalledWith("noteY", true);
         expect(link.createLink).not.toHaveBeenCalled();
-        expect(content_renderer.mountInteractiveWidget).not.toHaveBeenCalled();
+        expect(content_renderer.getRenderedContent).not.toHaveBeenCalled();
+        const mount = lastMount();
+        expect(mount.type).toBe(ContentEmbedError);
+        expect(mount.container).toBe(wrapper);
+        expect(mount.props).toEqual({
+            boxSize: "small",
+            icon: "bx bx-error-alt",
+            text: 'include_note.missing_note {"noteId":"noteY"}'
+        });
     });
 
     it("mounts a tiny box with the note's path, without the note or a caption", async () => {
@@ -224,8 +247,9 @@ describe("loadEmbeddedAttachment", () => {
             showNoteIcon: true,
             viewScope: ATTACHMENT_SCOPE
         });
-        expect(content_renderer.getRenderedContent)
-            .toHaveBeenCalledWith(attachment, { interactive: true, mediaEnvironment: "embedded" });
+        expect(content_renderer.getRenderedContent).toHaveBeenCalledWith(attachment, {
+            interactive: true, mediaEnvironment: "embedded", hasDisplayModes: true
+        });
         const mount = lastMount();
         expect(mount.type).toBe(ContentEmbed);
         expect(mount.container).toBe(wrapper);
@@ -241,27 +265,105 @@ describe("loadEmbeddedAttachment", () => {
 
     it("passes the attachment editor to the renderer, and the focus to the box", async () => {
         const attachmentEditor = { canEdit: vi.fn() } as never;
+        const histories = new EmbedHistories(() => null);
 
         await loadEmbeddedAttachment("att1", $(createWrapper()), "medium", {
             attachmentEditor,
+            histories,
             isFocused: true
         });
 
         expect(content_renderer.getRenderedContent).toHaveBeenCalledWith(attachment, {
             interactive: true,
             mediaEnvironment: "embedded",
-            attachmentEditor
+            hasDisplayModes: true,
+            attachmentEditor,
+            histories
         });
         expect(lastMount().props).toMatchObject({ isFocusedOnMount: true });
     });
 
-    it("leaves the box alone for a deleted attachment", async () => {
-        vi.mocked(froca.getAttachment).mockResolvedValue(null);
+    it("renders a code file or note in the language and lines that its embed sets", async () => {
+        const wrapper = createWrapper();
+        const embed = inPage(document.createElement("figure"));
+        embed.className = "include-note";
+        embed.setAttribute("data-code-language", "text/x-sh");
+        embed.setAttribute("data-code-wrap-lines", "false");
+        embed.setAttribute("data-code-line-numbers", "false");
+        embed.append(wrapper);
+        const getLastOptions = () =>
+            vi.mocked(content_renderer.getRenderedContent).mock.lastCall?.[1];
 
-        await loadEmbeddedAttachment("att1", $(createWrapper()), "small");
+        await loadEmbeddedAttachment("att1", $(wrapper), "full");
+        expect(getLastOptions()).toMatchObject({
+            codeLanguage: "text/x-sh", isCodeWrapped: false, hasCodeLineNumbers: false
+        });
+
+        // A note keeps its language and line wrapping in its own labels.
+        await loadEmbeddedNote("noteY", $(wrapper), "full");
+        expect(getLastOptions()).toMatchObject({ hasCodeLineNumbers: false });
+        expect(getLastOptions()).not.toHaveProperty("codeLanguage");
+        expect(getLastOptions()).not.toHaveProperty("isCodeWrapped");
+    });
+
+    it("tells when every box of an attachment shows its saves by itself", async () => {
+        const drawing = { ...attachment, title: "Canvas.excalidraw" } as FAttachment;
+        vi.mocked(froca.getAttachment).mockResolvedValue(drawing);
+        vi.mocked(content_renderer.getRenderingType).mockReturnValue("canvasDrawing");
+        const container = inPage(document.createElement("div"));
+        const addBox = () => {
+            const embed = document.createElement("figure");
+            embed.className = "include-note";
+            embed.dataset.attachmentId = "att1";
+            const wrapper = document.createElement("div");
+            wrapper.className = "include-note-wrapper";
+            embed.append(wrapper);
+            container.append(embed);
+            return wrapper;
+        };
+        const draw = async (wrapper: HTMLElement, type: string) => {
+            vi.mocked(content_renderer.getRenderedContent)
+                .mockResolvedValueOnce({ $renderedContent: $(content), type } as never);
+            await loadEmbeddedAttachment("att1", $(wrapper), "medium");
+        };
+        expect(showsAttachmentSave(container, drawing)).toBe(false);
+
+        const first = addBox();
+        expect(showsAttachmentSave(container, drawing)).toBe(false);
+        await draw(first, "canvasDrawing");
+        expect(showsAttachmentSave(container, drawing)).toBe(true);
+
+        // A new title, or another type of content, draws the box again.
+        expect(showsAttachmentSave(container, { ...drawing, title: "Renamed" } as FAttachment))
+            .toBe(false);
+        vi.mocked(content_renderer.getRenderingType).mockReturnValueOnce("file");
+        expect(showsAttachmentSave(container, drawing)).toBe(false);
+
+        // So does every box, once one of them shows content that does not follow the saves.
+        const second = addBox();
+        await draw(second, "pdf");
+        expect(showsAttachmentSave(container, drawing)).toBe(false);
+        await draw(second, "canvasDrawing");
+        await draw(first, "pdf");
+        expect(showsAttachmentSave(container, drawing)).toBe(false);
+    });
+
+    it("mounts a box that tells an attachment no longer exists, at any box size", async () => {
+        vi.mocked(froca.getAttachment).mockResolvedValue(null);
+        const wrapper = createWrapper();
+
+        await loadEmbeddedAttachment("att1", $(wrapper), "tiny");
 
         expect(link.createLink).not.toHaveBeenCalled();
-        expect(content_renderer.mountInteractiveWidget).not.toHaveBeenCalled();
+        expect(content_renderer.getRenderedContent).not.toHaveBeenCalled();
+        const mount = lastMount();
+        expect(mount.type).toBe(ContentEmbedError);
+        expect(mount.container).toBe(wrapper);
+        expect(mount.props).toEqual({
+            boxSize: "tiny",
+            icon: "bx bx-error-alt",
+            text: 'include_note.missing_attachment {"attachmentId":"att1"}'
+        });
     });
 
     it("mounts a tiny box with the size of the attachment, and its file actions", async () => {
@@ -290,6 +392,36 @@ describe("loadEmbeddedAttachment", () => {
             viewScope: ATTACHMENT_SCOPE,
             actions: [ openExternally, download ]
         });
+    });
+});
+
+describe("loadUnknownEmbed", () => {
+    it("mounts an error box in the editor's wrapper, even before it is in the page", async () => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "include-note-wrapper";
+
+        await loadUnknownEmbed(wrapper, "small");
+
+        const mount = lastMount();
+        expect(mount.type).toBe(ContentEmbedError);
+        expect(mount.container).toBe(wrapper);
+        expect(mount.props).toEqual({
+            boxSize: "small",
+            icon: "bx bx-error",
+            text: "include_note.unknown_kind undefined"
+        });
+    });
+
+    it("mounts it in a wrapper of its own in a read-only box", async () => {
+        const box = inPage(document.createElement("section"));
+        box.className = "include-note";
+
+        await loadUnknownEmbed(box, undefined);
+
+        const { type, container } = lastMount();
+        expect(type).toBe(ContentEmbedError);
+        expect(container.parentElement).toBe(box);
+        expect(container.className).toBe("include-note-wrapper");
     });
 });
 
@@ -377,8 +509,9 @@ describe("refreshEmbeddedNote", () => {
             + `<section class="include-note" data-note-id="noteY" data-block="b1"></section>`
             + `<figure class="include-note" data-note-id="other"></figure>`;
         const [ figure, section ] = [ ...container.children ];
+        const histories = new EmbedHistories(() => null);
 
-        refreshEmbeddedNote(container, "noteY");
+        refreshEmbeddedNote(container, "noteY", { histories });
 
         await vi.waitFor(() => {
             expect(content_renderer.mountInteractiveWidget).toHaveBeenCalledTimes(2);
@@ -387,7 +520,8 @@ describe("refreshEmbeddedNote", () => {
             .map(([ , wrapper ]) => wrapper.parentElement);
         expect(mountedIn).toEqual([ figure, section ]);
         expect(vi.mocked(content_renderer.getRenderedContent).mock.calls
-            .map(([ , options ]) => options?.block)).toEqual([ undefined, "b1" ]);
+            .map(([ , options ]) => [ options?.block, options?.histories ]))
+            .toEqual([ [ undefined, histories ], [ "b1", histories ] ]);
     });
 });
 
@@ -510,5 +644,122 @@ describe("getAttachmentHref", () => {
         expect(await getAttachmentHref("att1"))
             .toBe("#root/owner?viewMode=attachments&attachmentId=att1");
         expect(await getAttachmentHref("att1")).toBeNull();
+    });
+});
+
+describe("setupTodoCheckboxTaps", () => {
+    let container: HTMLDivElement;
+    let cleanup: () => void;
+
+    beforeEach(() => {
+        // Two items, their 16px checkboxes in the gutter of the list, 24px apart.
+        container = document.createElement("div");
+        container.innerHTML = `
+            <ul class="todo-list">
+                <li><span class="todo-list__label"><span contenteditable="false"><input type="checkbox"></span></span>First</li>
+                <li><span class="todo-list__label"><span contenteditable="false"><input type="checkbox"></span></span>Second</li>
+            </ul>`;
+        document.body.appendChild(container);
+        for (const [ index, checkbox ] of checkboxes().entries()) {
+            const top = 100 + index * 24;
+            vi.spyOn(checkbox, "getBoundingClientRect").mockReturnValue(
+                { left: 15, right: 31, top, bottom: top + 16, width: 16, height: 16 } as DOMRect);
+        }
+        cleanup = setupTodoCheckboxTaps(container);
+    });
+
+    afterEach(() => {
+        cleanup();
+        container.remove();
+        document.getElementById("root-widget")?.remove();
+    });
+
+    function checkboxes() {
+        return [ ...container.querySelectorAll<HTMLInputElement>("input[type=checkbox]") ];
+    }
+
+    function touch(target: Element, type: string, clientX: number, clientY: number) {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        const point = [ { clientX, clientY } ];
+        Object.defineProperty(event, "touches", { value: type === "touchend" ? [] : point });
+        Object.defineProperty(event, "changedTouches", { value: point });
+        target.dispatchEvent(event);
+        return event;
+    }
+
+    function tap(target: Element, clientX: number, clientY: number) {
+        const start = touch(target, "touchstart", clientX, clientY);
+        const end = touch(target, "touchend", clientX, clientY);
+        return { start, end };
+    }
+
+    it("toggles the nearest checkbox, cancelling the touch so the editor does not take the focus", () => {
+        const list = container.querySelector("ul");
+        expect(list).not.toBeNull();
+        if (!list) return;
+        const onChange = vi.fn();
+        container.addEventListener("change", onChange);
+        const [ first, second ] = checkboxes();
+
+        const direct = tap(first, 23, 108);
+        expect(first.checked).toBe(true);
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(direct.start.defaultPrevented).toBe(true);
+        expect(direct.end.defaultPrevented).toBe(true);
+
+        // 6px left of the first box, outside every label.
+        const nearMiss = tap(list, 9, 108);
+        expect(first.checked).toBe(false);
+        expect(second.checked).toBe(false);
+        expect(nearMiss.start.defaultPrevented).toBe(true);
+
+        // Between the rows, closer to the second box.
+        tap(list, 23, 122);
+        expect(first.checked).toBe(false);
+        expect(second.checked).toBe(true);
+    });
+
+    it("blurs a focused editor whose keyboard is closed, so the toggle does not bring it back", () => {
+        const editable = document.createElement("div");
+        editable.tabIndex = 0;
+        container.appendChild(editable);
+        const root = document.createElement("div");
+        root.id = "root-widget";
+        document.body.appendChild(root);
+        const [ first ] = checkboxes();
+
+        root.classList.add("virtual-keyboard-opened");
+        editable.focus();
+        tap(first, 23, 108);
+        expect(first.checked).toBe(true);
+        expect(document.activeElement).toBe(editable);
+
+        root.classList.remove("virtual-keyboard-opened");
+        tap(first, 23, 108);
+        expect(first.checked).toBe(false);
+        expect(document.activeElement).not.toBe(editable);
+    });
+
+    it("leaves taps away from a checkbox, drags and long presses alone", () => {
+        const [ first ] = checkboxes();
+        const text = container.querySelector("li");
+        expect(text).not.toBeNull();
+        if (!text) return;
+
+        const away = tap(text, 120, 108);
+        expect(first.checked).toBe(false);
+        expect(away.start.defaultPrevented).toBe(false);
+        expect(away.end.defaultPrevented).toBe(false);
+
+        touch(first, "touchstart", 23, 108);
+        touch(first, "touchmove", 23, 140);
+        touch(first, "touchend", 23, 140);
+        expect(first.checked).toBe(false);
+
+        // A long press.
+        touch(first, "touchstart", 23, 108);
+        first.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+        touch(first, "touchend", 23, 108);
+        expect(first.checked).toBe(false);
     });
 });

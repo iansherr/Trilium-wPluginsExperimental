@@ -27,6 +27,10 @@ const LOCALE_MAPPINGS: Record<DISPLAYABLE_LOCALE_IDS, LocaleMapping | null> = {
         languageCode: "cs",
         coreTranslation: () => import("ckeditor5/translations/cs.js"),
     },
+    da: {
+        languageCode: "da",
+        coreTranslation: () => import("ckeditor5/translations/da.js"),
+    },
     de: {
         languageCode: "de",
         coreTranslation: () => import("ckeditor5/translations/de.js"),
@@ -34,6 +38,10 @@ const LOCALE_MAPPINGS: Record<DISPLAYABLE_LOCALE_IDS, LocaleMapping | null> = {
     es: {
         languageCode: "es",
         coreTranslation: () => import("ckeditor5/translations/es.js"),
+    },
+    fa: {
+        languageCode: "fa",
+        coreTranslation: () => import("ckeditor5/translations/fa.js"),
     },
     fr: {
         languageCode: "fr",
@@ -117,6 +125,7 @@ export default async function getCkLocale(
 ): Promise<Pick<EditorConfig, "language" | "translations">> {
     const mapping = LOCALE_MAPPINGS[locale];
     const translations: Translations[] = [];
+    let upstreamDictionary: Record<string, string | readonly string[]> | undefined;
 
     // `en`, the `en_rtl` pseudo-locale and `ga` have no CKEditor translation to load; they still get
     // our dictionary, since it also carries any rewording of CKEditor's built-in English strings.
@@ -133,6 +142,7 @@ export default async function getCkLocale(
         // text editor, and no test.
         const [ catalog ] = Object.values((await mapping.coreTranslation()).default);
         translations.push({ [mapping.languageCode]: catalog });
+        upstreamDictionary = catalog.dictionary;
     }
 
     if (messages) {
@@ -140,7 +150,9 @@ export default async function getCkLocale(
         // dictionary still carries the renames of CKEditor's own strings, which apply regardless.
         // Keyed by the language CKEditor will resolve messages under, which is the editor's default
         // (`en`) whenever we pass no `language` below.
-        const dictionary = buildMessageDictionary(messages.englishMessages, messages.translate);
+        const dictionary = buildMessageDictionary(
+            messages.englishMessages, messages.translate, upstreamDictionary
+        );
         translations.push({ [mapping?.languageCode ?? "en"]: { dictionary } });
     }
 

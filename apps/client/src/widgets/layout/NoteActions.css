@@ -21,7 +21,7 @@
         height: 36px;
         gap: var(--button-gap);
 
-        &> button:last-of-type {
+        &> button.icon-action:last-of-type {
             margin-inline-end: 0.5em;
         }
     }
@@ -42,4 +42,10 @@
     color: var(--muted-text-color) !important;
     background-color: transparent !important;
     pointer-events: none; /* makes it unclickable */
+}
+
+.tn-menu-actions.note-actions-strip {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
 }

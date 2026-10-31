@@ -24,8 +24,8 @@ import bxShapeSquare from "boxicons/svg/regular/bx-shape-square.svg?raw";
 import type { FileUploadOptions } from "./fileuploadcommand.js";
 
 /**
- * Registers the `fileUpload` split button. The button attaches the picked files and links them;
- * the list also offers to embed them.
+ * Registers the `fileUpload` split button. The button attaches the picked files and embeds them;
+ * the list also offers to link them. In an editor without embeds, the button links them.
  *
  * Also registers the `drawingCanvas` button, which attaches an empty canvas drawing and embeds it,
  * editable.
@@ -47,31 +47,29 @@ export default class FileUploadUI extends Plugin {
                 tooltip: true,
                 allowMultipleFiles: true
             });
-            this.attachOnDone(actionView, {});
 
             const dropdownView = createDropdown(locale, new SplitButtonView(locale, actionView));
             dropdownView.buttonView.set({ label: t("Attach file"), tooltip: true });
-            actionView.bind("isEnabled").to(dropdownView);
 
             const command = editor.commands.get("fileUpload");
             if (command) {
                 dropdownView.bind("isEnabled").to(command);
             }
 
-            const buttons = [
-                this.createListButton(locale, t("Attach file as a link"), bxLink, {})
-            ];
-
-            // Embedding goes wherever the "Include note" button can insert an embed.
+            // Embedding, the default, goes wherever the "Include note" button can insert an embed.
             const embedCommand = editor.commands.get("insertContentEmbed");
             if (embedCommand) {
-                const embedButton = this.createListButton(
-                    locale, t("Attach and embed file"), bxShapeSquare, { asEmbed: true }
+                this.attachOnDone(actionView, { asEmbed: true });
+                actionView.bind("isEnabled").to(
+                    dropdownView, "isEnabled", embedCommand, "isEnabled",
+                    (canUpload, canEmbed) => canUpload && canEmbed
                 );
-                embedButton.bind("isEnabled").to(embedCommand);
-                buttons.push(embedButton);
+            } else {
+                this.attachOnDone(actionView, {});
+                actionView.bind("isEnabled").to(dropdownView);
             }
 
+            const buttons = this.createListButtons(locale);
             const listView = dropdownView.listView = new ListView(locale);
             for (const button of buttons) {
                 const listItem = new ListItemView(locale);
@@ -101,6 +99,28 @@ export default class FileUploadUI extends Plugin {
 
             return button;
         });
+    }
+
+    /**
+     * The rows of the `fileUpload` list, each picking files: "Attach and embed file" in an editor
+     * with embeds, then "Attach file as a link". Each row is enabled while its command is.
+     */
+    createListButtons(locale: Locale) {
+        const editor = this.editor;
+        const t = editor.t;
+        const buttons: FileDialogListItemButtonView[] = [];
+
+        const embedCommand = editor.commands.get("insertContentEmbed");
+        if (embedCommand) {
+            const embedButton = this.createListButton(
+                locale, t("Attach and embed file"), bxShapeSquare, { asEmbed: true }
+            );
+            embedButton.bind("isEnabled").to(embedCommand);
+            buttons.push(embedButton);
+        }
+        buttons.push(this.createListButton(locale, t("Attach file as a link"), bxLink, {}));
+
+        return buttons;
     }
 
     private createListButton(
