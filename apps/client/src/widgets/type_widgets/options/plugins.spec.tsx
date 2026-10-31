@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import i18next from "i18next";
+import { createDebouncedSave } from "./debounced_save";
+import { normalizeLocalPackagePath, readLocalPackageDirectory, resolveLocalPackageArtifact } from "./local_package_files";
 
 import {
     buildPackagePages,
@@ -52,6 +54,57 @@ const manifest = {
 };
 
 describe("plugin manager validation helpers", () => {
+    it("debounces rapid settings edits and can flush the pending save immediately", async () => {
+        vi.useFakeTimers();
+        try {
+            const saver = createDebouncedSave(450);
+            const saved: string[] = [];
+            saver.schedule(() => saved.push("first"));
+            saver.schedule(() => saved.push("latest"));
+            await vi.advanceTimersByTimeAsync(449);
+            expect(saved).toEqual([]);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(saved).toEqual(["latest"]);
+
+            saver.schedule(() => saved.push("flush"));
+            saver.flush();
+            expect(saved).toEqual(["latest", "flush"]);
+            saver.cancel();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("reads a single local manifest and resolves only files within the selected folder", async () => {
+        const artifact = localFile("main.js", "workspace/dist/main.js", "export default true;");
+        const packageManifest = {
+            id: "example/local-plugin",
+            name: "Local plugin",
+            description: "Loaded from a local directory.",
+            version: "1.0.0",
+            repository: "https://example.com/local-plugin",
+            artifacts: [{ id: "main", type: "frontend", source: "dist/main.js" }]
+        };
+        const directory = await readLocalPackageDirectory([
+            localFile("trilium-package.json", "workspace/trilium-package.json", JSON.stringify(packageManifest)),
+            artifact
+        ]);
+
+        expect(directory.manifest).toEqual(packageManifest);
+        expect(resolveLocalPackageArtifact("./dist/main.js", directory.files)).toBe(artifact);
+        expect(() => resolveLocalPackageArtifact("../outside.js", directory.files)).toThrow("parent directory segments");
+        expect(() => resolveLocalPackageArtifact("dist/missing.js", directory.files)).toThrow("does not contain artifact file");
+    });
+
+    it("rejects ambiguous or malformed local manifests and parent traversal", async () => {
+        const first = localFile("package-one.json", "workspace/package-one.json", '{"artifacts":[]}');
+        const second = localFile("plugin.json", "workspace/plugin.json", '{"artifacts":[]}');
+        await expect(readLocalPackageDirectory([first, second])).rejects.toThrow(/multiple package manifests/i);
+        await expect(readLocalPackageDirectory([localFile("trilium-package.json", "workspace/trilium-package.json", "{" )])).rejects.toThrow("not valid JSON");
+        expect(() => normalizeLocalPackagePath("../../secret.txt")).toThrow("parent directory segments");
+        expect(() => normalizeLocalPackagePath("/etc/passwd")).toThrow("relative files inside the selected folder");
+    });
+
     it("parses JSON and legacy newline-separated sources consistently", () => {
         expect(parseRegistryUrls('[" https://one.example/index.json ", "https://two.example/index.json"]')).toEqual([
             "https://one.example/index.json",
@@ -185,7 +238,31 @@ describe("plugin manager validation helpers", () => {
         expect(packageActivationHealth([fakeNote({ appCss: [""] }) as any], false, cssManifest).health).toBe("broken");
         expect(packageActivationHealth([fakeNote({ "disabled:appCss": [""] }) as any], false, cssManifest)).toEqual({ health: "healthy", healthMessage: "all artifacts active" });
     });
+
+    it("restores a cached local manifest so installed plugin settings remain available", () => {
+        const localManifest = {
+            ...manifest,
+            artifacts: [{ id: "main", type: "frontend", source: "dist/main.js", integrity }]
+        };
+        expect(parseCachedPackageManifest(JSON.stringify(localManifest))).toMatchObject({
+            id: localManifest.id,
+            name: localManifest.name,
+            settings: localManifest.settings,
+            artifacts: localManifest.artifacts
+        });
+        expect(parseCachedPackageManifest("not-json")).toBeUndefined();
+    });
 });
+
+function localFile(name: string, webkitRelativePath: string, content: string): File {
+    return {
+        name,
+        webkitRelativePath,
+        size: new TextEncoder().encode(content).byteLength,
+        text: async () => content,
+        arrayBuffer: async () => new TextEncoder().encode(content).buffer
+    } as File;
+}
 
 describe("plugin manager state helpers", () => {
     it("keeps package IDs and update URLs readable in translated text", async () => {

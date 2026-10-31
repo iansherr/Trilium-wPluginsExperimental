@@ -11,14 +11,14 @@ const startupSource = await readFile(new URL("../../apps/client/src/components/s
 test("package branch moves use Trilium's move-to endpoint", () => {
     assert.match(
         managerSource,
-        /packageRequest\("PUT", `branches\/\$\{sourceBranch\.branchId\}\/move-to\/\$\{targetParentBranch\.branchId\}`\)/
+        /packageRequest\("PUT", `branches\/move-to\/\$\{targetParentBranch\.branchId\}`, \{ branchIds: \[sourceBranch\.branchId\] \}\)/
     );
     assert.doesNotMatch(managerSource, /packageRequest\("POST", "branches"/);
 });
 
 test("package-owned note lookups use hidden-aware quick search", () => {
     assert.match(managerSource, /async function searchPackageNotes\(searchString\)/);
-    assert.match(managerSource, /quick-search\/\$\{encodeURIComponent\(searchString\)\}/);
+    assert.match(managerSource, /quick-search\?searchString=\$\{encodeURIComponent\(searchString\)\}&includeHidden=true/);
     assert.match(managerSource, /result\.searchResultNoteIds/);
     assert.doesNotMatch(managerSource, /api\.searchForNote\(?s?\(/);
 
@@ -94,10 +94,10 @@ test("catalog surfaces legacy source labels instead of hiding them", () => {
 test("plugin settings canonicalize and mirror legacy source labels on save", () => {
     assert.match(pluginsSource, /const PACKAGE_DIRECT_MANIFEST_URLS_LABEL = "packageDirectManifestUrls"/);
     assert.match(pluginsSource, /parseConfiguredPluginSources\(\(labelName\) => settings\?\.getOwnedLabelValue\(labelName\)\)/);
-    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_SOURCES_LABEL, JSON\.stringify\(sources\)\)/);
+    assert.match(pluginsSource, /setLabel\(settings\.noteId, PACKAGE_SOURCES_LABEL, JSON\.stringify\(sources\)\)/);
     assert.match(pluginsSource, /buildLegacyPluginSourceLabels\(sources\)/);
-    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources\.packageRegistryUrl\)/);
-    assert.match(pluginsSource, /setLabel\(state\.settings\.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources\.packageDirectManifestUrls\)/);
+    assert.match(pluginsSource, /setLabel\(settings\.noteId, PACKAGE_REGISTRY_URL_LABEL, legacySources\.packageRegistryUrl\)/);
+    assert.match(pluginsSource, /setLabel\(settings\.noteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources\.packageDirectManifestUrls\)/);
 });
 
 test("plugin settings enable and disable every managed artifact activation", () => {
@@ -148,6 +148,25 @@ test("catalog reports broken installations without owning repair", () => {
     assert.match(managerSource, /const status = !entry[\s\S]*?"Repair needed"/);
     assert.match(managerSource, /text="Manage in Plugins"/);
     assert.doesNotMatch(managerSource, /onClick=\{\(\) => repair\(entry\)\}/);
+});
+
+test("local folder installs use in-memory files, reject path traversal, and retain the manifest", () => {
+    assert.match(managerSource, /setAttribute\("webkitdirectory", ""\)/);
+    assert.match(managerSource, /readLocalPackageDirectory\(files\)/);
+    assert.match(managerSource, /resolveLocalPackageArtifact\(artifact\.source, manifest\._localPackageFiles\)/);
+    assert.match(managerSource, /verifyArtifactIntegrity\(manifest, artifact, payload\)/);
+    assert.match(managerSource, /MANIFEST_LABEL, value: JSON\.stringify\(manifest\)/);
+    assert.match(managerSource, /parent directory segments/);
+    assert.doesNotMatch(managerSource, /readFileSync|node:fs|path\.resolve/);
+});
+
+test("plugin settings autosave after edits while explicit save remains available", () => {
+    assert.match(pluginsSource, /settingsAutosave\.current\.schedule\(\(\) => void saveSettings\(false\)\)/);
+    assert.match(pluginsSource, /createDebouncedSave\(450\)/);
+    assert.match(pluginsSource, /packageSaveTimers\.current/);
+    assert.match(pluginsSource, /updateGlobalSettings\(\(current\) => \(\{ \.\.\.current, allowNetworkPackages: value \}\)\)/);
+    assert.match(pluginsSource, /onClick=\{\(\) => void saveSettings\(\)\}/);
+    assert.match(pluginsSource, /onClick=\{onSave\}/);
 });
 
 test("interrupted stages retain recoverable manager internals", () => {

@@ -8,7 +8,7 @@
  */
 
 import { showMessage, triggerCommand } from "trilium:api";
-import { Admonition, Button, LoadingSpinner, useEffect, useState } from "trilium:preact";
+import { Admonition, Button, FormGroup, FormTextBox, FormToggle, LoadingSpinner, useEffect, useRef, useState } from "trilium:preact";
 
 const SOURCES_LABEL = "packageSources";
 const LEGACY_REGISTRY_URL_LABEL = "packageRegistryUrl";
@@ -125,6 +125,7 @@ export default function CommunityPackages() {
     const [updateCheckIntervalHours, setUpdateCheckIntervalHours] = useState(24);
     const [includeDeprecatedPackages, setIncludeDeprecatedPackages] = useState(false);
     const [packages, setPackages] = useState([]);
+    const [localPackages, setLocalPackages] = useState([]);
     const [installed, setInstalled] = useState({});
     const [loading, setLoading] = useState(true);
     const [busyPackage, setBusyPackage] = useState("");
@@ -134,6 +135,7 @@ export default function CommunityPackages() {
     const [searchQuery, setSearchQuery] = useState("");
     const [interruptedTransactions, setInterruptedTransactions] = useState([]);
     const [storageSummary, setStorageSummary] = useState(null);
+    const localDirectoryInput = useRef(null);
 
     useEffect(() => {
         // initialize() reads settings before refresh() can clear `loading`; without this catch a failed
@@ -203,13 +205,33 @@ export default function CommunityPackages() {
         }
     }
 
+    async function importLocalDirectory(files) {
+        if (!files?.length) return;
+        setError("");
+        setBusyPackage("local-import");
+        try {
+            const localPackage = await readLocalPackageDirectory(files);
+            const problems = manifestProblems(localPackage.manifest);
+            if (problems.length) throw new Error(`The local plugin manifest is invalid: ${problems.join("; ")}`);
+            const manifest = localPackage.manifest;
+            Object.defineProperty(manifest, "_localPackageFiles", { value: localPackage.files, enumerable: false });
+            setLocalPackages((current) => [...current.filter((entry) => entry.id !== manifest.id), manifest]);
+            showMessage(`${manifest.name} is ready to install from the selected folder.`);
+        } catch (cause) {
+            setError(errorMessage(cause));
+        } finally {
+            setBusyPackage("");
+        }
+    }
+
     async function install(manifest) {
         if (isBundleEntry(manifest)) {
             await installBundle(manifest);
             return;
         }
         if (installed[manifest.id]) return;
-        const dependencyResolution = resolveDependencies(manifest, installed, packages);
+        const catalogPackages = [...packages, ...localPackages];
+        const dependencyResolution = resolveDependencies(manifest, installed, catalogPackages);
         if (dependencyResolution.errors.length) {
             setError(`${manifest.name} dependencies: ${dependencyResolution.errors.join("; ")}`);
             return;
@@ -235,7 +257,7 @@ export default function CommunityPackages() {
         setBusyPackage(manifest.id);
         setError("");
         try {
-            await installPackageSafely([...dependencyResolution.packages, manifest], allowedSourceHosts, packages);
+            await installPackageSafely([...dependencyResolution.packages, manifest], allowedSourceHosts, catalogPackages);
             showMessage(`${manifest.name} installed disabled. Enable it here when ready.`);
             await refresh(sources);
         } catch (cause) {
@@ -427,7 +449,7 @@ export default function CommunityPackages() {
 
     const search = searchQuery.trim().toLowerCase();
     const matchesPackage = (manifest) => !search || [manifest.name, manifest.id, manifest.description, manifest.author, manifest.maintainer].filter(Boolean).join(" ").toLowerCase().includes(search);
-    const catalog = packages
+    const catalog = [...new Map([...packages, ...localPackages].map((manifest) => [manifest.id, manifest])).values()]
         .filter((manifest) => !manifest.deprecated || includeDeprecatedPackages)
         .filter(matchesPackage);
     const hasConfiguredSources = sources.length > 0;
@@ -617,6 +639,31 @@ export default function CommunityPackages() {
                         aria-label="Search plugins"
                         onInput={(event) => setSearchQuery(event.currentTarget.value)}
                     />
+                    <div style={{ marginTop: "0.65em" }}>
+                        <input
+                            ref={(input) => {
+                                localDirectoryInput.current = input;
+                                input?.setAttribute("webkitdirectory", "");
+                                input?.setAttribute("directory", "");
+                            }}
+                            type="file"
+                            multiple
+                            hidden
+                            aria-label="Select local plugin folder"
+                            onChange={(event) => {
+                                void importLocalDirectory(Array.from(event.currentTarget.files || []));
+                                event.currentTarget.value = "";
+                            }}
+                        />
+                        <Button
+                            text={busyPackage === "local-import" ? "Reading local plugin…" : "Install from local folder"}
+                            icon="bx-folder-open"
+                            size="small"
+                            disabled={Boolean(busyPackage)}
+                            onClick={() => localDirectoryInput.current?.click()}
+                        />
+                        <small style={{ marginInlineStart: "0.6em" }}>Choose a folder with one plugin manifest and its artifact files.</small>
+                    </div>
                 </div>
             </section>
 
@@ -627,7 +674,7 @@ export default function CommunityPackages() {
                 <p className="options-section-description">Discover and install plugins. Already-installed plugins are marked here; manage their settings and lifecycle from Settings → Plugins.</p>
                 <div className="options-section-card">
                     {loading && <LoadingSpinner />}
-                    {!loading && !hasConfiguredSources && <p>Configure a plugin source in Settings → Plugins.</p>}
+                    {!loading && !hasConfiguredSources && !localPackages.length && <p>Configure a plugin source in Settings → Plugins.</p>}
                     {!loading && hasConfiguredSources && !catalog.length && <p>{search ? `No packages match “${searchQuery}”.` : "No packages found in the configured sources."}</p>}
                     {catalog.map((manifest) => {
                         if (isBundleEntry(manifest)) {
@@ -1284,6 +1331,11 @@ function sha256Digest(input) {
 }
 
 async function downloadArtifact(manifest, artifact, sourceUrl, allowedSourceHosts) {
+    if (manifest._localPackageFiles) {
+        const file = resolveLocalPackageArtifact(artifact.source, manifest._localPackageFiles);
+        if (file.size > MAX_ARTIFACT_BYTES) throw new Error(`${manifest.name} artifact ${artifact.id} exceeds the ${MAX_ARTIFACT_BYTES} byte limit`);
+        return new Uint8Array(await file.arrayBuffer());
+    }
     const sourceProblem = downloadUrlProblem(sourceUrl, allowedSourceHosts);
     if (sourceProblem) throw new Error(`${manifest.name} artifact ${artifact.id}: ${sourceProblem}`);
 
@@ -1381,6 +1433,66 @@ async function loadCatalogSource(sourceUrl) {
         if (message.startsWith(`${sourceUrl}:`)) throw cause;
         throw new Error(`${sourceUrl}: ${message}`);
     }
+}
+
+// Keep these helpers in the Render Note source: script-deployer copies and
+// transpiles this file as a standalone note instead of bundling relative imports.
+async function readLocalPackageDirectory(files: FileList | File[]): Promise<{ manifestPath: string; manifest: any; files: Map<string, File> }> {
+    if (files.length > 5000) throw new Error("The selected folder contains more than 5000 files.");
+    const localFiles = new Map<string, File>();
+    for (const file of Array.from(files)) {
+        const selectedPath = file.webkitRelativePath || file.name;
+        const pathParts = selectedPath.replaceAll("\\", "/").split("/");
+        const relativePath = pathParts.length > 1 ? pathParts.slice(1).join("/") : pathParts[0];
+        const safePath = normalizeLocalPackagePath(relativePath);
+        if (localFiles.has(safePath)) throw new Error(`The selected folder contains duplicate file paths: ${safePath}`);
+        localFiles.set(safePath, file);
+    }
+
+    const preferredManifests = ["trilium-package.json", "manifest.json"].filter((name) => localFiles.has(name));
+    if (preferredManifests.length > 1) throw new Error("The selected folder contains multiple package manifests.");
+    const preferredManifest = preferredManifests[0];
+    const manifestCandidates = preferredManifest
+        ? [preferredManifest]
+        : [...localFiles.keys()].filter((path) => path.toLowerCase().endsWith(".json"));
+    const validCandidates: Array<{ path: string; manifest: any }> = [];
+    for (const path of manifestCandidates) {
+        const file = localFiles.get(path);
+        if (!file) continue;
+        if (file.size > 2 * 1024 * 1024) {
+            if (path === preferredManifest) throw new Error(`${path} exceeds the 2097152 byte manifest limit.`);
+            continue;
+        }
+        try {
+            const parsed: unknown = JSON.parse(await file.text());
+            if (parsed && typeof parsed === "object" && "artifacts" in parsed) validCandidates.push({ path, manifest: parsed });
+        } catch {
+            if (path === preferredManifest) throw new Error(`${path} is not valid JSON.`);
+        }
+    }
+
+    if (validCandidates.length === 0) throw new Error("The selected folder must contain a trilium-package.json or manifest.json file.");
+    if (validCandidates.length > 1) throw new Error("Multiple package manifests found; select a folder with only one.");
+    return { manifestPath: validCandidates[0].path, manifest: validCandidates[0].manifest, files: localFiles };
+}
+
+function resolveLocalPackageArtifact(source: string, files: Map<string, File>): File {
+    const path = normalizeLocalPackagePath(source);
+    const file = files.get(path);
+    if (!file) throw new Error(`The selected folder does not contain artifact file ${path}.`);
+    return file;
+}
+
+function normalizeLocalPackagePath(value: string): string {
+    const path = value.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "");
+    if (!path || path.startsWith("/") || /^[a-zA-Z]:/.test(path) || path.includes(":") || path.includes("?") || path.includes("#")) {
+        throw new Error("Package artifact paths must be relative files inside the selected folder.");
+    }
+    const parts = path.split("/");
+    if (parts.some((part) => !part || part === "..")) {
+        throw new Error("Package artifact paths cannot contain empty or parent directory segments.");
+    }
+    return parts.filter((part) => part !== ".").join("/");
 }
 
 function normalizePluginSourceUrl(source) {
@@ -2014,6 +2126,7 @@ function compatibilityProblems(manifests) {
 function sourceHostProblems(manifests, allowedSourceHosts) {
     const problems = [];
     for (const manifest of manifests) {
+        if (manifest._localPackageFiles) continue;
         for (const artifact of manifest.artifacts || []) {
             try {
                 const sourceUrl = resolveSource(manifest.repository, artifact.source);
@@ -2067,7 +2180,9 @@ function confirmPackageAction(action, manifest, dependencies) {
     const lines = [`${action} ${manifest.name} v${manifest.version}?`];
     if (dependencies.length) lines.push(`Required dependencies (installed disabled): ${dependencies.map((entry) => `${entry.name} v${entry.version}`).join(", ")}`);
     lines.push(`Permissions: ${permissions.length ? permissions.join(", ") : "none declared"}`);
-    lines.push("Package artifacts will be downloaded from their declared repositories.");
+    lines.push(manifest._localPackageFiles
+        ? "Package artifacts will be read from the selected local folder and checked against their declared integrity hashes."
+        : "Package artifacts will be downloaded from their declared repositories.");
     return window.confirm(lines.join("\n"));
 }
 
