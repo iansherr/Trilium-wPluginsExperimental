@@ -14,13 +14,15 @@ interfaces fit a standard the Trilium maintainers are willing to adopt; until
 then, retain it as fork-only work. Never use the personal integration branch as
 the head of an upstream PR.
 
-PR #10824 (`TriliumNext/Trilium`) was closed on 2026-10-17 without merging. The
-fork's local `main` currently matches `origin/main`, but is 123 commits behind
-`upstream/main` as of the planning review. The checkout also contains uncommitted
-local-picker/autosave follow-up edits. Preserve those edits; do not sync or
-create topic branches from this dirty, stale checkout. First finish or preserve
-the local edits, then update the fork base from the verified current upstream
-main, and only then create separate topic branches for future PR candidates.
+PR #10824 (`TriliumNext/Trilium`) was closed on 2026-10-17 without merging.
+On 2026-11-05, fork `main` was synced with the then-current `upstream/main`
+(`7f12054768`, Text editor improvements #12480) by merge commit
+`39782c0aa0`; it was pushed only to `iansherr/Trilium-wPluginsExperimental`.
+The local-source picker/path follow-up is tracked by [fork PR
+#8](https://github.com/iansherr/Trilium-wPluginsExperimental/pull/8), based on
+fork `main`. Keep all plugin feature PRs on the fork unless a separate upstream
+candidate is explicitly approved for submission. Never open or update an
+upstream PR from the fork-only branch.
 
 ### Security review follow-up
 
