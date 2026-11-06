@@ -18,7 +18,7 @@ export type { ImageEditingSourceConfig } from "./plugins/image_editing_source.js
 export type { FileUploadData, FileUploadEvent } from "./plugins/file_upload/fileuploadediting.js";
 export type { PasteTarget } from "./plugins/cuttonote.js";
 export type {
-    ContentEmbedCodeView, ContentEmbedState
+    ContentEmbedCodeView, ContentEmbedState, PositionValue
 } from "./plugins/content_embed/content_embed.js";
 export type { EmbedEdge } from "./plugins/content_embed/content_embed_caret.js";
 export { default as EmbedHistory } from "./plugins/content_embed/embed_history.js";
@@ -26,13 +26,18 @@ export type {
     EmbedHistoryEntry, EmbedHistoryStep
 } from "./plugins/content_embed/embed_history.js";
 export type { InlineEmbedSource } from "./plugins/content_embed/inline_source.js";
-export type { ContentEmbedHost } from "./plugins/content_embed/content_embed.js";
+export type {
+    ContentEmbedDialogRequest, ContentEmbedHost
+} from "./plugins/content_embed/content_embed.js";
 export type { AttachmentLinkChange } from "./plugins/referencelink.js";
 export type { ChildNoteHost } from "./plugins/child_note.js";
 export {
-    getAnchorNames, getLinkAtSelection, replaceLinkAtSelection
+    getAnchorNames, getHeadings, getLinkAtSelection, replaceLinkAtSelection
 } from "./plugins/internallink.js";
-export type { LinkAtSelection, LinkDialogRequest } from "./plugins/internallink.js";
+export type {
+    DocumentHeading, LinkAtSelection, LinkDialogRequest
+} from "./plugins/internallink.js";
+export { assignBlockId } from "./plugins/block_reference/block_reference_editing.js";
 export type { default as TriliumEmojiMention, EmojiSuggestion } from "./plugins/mention/emoji_mention.js";
 export type { default as TriliumSlashCommands, SlashCommandConfig, SlashCommandDefinition, SlashCommandItem } from "./plugins/mention/slash_commands.js";
 export type { MentionHostedFeed, MentionHostedList, MentionHostedListState } from "./plugins/mention/types.js";
@@ -41,8 +46,10 @@ export type { default as TextFormattingToolbar } from "./plugins/text_formatting
 export type { default as ContextToolbar } from "./plugins/context_toolbar.js";
 export type { default as MobileToolbarItems } from "./plugins/mobile_toolbar_items.js";
 export type { LinkDisplayMode, LinkEmbedHost } from "./plugins/link_embed/link_embed_commands.js";
+export { LINK_TOOLBAR, type LinkMenuHost } from "./plugins/link_menu.js";
 export type { AttachmentUploadHost } from "./plugins/uploadimage.js";
 export type { IconPickerRequest } from "./plugins/inline_icon/inline_icon_ui.js";
+export type { InsertMediaRequest } from "./plugins/insert_media.js";
 export type { BlockReferenceHost } from "./plugins/block_reference/block_reference.js";
 export type { SortTargetKind } from "./plugins/sort_selection/sort_targets.js";
 export type { ColorMenuHost, ColorMenuRequest, ColorMenuTarget } from "./plugins/color_menu.js";
@@ -65,6 +72,7 @@ import "./plugins/find_in_link_widgets.js";
 import "./plugins/find_reveal.js";
 import "./plugins/image_to_drawing.js";
 import "./plugins/insert_date_time.js";
+import "./plugins/link_menu.js";
 import "./plugins/markdownimport.js";
 import "./plugins/math/math.js";
 import "./plugins/tabs/tabs.js";
@@ -75,6 +83,7 @@ import "./plugins/sort_selection/sort_selection.js";
 import "./plugins/table_column_bar/table_column_bar.js";
 import "./plugins/table_context_menu.js";
 import "./plugins/table_paste_rows.js";
+import "./plugins/insert_media.js";
 
 window[Symbol.for("cke distribution")] = "trilium";
 

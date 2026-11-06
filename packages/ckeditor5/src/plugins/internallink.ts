@@ -2,9 +2,11 @@ import {
     BookmarkEditing, ButtonView, Command, ContextualBalloon, findAttributeRange, IconLink,
     IconPencil, LinkUI, ModelLiveRange, Plugin
 } from 'ckeditor5';
-import type { Editor, LinkCommand, ModelRange, View } from 'ckeditor5';
+import type { Editor, LinkCommand, ModelElement, ModelRange, View } from 'ckeditor5';
 import HostedBalloon from '../hosted_balloon.js';
 import internalLinkIcon from '../icons/trilium.svg?raw';
+import { BLOCK_ID } from './block_reference/block_reference_editing.js';
+import { isContentEmbed } from './content_embed/content_embed.js';
 import {
     getLinkWidgetMode, getSelectedLinkWidget, type LinkDisplayMode
 } from './link_embed/link_embed_commands.js';
@@ -18,13 +20,26 @@ export const COMMAND_NAME = 'insertInternalLink';
 const LINK_KEYSTROKE = 'Ctrl+K';
 
 export interface InternalLinkDialogOptions {
-    /** The side the dialog opens on for a new link: a note, or a web address. */
-    target?: 'note' | 'url';
     /**
-     * How a new web link is displayed. `embed` falls back to a card for an address without a
+     * The page the dialog opens on for a new link: a note, a web address, or a heading or an
+     * anchor of the document.
+     */
+    target?: 'note' | 'url' | 'anchor';
+    /**
+     * How a new web link is displayed. `embedLink` falls back to a card for an address without a
      * player.
      */
     display?: LinkDisplayMode;
+}
+
+/** A heading of the document. */
+export interface DocumentHeading {
+    element: ModelElement;
+    /** 1 for `heading1`, up to 6 for `heading6`. */
+    level: number;
+    text: string;
+    /** The block id of the heading, if it has one. */
+    blockId?: string;
 }
 
 /** The request that the editor passes to the host's link dialog. */
@@ -87,11 +102,7 @@ export default class InternalLinkPlugin extends Plugin {
         }
 
         const linkUI = editor.plugins.get(LinkUI);
-        const openLinkDialog = () => {
-            // `_hideUI()` is private, and the only way to close the toolbar with its listeners.
-            (linkUI as unknown as { _hideUI(updateFocus?: boolean): void })._hideUI(false);
-            editor.execute(COMMAND_NAME, { target: 'url' });
-        };
+        const openLinkDialog = () => editor.execute(COMMAND_NAME, { target: 'url' });
 
         editor.ui.componentFactory.add('link', locale => {
             const linkCommand = editor.commands.get('link') as LinkCommand;
@@ -149,11 +160,19 @@ export default class InternalLinkPlugin extends Plugin {
     }
 
     /**
-     * Opens the link dialog in a balloon at the caret. A host that shows the dialog its own way
-     * leaves the balloon empty, which closes it again.
+     * Opens the link dialog in a balloon at the caret, in place of the link toolbar of `LinkUI`. A
+     * host that shows the dialog its own way leaves the balloon empty, which closes it again.
      */
     showDialog(options: InternalLinkDialogOptions = {}) {
         const editor = this.editor;
+
+        if (editor.plugins.has(LinkUI)) {
+            // `_hideUI()` is private, and the only way to close the toolbar with its listeners.
+            const linkUI = editor.plugins.get(LinkUI) as unknown as {
+                _hideUI(updateFocus?: boolean): void;
+            };
+            linkUI._hideUI(false);
+        }
 
         this.dialog.show(container => editor.config.get('internalLink')?.showDialog({
             ...options,
@@ -188,6 +207,8 @@ export interface LinkAtSelection {
     display: LinkDisplayMode;
     /** Whether the link is a reference link, whose text follows the title of its note. */
     isReference?: boolean;
+    /** Whether the link is a media embed, which plays the media at `href`. */
+    isMedia?: boolean;
 }
 
 /**
@@ -202,7 +223,7 @@ export function getLinkAtSelection(editor: Editor): LinkAtSelection | null {
         return {
             href,
             text: getReferenceTitleSync(editor, href, storedTitle),
-            display: 'plain',
+            display: 'textLink',
             isReference: true
         };
     }
@@ -213,7 +234,8 @@ export function getLinkAtSelection(editor: Editor): LinkAtSelection | null {
             href: preview.getAttribute('url') as string,
             text: (preview.getAttribute('title') as string | undefined) ?? '',
             description: (preview.getAttribute('description') as string | undefined) ?? '',
-            display: getLinkWidgetMode(preview)
+            display: getLinkWidgetMode(preview),
+            isMedia: isContentEmbed(preview)
         };
     }
 
@@ -228,7 +250,7 @@ export function getLinkAtSelection(editor: Editor): LinkAtSelection | null {
             text += item.data;
         }
     }
-    return { href: found.href, text, display: 'plain' };
+    return { href: found.href, text, display: 'textLink' };
 }
 
 /**
@@ -292,6 +314,50 @@ export function getAnchorNames(editor: Editor): string[] {
 
     const names = editor.plugins.get(BookmarkEditing).getAllBookmarkNames();
     return [ ...names ].sort((a, b) => a.localeCompare(b));
+}
+
+/** The headings of the document that have text, in document order. */
+export function getHeadings(editor: Editor): DocumentHeading[] {
+    const model = editor.model;
+    const root = model.document.getRoot() as ModelElement;
+    const headings: DocumentHeading[] = [];
+
+    for (const item of model.createRangeIn(root).getItems()) {
+        if (!item.is('element')) {
+            continue;
+        }
+
+        const level = /^heading([1-6])$/.exec(item.name)?.[1];
+        if (!level) {
+            continue;
+        }
+
+        // A reference link reads as its title, as the editor shows it. Another inline element, such
+        // as a soft break, separates words.
+        let text = '';
+        for (const child of model.createRangeIn(item).getItems()) {
+            if (child.is('$textProxy')) {
+                text += child.data;
+            } else if (child.is('element', 'reference')) {
+                text += getReferenceTitleSync(editor, child.getAttribute('href') as string,
+                    child.getAttribute('storedTitle') as string | undefined);
+            } else {
+                text += ' ';
+            }
+        }
+
+        text = text.replace(/\s+/g, ' ').trim();
+        if (text) {
+            headings.push({
+                element: item,
+                level: Number(level),
+                text,
+                blockId: item.getAttribute(BLOCK_ID) as string | undefined
+            });
+        }
+    }
+
+    return headings;
 }
 
 function findLinkAtSelection(editor: Editor): { href: string; range: ModelRange } | null {

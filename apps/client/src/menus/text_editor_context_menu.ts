@@ -6,7 +6,7 @@ import type { CommandNames } from "../components/app_context.js";
 import { isExperimentalFeatureEnabled } from "../services/experimental_features.js";
 import { t } from "../services/i18n.js";
 import { getEditorNoteId } from "../widgets/react/NoteStore.js";
-import type { MenuItem } from "./context_menu.js";
+import type { ContextMenuOptions, MenuItem } from "./context_menu.js";
 import { submenuItem } from "./context_menu_utils.js";
 
 /**
@@ -174,9 +174,13 @@ export function buildSortSelectionMenuItem(
  * The containment check is what makes this answer the click rather than the tab: the active note
  * can be a text note while the selection is in a dialog or a plain input, and the editor would
  * happily report its own stale model selection for it.
+ *
+ * Returns `null` as well for a selection in the content of an embed, such as the CodeMirror of an
+ * extended code block, where the model selection of the editor around it is the whole embed.
  */
 export async function getTextEditorAtSelection(): Promise<CKTextEditor | null> {
-    return getTextEditorContaining(window.getSelection()?.anchorNode);
+    const anchor = window.getSelection()?.anchorNode;
+    return isInEmbedContent(anchor) ? null : getTextEditorContaining(anchor);
 }
 
 /**
@@ -196,6 +200,28 @@ export async function getTextEditorContaining(
     return editor && getEditorNoteId(editor) ? editor : null;
 }
 
+/**
+ * Menu options adding the menu to the focus tracker of `editor`, so that the editor stays focused
+ * while the menu is up.
+ */
+export function keepEditorFocused(
+    editor: CKTextEditor
+): Pick<ContextMenuOptions<CommandNames>, "onShow" | "onHide"> {
+    let menuContainer: HTMLElement | null = null;
+
+    return {
+        onShow: (container) => {
+            menuContainer = container;
+            editor.ui.focusTracker.add(container);
+        },
+        onHide: () => {
+            if (menuContainer) {
+                editor.ui.focusTracker.remove(menuContainer);
+            }
+        }
+    };
+}
+
 type SortSelectionCommandName = "triliumSortSelectionAscending" | "triliumSortSelectionDescending";
 
 function getSortMenuTitle(kind: SortTargetKind) {
@@ -207,6 +233,16 @@ function getSortMenuTitle(kind: SortTargetKind) {
         case "blocks":
             return t("sort_selection.sort_blocks");
     }
+}
+
+/**
+ * Whether `node` is in the content of an embed of the innermost text editor around it. The wrapper
+ * of an embed has `data-cke-ignore-events`, as in `nested_editor_events.ts`.
+ */
+function isInEmbedContent(node: Node | null | undefined) {
+    const element = node instanceof Element ? node : node?.parentElement;
+    const wrapper = element?.closest("[data-cke-ignore-events]");
+    return !!wrapper && !!element?.closest(EDITOR_ROOT_SELECTOR)?.contains(wrapper);
 }
 
 /** The editable root of a text editor, which CKEditor gives a reference to the editor. */

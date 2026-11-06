@@ -1826,9 +1826,7 @@
     "no_headings": "Nenhum título."
   },
   "watched_file_update_status": {
-    "file_last_modified": "O arquivo <code class=\"file-path\"></code> foi modificado pela última vez em <span class=\"file-last-modified\"></span>.",
-    "upload_modified_file": "Enviar arquivo modificado",
-    "ignore_this_change": "Ignorar esta alteração"
+    "upload_modified_file": "Enviar arquivo modificado"
   },
   "app_context": {
     "please_wait_for_save": "Por favor aguarde alguns segundos para finalizar a gravação, e então tente novamente."
@@ -3645,7 +3643,6 @@
       "drag-to-reposition-the-collapsible-block": "Arraste para reposicionar o bloco recolhível",
       "edit-anchor": "Editar âncora",
       "edit-task-states": "Editar estados de tarefa",
-      "edit-title": "Editar título",
       "embed": "Incorporar",
       "enter-the-anchor-name-without-spaces": "Digite o nome da âncora sem espaços.",
       "equation-preview": "Pré-visualização da equação",
@@ -3714,14 +3711,12 @@
       "text-snippet": "Trecho de texto",
       "text-snippets-found-0": "Trechos de texto encontrados: %0",
       "tip": "Dica",
-      "title": "Título",
       "to-do-list": "Lista de tarefas",
       "toggle-collapsible-block": "Alternar bloco recolhível",
       "turn-the-current-block-into-a-heading": "Transformar o bloco atual em um título.",
       "turn-the-current-block-into-a-paragraph": "Transformar o bloco atual em um parágrafo.",
       "type-the-content-here": "Digite o conteúdo aqui...",
       "undefined-custom-task-state": "Estado de tarefa personalizado indefinido",
-      "url": "URL",
       "warning": "Aviso"
     },
     "task-state-dropped-title": "Estados de tarefa inválidos",

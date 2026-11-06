@@ -32,6 +32,7 @@ import type { PrintPreviewData } from "../widgets/dialogs/print_preview.jsx";
 import type { NotePickerDialogOptions } from "../widgets/dialogs/note_picker.js";
 import type { ItemPickerDialogOptions } from "../widgets/dialogs/item_picker.js";
 import type { PromptDialogOptions } from "../widgets/dialogs/prompt.js";
+import type { InsertMediaOpts } from "../widgets/dialogs/insert_media.js";
 import type NoteTreeWidget from "../widgets/note_tree.js";
 import type { PaneId, PaneMode } from "../widgets/react/peek_pane.js";
 import type { RightPaneTabId } from "../widgets/sidebar/RightPaneTabs.jsx";
@@ -157,12 +158,6 @@ export type CommandMappings = {
         forceDeleteAllClones: boolean;
     };
     showConfirmDeleteNoteBoxWithNoteDialog: ConfirmWithTitleOptions;
-    openedFileUpdated: CommandData & {
-        entityType: string;
-        entityId: string;
-        lastModifiedMs?: number;
-        filePath: string;
-    };
     focusAndSelectTitle: CommandData & {
         isNewNote?: boolean;
     };
@@ -205,6 +200,7 @@ export type CommandMappings = {
         oldMainNtxId?: string | null;
         newMainNtxId?: string | null;
     };
+    openNote: ContextMenuCommandData;
     openInTab: ContextMenuCommandData;
     openNoteInSplit: ContextMenuCommandData;
     openNoteInWindow: ContextMenuCommandData;
@@ -283,6 +279,7 @@ export type CommandMappings = {
     showContentEmbedDialog: CommandData & ContentEmbedOpts;
     showEditLinkDialog: CommandData & EditLinkOpts;
     showIconPickerDialog: CommandData & IconPickerOpts;
+    showInsertMediaDialog: CommandData & InsertMediaOpts;
     showPasteMarkdownDialog: CommandData & MarkdownImportOpts;
     closeProtectedSessionPasswordDialog: CommandData;
     copyImageReferenceToClipboard: CommandData;

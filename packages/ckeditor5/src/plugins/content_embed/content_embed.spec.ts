@@ -5,6 +5,7 @@ import {
     Bold,
     ButtonView,
     ClassicEditor,
+    ContextualBalloon,
     Essentials,
     ImageBlock,
     ImageCaption,
@@ -19,7 +20,6 @@ import bxCode from "boxicons/svg/regular/bx-code.svg?raw";
 import bxEditAlt from "boxicons/svg/regular/bx-edit-alt.svg?raw";
 import bxShow from "boxicons/svg/regular/bx-show.svg?raw";
 import bxsDockLeft from "boxicons/svg/solid/bxs-dock-left.svg?raw";
-import bxWindowAlt from "boxicons/svg/regular/bx-window-alt.svg?raw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestEditor } from "../../../test/editor-kit.js";
@@ -35,8 +35,12 @@ import ContentEmbed, {
     CONTENT_EMBED_DISPLAY_MODE_COMMAND,
     CONTENT_EMBED_DISPLAY_MODE_SEPARATOR,
     CONTENT_EMBED_MENU,
+    type ContentEmbedDialogRequest,
+    DELETE_COMMAND_NAME,
     DISPLAY_MODE_BUTTONS,
     DISPLAY_MODES,
+    getCaption,
+    POSITION_COMMAND_NAME,
     TOGGLE_CAPTION_COMMAND_NAME,
     TOGGLE_EDITABLE_COMMAND_NAME,
     TOGGLE_TITLE_COMMAND_NAME
@@ -216,9 +220,55 @@ describe("ContentEmbed", () => {
     // InsertContentEmbedCommand
     // -----------------------------------------------------------------------
 
-    it("has the host open the Include note dialog when the insert command executes", () => {
+    it("opens the host's dialog in a balloon at the caret, until the host closes it", () => {
+        setModelData(editor.model, "<paragraph>foo[]</paragraph>");
+        const release = vi.fn();
+        pickNote.mockReturnValue(release);
+        const balloon = editor.plugins.get(ContextualBalloon);
+
         editor.execute(COMMAND_NAME);
         expect(pickNote).toHaveBeenCalledOnce();
+        const request = pickNote.mock.lastCall?.[0] as ContentEmbedDialogRequest | undefined;
+        const container = request?.container;
+        expect(container?.classList.contains("include-note-balloon")).toBe(true);
+        expect(container && balloon.view.element?.contains(container)).toBe(true);
+
+        const focus = vi.spyOn(editor.editing.view, "focus");
+        request?.close();
+        expect(release).toHaveBeenCalledOnce();
+        expect(balloon.visibleView).toBeNull();
+        expect(focus).toHaveBeenCalledOnce();
+    });
+
+    it("closes the balloon for a host that shows the dialog its own way, or has none", async () => {
+        pickNote.mockReturnValue(null);
+        const plugins = [ Essentials, Paragraph, Widget, ContentEmbed ];
+        const plainEditor = await createTestEditor(plugins);
+        const pickerlessEditor = await createTestEditor(plugins, {
+            contentEmbed: { loadNote: loadEmbeddedNote }
+        });
+
+        for (const testEditor of [ editor, plainEditor, pickerlessEditor ]) {
+            setModelData(testEditor.model, "<paragraph>foo[]</paragraph>");
+            const balloon = testEditor.plugins.get(ContextualBalloon);
+            const add = vi.spyOn(balloon, "add");
+
+            testEditor.execute(COMMAND_NAME);
+            expect(add).toHaveBeenCalledOnce();
+            expect(balloon.visibleView).toBeNull();
+        }
+        expect(pickNote).toHaveBeenCalledOnce();
+    });
+
+    it("lets go of the dialog when the editor is torn down under it", async () => {
+        setModelData(editor.model, "<paragraph>foo[]</paragraph>");
+        const release = vi.fn();
+        pickNote.mockReturnValue(release);
+        editor.execute(COMMAND_NAME);
+        expect(editor.plugins.get(ContextualBalloon).visibleView).not.toBeNull();
+
+        await editor.destroy();
+        expect(release).toHaveBeenCalledOnce();
     });
 
     it("enables the insert command in a paragraph and disables it where blocks are disallowed", () => {
@@ -756,13 +806,66 @@ describe("ContentEmbed", () => {
             .toBe("noteMenu");
     });
 
+    it("marks the embed that a DOM element is part of as collapsed, until destroyed", async () => {
+        editor.setData("<p>foo</p>"
+            + "<figure class=\"include-note\" data-note-id=\"noteC\" data-box-size=\"expandable\">"
+            + "</figure>");
+        const domRoot = editor.editing.view.getDomRoot();
+        const figure = domRoot?.querySelector("figure.include-note");
+        const wrapper = figure?.querySelector("div.include-note-wrapper");
+        const paragraph = domRoot?.querySelector("p");
+        if (!figure || !wrapper || !paragraph) {
+            throw new Error("Expected a rendered embed and paragraph.");
+        }
+        const plugin = editor.plugins.get("ContentEmbed");
+        const isCollapsed = () => figure.classList.contains("include-note_collapsed");
+
+        plugin.setEmbedCollapsedAt(wrapper, true);
+        expect(isCollapsed()).toBe(true);
+        plugin.setEmbedCollapsedAt(paragraph, false);
+        expect(isCollapsed()).toBe(true);
+        plugin.setEmbedCollapsedAt(wrapper, false);
+        expect(isCollapsed()).toBe(false);
+
+        await editor.destroy();
+        expect(() => plugin.setEmbedCollapsedAt(wrapper, true)).not.toThrow();
+        expect(isCollapsed()).toBe(false);
+    });
+
+    it("deletes the selected embed, with the caret in the block after it, else before it", () => {
+        const embed = "<contentEmbed noteId=\"n1\"></contentEmbed>";
+        const command = editor.commands.get(DELETE_COMMAND_NAME);
+        setModelData(editor.model, `<paragraph>before[]</paragraph>${embed}`);
+        expect(command?.isEnabled).toBe(false);
+
+        setModelData(editor.model,
+            `<paragraph>before</paragraph>[${embed}]<paragraph>after</paragraph>`);
+        expect(command?.isEnabled).toBe(true);
+        editor.execute(DELETE_COMMAND_NAME);
+        expect(getModelData(editor.model))
+            .toBe("<paragraph>before</paragraph><paragraph>[]after</paragraph>");
+
+        // A next embed is selected, and a last embed leaves the caret in the block before it.
+        setModelData(editor.model, `[${embed}]${embed}`);
+        editor.execute(DELETE_COMMAND_NAME);
+        expect(getModelData(editor.model)).toBe(`[${embed}]`);
+        setModelData(editor.model, `<paragraph>before</paragraph>[${embed}]`);
+        editor.execute(DELETE_COMMAND_NAME);
+        expect(getModelData(editor.model)).toBe("<paragraph>before[]</paragraph>");
+
+        // An embed alone leaves an empty paragraph behind.
+        setModelData(editor.model, `[${embed}]`);
+        editor.execute(DELETE_COMMAND_NAME);
+        expect(getModelData(editor.model)).toBe("<paragraph>[]</paragraph>");
+    });
+
     it("falls back gracefully in the button factory when the insert command is absent", () => {
         // Exercise the falsy `if (command)` branch in ContentEmbedUI: when the command lookup
         // returns undefined, the button must still be created (just without the binding).
         const realGet = editor.commands.get.bind(editor.commands);
         const absent: string[] = [
-            COMMAND_NAME, CONVERT_EMBED_TO_LINK_COMMAND, TOGGLE_CAPTION_COMMAND_NAME,
-            TOGGLE_TITLE_COMMAND_NAME, TOGGLE_EDITABLE_COMMAND_NAME
+            COMMAND_NAME, TOGGLE_CAPTION_COMMAND_NAME, TOGGLE_TITLE_COMMAND_NAME,
+            TOGGLE_EDITABLE_COMMAND_NAME
         ];
         const getSpy = vi
             .spyOn(editor.commands, "get")
@@ -771,12 +874,8 @@ describe("ContentEmbed", () => {
         try {
             const view = editor.ui.componentFactory.create("contentEmbed") as unknown as { label: string };
             expect(view.label).toBe("Include note");
-            const convert = editor.ui.componentFactory.create(CONVERT_EMBED_TO_LINK_COMMAND);
-            expect((convert as unknown as { label: string }).label).toBe("Convert to link");
             const caption = editor.ui.componentFactory.create(TOGGLE_CAPTION_COMMAND_NAME);
             expect((caption as unknown as { label: string }).label).toBe("Toggle caption on");
-            const title = editor.ui.componentFactory.create(TOGGLE_TITLE_COMMAND_NAME);
-            expect((title as unknown as { label: string }).label).toBe("Show title");
             const editable = editor.ui.componentFactory.create(TOGGLE_EDITABLE_COMMAND_NAME);
             expect((editable as unknown as { label: string }).label).toBe("Editable");
             const menu = editor.ui.componentFactory.create(CONTENT_EMBED_MENU);
@@ -960,23 +1059,16 @@ describe("ContentEmbed with attachments", () => {
 
     it("turns an embed of an attachment or a note into a link, and nothing else", async () => {
         const command = editor.commands.get(CONVERT_EMBED_TO_LINK_COMMAND);
-        const button = editor.ui.componentFactory.create(CONVERT_EMBED_TO_LINK_COMMAND);
-        if (!(button instanceof ButtonView)) {
-            throw new Error("Expected a button.");
-        }
-        expect(button.label).toBe("Convert to link");
 
         editor.setData("<figure class=\"include-note\" data-box-size=\"small\"></figure>");
         selectEmbed();
         expect(command?.isEnabled).toBe(false);
-        expect(button.isVisible).toBe(false);
 
         editor.setData(embedHtml());
         selectEmbed();
         expect(command?.isEnabled).toBe(true);
-        expect(button.isVisible).toBe(true);
 
-        button.fire("execute");
+        editor.execute(CONVERT_EMBED_TO_LINK_COMMAND);
 
         expect(getAttachmentHref).toHaveBeenCalledWith("att1");
         await vi.waitFor(() => expect(getModelData(editor.model, { withoutSelection: true }))
@@ -986,7 +1078,7 @@ describe("ContentEmbed with attachments", () => {
             + " data-box-size=\"small\"></figure>");
         selectEmbed();
         expect(command?.isEnabled).toBe(true);
-        button.fire("execute");
+        editor.execute(CONVERT_EMBED_TO_LINK_COMMAND);
 
         await vi.waitFor(() => expect(getModelData(editor.model, { withoutSelection: true }))
             .toBe("<paragraph><reference href=\"#root/noteX\"></reference></paragraph>"));
@@ -1013,7 +1105,10 @@ describe("ContentEmbed with attachments", () => {
 
         const states = [ embed, note, tiny, unsized ]
             .map((wrapper) => plugin.getEmbedStateAt(wrapper));
-        const notEditable = { isEditable: false, isEditableToggleable: false, displayMode: null };
+        const notEditable = {
+            isEditable: false, isEditableToggleable: false, displayMode: null, position: "center",
+            isTitleSupported: true, isCaptionSupported: true, url: null
+        };
         expect(states).toEqual([ {
             ...notEditable, boxSize: "small", isTitleShown: true, isTitleToggleable: true,
             hasCaption: false, isCaptionToggleable: true, isConvertibleToLink: true
@@ -1255,6 +1350,34 @@ describe("ContentEmbed captions", () => {
         expect(isSelectionInCaption()).toBe(false);
     });
 
+    it("looks selected while its caption has the selection, as while it is selected", () => {
+        editor.setData(`<p>Text</p>${CAPTIONED}`);
+        const isMarked = () => !!editor.editing.view.getDomRoot()
+            ?.querySelector("figure.include-note")?.classList.contains("ck-widget_selected");
+        const embed = findContentEmbed(editor);
+        const caption = embed && getCaption(embed);
+        const paragraph = editor.model.document.getRoot()?.getChild(0);
+        if (!caption || !paragraph) {
+            throw new Error("Expected a paragraph and a captioned embed.");
+        }
+        expect(isMarked()).toBe(false);
+
+        editor.model.change((writer) => writer.setSelection(caption, 2));
+        expect(isMarked()).toBe(true);
+        editor.model.change((writer) => writer.setSelection(caption, "end"));
+        expect(isMarked()).toBe(true);
+
+        editor.model.change((writer) => writer.setSelection(paragraph, 0));
+        expect(isMarked()).toBe(false);
+
+        selectEmbed();
+        expect(isMarked()).toBe(true);
+        editor.model.change((writer) => writer.setSelection(caption, 0));
+        expect(isMarked()).toBe(true);
+        editor.model.change((writer) => writer.setSelection(paragraph, 0));
+        expect(isMarked()).toBe(false);
+    });
+
     it("keeps the rendered content while the caption is toggled and edited", () => {
         insertContentEmbed(editor, "n1", "medium");
         const wrapper = editor.editing.view.getDomRoot()?.querySelector(".include-note-wrapper");
@@ -1444,29 +1567,23 @@ describe("ContentEmbed title", () => {
         }
     });
 
-    it("offers a Show title button, and a menu button while the title is hidden", () => {
-        const toggle = editor.ui.componentFactory.create(TOGGLE_TITLE_COMMAND_NAME);
+    it("offers a menu button while the title is hidden", () => {
         const menu = editor.ui.componentFactory.create(CONTENT_EMBED_MENU);
-        if (!(toggle instanceof ButtonView) || toggle instanceof SwitchButtonView
-                || !(menu instanceof ButtonView)) {
-            throw new Error("Expected two buttons.");
+        if (!(menu instanceof ButtonView)) {
+            throw new Error("Expected a button.");
         }
         menu.render();
         insertContentEmbed(editor, "n1", "medium");
-        expect([ toggle.icon, toggle.withText, toggle.tooltip, toggle.isToggleable ])
-            .toEqual([ bxWindowAlt, false, true, true ]);
-        expect([ toggle.label, toggle.isOn, toggle.isVisible ]).toEqual([ "Show title", true, true ]);
         expect([ menu.label, menu.isVisible ]).toEqual([ "More actions", false ]);
 
-        toggle.fire("execute");
-        expect(toggle.isOn).toBe(false);
+        editor.execute(TOGGLE_TITLE_COMMAND_NAME);
         expect(menu.isVisible).toBe(true);
 
         menu.fire("execute");
         expect(openContentEmbedMenu).toHaveBeenCalledWith(getRenderedEmbed(), menu.element);
 
         editor.execute(BOX_SIZE_COMMAND_NAME, { value: "tiny" });
-        expect([ toggle.isVisible, menu.isVisible ]).toEqual([ false, false ]);
+        expect(menu.isVisible).toBe(false);
     });
 
     it("opens no menu from a button not rendered yet, or with no embed selected", () => {
@@ -1898,6 +2015,145 @@ describe("ContentEmbed display mode", () => {
         const command = getCommand();
         command.isEnabled = true;
         command.execute({ value: "source" });
+
+        expect(editor.getData()).toBe(before);
+    });
+});
+
+describe("ContentEmbed position", () => {
+    const WRAPPED = "<figure class=\"include-note\" data-attachment-id=\"a1\""
+        + " data-box-size=\"medium\" data-position=\"wrap-left\">&nbsp;</figure>";
+    let editor: ClassicEditor;
+    let getContentEmbedTools: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+        getContentEmbedTools = vi.fn(() => ({ hasPositions: true }));
+        editor = await createTestEditor([ Essentials, Paragraph, Undo, Widget, ContentEmbed ], {
+            contentEmbed: { getTools: getContentEmbedTools }
+        });
+    });
+
+    function getCommand() {
+        const command = editor.commands.get(POSITION_COMMAND_NAME);
+        if (!command) {
+            throw new Error("Expected the position command.");
+        }
+        return command;
+    }
+
+    function getRenderedEmbed() {
+        const embed = editor.editing.view.getDomRoot()
+            ?.querySelector<HTMLElement>("figure.include-note");
+        if (!embed) {
+            throw new Error("Expected a rendered embed.");
+        }
+        return embed;
+    }
+
+    /** The position of the rendered embed, and the edge that its resize handles grow from. */
+    function getRendered() {
+        const embed = getRenderedEmbed();
+        const anchor = [ "left", "right" ]
+            .find((edge) => embed.classList.contains(`ck-widget_resize-anchor-${edge}`));
+        return [ embed.getAttribute("data-position"), anchor ?? null ];
+    }
+
+    it("loads and saves the position, and drops centered or an unknown one", () => {
+        editor.setData(WRAPPED);
+        expect(getModelData(editor.model, { withoutSelection: true }))
+            .toContain("position=\"wrap-left\"");
+        expect(editor.getData()).toBe(WRAPPED);
+        expect(getRendered()).toEqual([ "wrap-left", "left" ]);
+
+        for (const value of [ "center", "other" ]) {
+            editor.setData(WRAPPED.replace("wrap-left", value));
+            expect(getModelData(editor.model, { withoutSelection: true }), value)
+                .not.toContain("position");
+            expect(getRendered(), value).toEqual([ null, null ]);
+        }
+    });
+
+    it("sets the position as one undo step, keeping the content, and centered removes it", () => {
+        insertContentEmbed(editor, "n1", "medium");
+        const wrapper = getRenderedEmbed().querySelector(".include-note-wrapper");
+        expect([ getCommand().isEnabled, getCommand().value ]).toEqual([ true, "center" ]);
+        expect(getRendered()).toEqual([ null, null ]);
+
+        editor.execute(POSITION_COMMAND_NAME, { value: "wrap-right" });
+        expect(getCommand().value).toBe("wrap-right");
+        expect(getRendered()).toEqual([ "wrap-right", "right" ]);
+        expect(editor.getData()).toContain("data-position=\"wrap-right\"");
+
+        editor.execute(POSITION_COMMAND_NAME, { value: "left" });
+        expect(getRendered()).toEqual([ "left", "left" ]);
+        editor.execute(POSITION_COMMAND_NAME, { value: "right" });
+        expect(getRendered()).toEqual([ "right", "right" ]);
+
+        editor.execute(POSITION_COMMAND_NAME, { value: "center" });
+        expect(getCommand().value).toBe("center");
+        expect(getRendered()).toEqual([ null, null ]);
+        expect(editor.getData()).not.toContain("data-position");
+
+        editor.execute("undo");
+        expect(getCommand().value).toBe("right");
+        expect(getRenderedEmbed().querySelector(".include-note-wrapper")).toBe(wrapper);
+    });
+
+    it("works at every box size, and keeps the position through a change of it", () => {
+        insertContentEmbed(editor, "n1", "medium");
+        editor.execute(POSITION_COMMAND_NAME, { value: "wrap-left" });
+
+        for (const boxSize of BOX_SIZES) {
+            editor.execute(BOX_SIZE_COMMAND_NAME, { value: boxSize });
+            expect([ getCommand().isEnabled, getCommand().value ], boxSize)
+                .toEqual([ true, "wrap-left" ]);
+            expect(getRendered(), boxSize).toEqual([ "wrap-left", "left" ]);
+        }
+    });
+
+    it("is offered for a note, an attachment, and a source whose content has positions", () => {
+        const contentEmbed = editor.plugins.get(ContentEmbed);
+        const getOffered = () => [
+            getCommand().isEnabled, getCommand().value,
+            contentEmbed.getEmbedStateAt(getRenderedEmbed())?.position
+        ];
+        getContentEmbedTools.mockReturnValue({ hasEditableFlag: true });
+
+        for (const data of [ WRAPPED, WRAPPED.replace("data-attachment-id", "data-note-id") ]) {
+            editor.setData(data);
+            editor.model.change((writer) => writer.setSelection(findContentEmbed(editor), "on"));
+            expect(getOffered(), data).toEqual([ true, "wrap-left", "wrap-left" ]);
+        }
+
+        editor.model.change((writer) => {
+            const root = editor.model.document.getRoot();
+            if (!root) {
+                throw new Error("The editor has no root.");
+            }
+            const embed = writer.createElement("contentEmbed", {
+                language: "mermaid", source: "graph TD", boxSize: "medium"
+            });
+            writer.remove(writer.createRangeIn(root));
+            writer.insert(embed, root, 0);
+            writer.setSelection(embed, "on");
+        });
+        expect(getOffered()).toEqual([ false, null, null ]);
+
+        getContentEmbedTools.mockReturnValue({ hasPositions: true });
+        editor.ui.update();
+        expect(getOffered()).toEqual([ true, "center", "center" ]);
+    });
+
+    it("changes nothing when no embed is selected", () => {
+        editor.setData(WRAPPED + "<p>after</p>");
+        setModelData(editor.model, "<paragraph>foo[]bar</paragraph>");
+        const before = editor.getData();
+
+        // The decorated `Command#execute()` skips a disabled command, so the command is forced
+        // enabled to run `execute()` with no embed selected.
+        const command = getCommand();
+        command.isEnabled = true;
+        command.execute({ value: "right" });
 
         expect(editor.getData()).toBe(before);
     });

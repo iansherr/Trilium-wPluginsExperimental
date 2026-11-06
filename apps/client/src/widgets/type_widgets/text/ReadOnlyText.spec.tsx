@@ -32,9 +32,14 @@ import ReadOnlyText, { ReadOnlyTextContent } from "./ReadOnlyText";
 
 // Imported by ReadOnlyText only for its content styles; irrelevant (and heavy) in happy-dom.
 vi.mock("@triliumnext/ckeditor5", () => ({}));
+vi.mock("../../../services/i18n", async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    t: (key: string) => key
+}));
 
 const {
-    watchContentEmbeds, stopWatchingEmbeds, loadEmbeddedNote, loadInlineEmbed, loadUnknownEmbed
+    watchContentEmbeds, stopWatchingEmbeds, loadEmbeddedNote, loadInlineEmbed, loadUnknownEmbed,
+    loadMediaEmbed
 } = vi.hoisted(() => {
     const stop = vi.fn();
     return {
@@ -42,7 +47,8 @@ const {
         stopWatchingEmbeds: stop,
         loadEmbeddedNote: vi.fn(async () => {}),
         loadInlineEmbed: vi.fn(async () => {}),
-        loadUnknownEmbed: vi.fn(async () => {})
+        loadUnknownEmbed: vi.fn(async () => {}),
+        loadMediaEmbed: vi.fn(async () => {})
     };
 });
 vi.mock("./utils", async (importOriginal) => ({
@@ -50,7 +56,8 @@ vi.mock("./utils", async (importOriginal) => ({
     watchContentEmbeds,
     loadEmbeddedNote,
     loadInlineEmbed,
-    loadUnknownEmbed
+    loadUnknownEmbed,
+    loadMediaEmbed
 }));
 
 const disposeStickyTableHeaders = vi.hoisted(() => vi.fn());
@@ -509,6 +516,7 @@ describe("ReadOnlyText embeds of an unknown kind", () => {
 describe("ReadOnlyText Mermaid diagrams", () => {
     const html = `<pre data-box-size="small" data-display-mode="source" data-hide-title="true"`
         + ` data-trilium-block-id="b1" data-code-wrap-lines="true" data-code-line-numbers="false"`
+        + ` data-position="wrap-right"`
         + ` style="--include-note-height:12em;">`
         + `<code class="language-mermaid">graph TD;</code></pre>`
         + `<pre><code class="language-mermaid" data-trilium-display-mode="split"`
@@ -560,7 +568,8 @@ describe("ReadOnlyText Mermaid diagrams", () => {
                 options: { isFocused: false }, isInPage: true,
                 data: {
                     boxSize: "small", displayMode: "source", hideTitle: "true", language: "mermaid",
-                    triliumBlockId: "b1", codeWrapLines: "true", codeLineNumbers: "false"
+                    triliumBlockId: "b1", codeWrapLines: "true", codeLineNumbers: "false",
+                    position: "wrap-right"
                 },
                 height: "12em"
             },
@@ -589,6 +598,102 @@ describe("ReadOnlyText Mermaid diagrams", () => {
         expect(printed.container.querySelectorAll(".rendered-mermaid-diagram")).toHaveLength(2);
         await printed.unmount();
         expect(loadInlineEmbed).not.toHaveBeenCalled();
+    });
+});
+
+describe("ReadOnlyText videos", () => {
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    const html = `<section class="link-embed" style="--include-note-width:30em;"`
+        + ` data-url="${url}" data-embed-type="youtube" data-title="A video"`
+        + ` data-aspect-ratio="9/16" data-box-size="medium" data-position="wrap-left"`
+        + ` data-trilium-block-id="b1">`
+        + `&nbsp;</section>`
+        + `<figure class="captioned-content-embed">`
+        + `<section class="link-embed" data-url="${url}" data-embed-type="youtube"></section>`
+        + `<figcaption>A caption</figcaption></figure>`
+        + `<section class="link-embed" data-url="https://example.com/"`
+        + ` data-embed-type="opengraph" data-title="A card"></section>`;
+
+    afterEach(() => {
+        vi.stubGlobal("glob", { ...glob, device: "desktop" });
+    });
+
+    async function mountContent(content = html) {
+        const container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => render(<ReadOnlyTextContent html={content} />, container));
+        return {
+            container,
+            async unmount() {
+                await act(async () => render(null, container));
+                container.remove();
+            }
+        };
+    }
+
+    it("shows each video in the box of the editor, with no menu, and a card in place", async () => {
+        loadMediaEmbed.mockClear();
+        const { container, unmount } = await mountContent();
+
+        const videos = loadMediaEmbed.mock.calls.map((call: unknown[]) => {
+            const [ preview, figure ] = call as [ { url: string; title: string }, HTMLElement ];
+            return {
+                url: preview.url,
+                title: preview.title,
+                isMenuless: call.length === 2,
+                isInPage: figure.isConnected,
+                className: figure.className,
+                data: { ...figure.dataset },
+                width: figure.style.getPropertyValue("--include-note-width"),
+                shape: figure.style.getPropertyValue("--video-aspect-ratio"),
+                caption: figure.querySelector(":scope > figcaption")?.textContent ?? null
+            };
+        });
+        const box = {
+            url, isMenuless: true, isInPage: true, className: "include-note media-embed video-embed"
+        };
+        expect(videos).toEqual([
+            {
+                ...box, title: "A video", width: "30em", shape: "0.5625", caption: null,
+                data: { boxSize: "medium", position: "wrap-left", triliumBlockId: "b1" }
+            },
+            {
+                ...box, title: null, width: "", shape: "", caption: "A caption",
+                data: { boxSize: "full", hideTitle: "true" }
+            }
+        ]);
+        expect(container.querySelector(".captioned-content-embed")).toBeNull();
+        expect(container.querySelector("section.link-embed > a.link-embed-card")).not.toBeNull();
+        await unmount();
+    });
+
+    it("boxes an audio file at Small, and a video file in the shape of its video", async () => {
+        loadMediaEmbed.mockClear();
+        const { unmount } = await mountContent(`<section class="link-embed"`
+            + ` data-url="https://example.com/a.mp3" data-embed-type="audio" data-box-size="small">`
+            + `</section><section class="link-embed" data-url="https://example.com/a.mp4"`
+            + ` data-embed-type="video" data-aspect-ratio="4/3" data-box-size="medium"></section>`);
+
+        expect(loadMediaEmbed.mock.calls.map((call: unknown[]) => {
+            const figure = call[1] as HTMLElement;
+            return [ figure.className, figure.dataset.boxSize,
+                figure.style.getPropertyValue("--video-aspect-ratio") ];
+        })).toEqual([
+            [ "include-note media-embed audio-embed", "small", "" ],
+            [ "include-note media-embed video-embed", "medium", String(4 / 3) ]
+        ]);
+        await unmount();
+    });
+
+    it("draws the videos in place when printing", async () => {
+        loadMediaEmbed.mockClear();
+        vi.stubGlobal("glob", { ...glob, device: "print" });
+        const { container, unmount } = await mountContent();
+
+        expect(loadMediaEmbed).not.toHaveBeenCalled();
+        expect(container.querySelectorAll("section.link-embed > .link-embed-video"))
+            .toHaveLength(2);
+        await unmount();
     });
 });
 

@@ -1,7 +1,7 @@
 ---
 name: developing-content-embeds
 description: >-
-  Use when building or changing an embed in a text note — an included note, an attachment embed such as a canvas drawing (`CanvasDrawing`), or a source embed such as a Mermaid diagram (`MermaidDiagram`, `SOURCE_EMBED_TYPES`) — or adding an embed kind. Covers the storage forms (`data-note-id`, `data-attachment-id`, inline `<pre><code class="language-…">`), the editor plugin (`packages/ckeditor5/src/plugins/content_embed/`: `content_embed.ts`, `inline_source.ts`, toolbar, box-size dropdown), the host contract (`contentEmbed.loadAttachment()`, `contentEmbed.loadInline()`), the client box (`ContentEmbed`, `text/utils.ts`), the content component contract (`useEditableEmbed()`, `ContentEmbedToolProvider`, Editable, display modes, fullscreen), reusing the note type's component as canvas and Mermaid do, the read-only paths (AI chat, Markdown preview, print, share), and traps hit (detached content, CodeMirror read-only fixed at creation, the CKEditor `:first-child` separator rule, untitled box sizes, class clashes).
+  Use when building or changing an embed in a text note — an included note, an attachment embed such as a canvas drawing (`CanvasDrawing`), a source embed such as a Mermaid diagram (`MermaidDiagram`, `SOURCE_EMBED_TYPES`), or media from a URL: a YouTube video, a video or an audio file (`ContentEmbedMedia`) — or adding an embed kind. Covers the storage forms (`data-note-id`, `data-attachment-id`, inline `<pre><code class="language-…">`), the editor plugin (`packages/ckeditor5/src/plugins/content_embed/`: `content_embed.ts`, `inline_source.ts`, toolbar, box-size dropdown), the host contract (`contentEmbed.loadAttachment()`, `contentEmbed.loadInline()`), the client box (`ContentEmbed`, `text/utils.ts`), the content component contract (`useEditableEmbed()`, `ContentEmbedToolProvider`, Editable, display modes, fullscreen), reusing the note type's component as canvas and Mermaid do, the read-only paths (AI chat, Markdown preview, print, share), and traps hit (detached content, CodeMirror read-only fixed at creation, the CKEditor `:first-child` separator rule, untitled box sizes, class clashes).
 ---
 
 # Developing content embeds
@@ -31,7 +31,7 @@ it too — `SplitEditor` → `SplitLayout` + `useMountedPanes()` is the worked e
 that are about storage stay separate (the embed's source pane is `CodeEmbedEditor` bound to a
 `ContentEditor`, the note's is `EditableCode` bound to the note).
 
-## The three storage forms
+## The storage forms
 
 What the text note saves, and what the editor model holds (`contentEmbed` element):
 
@@ -40,12 +40,34 @@ What the text note saves, and what the editor model holds (`contentEmbed` elemen
 | Included note | `<figure class="include-note" data-note-id="…" [data-block="…"]>` | `noteId`, `block` |
 | Attachment | `<figure class="include-note" data-attachment-id="…">` | `attachmentId` |
 | Inline source | `<pre data-box-size=… [data-display-mode=…] data-hide-title data-editable><code class="language-mermaid">…</code></pre>` | `language`, `source` |
+| Media | `<section class="link-embed" data-url=… data-embed-type="youtube" … [data-position=…]>`, or `"video"` or `"audio"` | the link preview fields: `url`, `embedType`, `title`, `image`, … |
 | Later kind | `<section data-trilium-embed="<kind>" …>fallback</section>` | `unknownContentEmbed`: `embedAttributes`, `embedContent` |
 
 All three carry `boxSize`, `hideTitle`, `editable`, `displayMode` (`data-box-size`,
 `data-hide-title`, `data-editable`, `data-display-mode`) and the resized size as
 `--include-note-width` / `--include-note-height` in `style`. The figure keeps an optional
 `<figcaption>`.
+
+**Captions of an embed whose element is not a `<figure>`** (`_defineCaptionedEmbedConverters()`
+in `content_embed.ts`). While such an embed has a caption, the note saves its element in a
+`<figure class="captioned-content-embed">` (`CAPTIONED_CONTENT_EMBED_CLASS`), followed by the
+`<figcaption>`, and without a caption it saves the bare element again. Every kind gets this
+without code of its own: a `low` data downcast listener wraps whatever element the kind's
+converter bound, a data mapper hook puts the caption after that element, and an upcast at
+`high` converts the element and turns the `<figcaption>` into the `caption` of the embed
+(`isEmbedCaptionToggleable()`), or into text after content that takes none. The figure is bound
+to the embed as well, view to model only, so the mapper counts it as one node; the embed still
+maps to its element, where the attribute converters (width, position) write. A kind opts in
+through `hasCaptionSupport()`; only inline source embeds stay out. Read-only views replace the
+figure with the box and move the caption into it (`replaceWithEmbedBox()` in
+`content_renderer_text.ts`); share pages move `style`, `data-box-size` and `data-position` from
+the element to the figure (`moveBoxToCaptionedFigure()`), which the share CSS places; Markdown
+export keeps the figure as raw HTML.
+
+**An embed whose caption has the selection looks selected**, as one whose player or editor has
+the focus (which selects it): `markEmbedOfSelectedCaption()` adds `ck-widget_selected` after
+`Widget` marks the selection and takes it away on `cleanSelection`. `Widget` itself marks only
+widgets inside the selection.
 
 - **Inline source** (`inline_source.ts`, `ContentEmbedInlineSource`) keeps the document readable
   elsewhere: the note exports to Markdown as a fenced `mermaid` block, other apps render it, and
@@ -55,6 +77,90 @@ All three carry `boxSize`, `hideTitle`, `editable`, `displayMode` (`data-box-siz
   its history. It is converted only for languages in
   `contentEmbed.inlineLanguages` (from `SOURCE_EMBED_TYPES` in `text/config.ts`); a code block of
   another language stays a code block.
+- **Media** (`media_embed.ts`, `ContentEmbedMedia`) is the _Embed_ display mode of a link
+  preview that plays something (`getLinkPreviewPlayer()` in commons): a YouTube video
+  (`embedType` `youtube`), or the video or audio file at its URL (`video`, `audio`). It keeps the
+  saved form of the link preview, so released versions show a YouTube video as a player and a
+  file as a card, and adds `data-box-size`, `data-hide-title`, `data-position` and
+  `--include-note-width`. A video has Medium and Full, an audio file Small alone
+  (`getMediaEmbedBoxSizes()`; the ⋮ menu drops a one-size submenu). `readMediaEmbedBox()` reads a
+  YouTube video saved before as Full and untitled, and `createMediaEmbed()` makes a new video
+  Medium and untitled at `getVideoMediumWidth()` (20em high), which the box size command sets
+  again, and an audio file Small and untitled. Height follows width for a video and the controls
+  for audio (`isHeightResizable` is per element). A size change only restyles the figure: the
+  `attribute:boxSize` converter skips `reloadEmbeddedContent()` for media, since a new player
+  stops the playback. The box carries `media-embed` and `video-embed` or `audio-embed`
+  (`getMediaEmbedClasses()`). `LinkEmbed.css` rounds a video file's player and placeholder as
+  `.link-embed-video` is, and lifts `--include-note-media-max-height` off its `.video-preview`,
+  which would keep the video of a wider player at 20em, at the top. An audio box keeps the Small
+  rules of an audio attachment and drops only the 8rem floor of `.rendered-media`.
+  A file plays in Trilium's `MediaPreview` with a `MediaSource` from `getExternalMediaSource()`
+  (`isExternal`, `poster`): a video waits behind `MediaProxy` and its thumbnail, audio mounts with
+  `preload="none"`, and neither reads the waveform or taps the visualizer's analyser, through
+  which a cross-origin file without CORS headers plays silent. A file that does not play shows
+  `PlaybackError` (`MediaPlayer.tsx`), which puts the HTTP error of the host under the message:
+  `fetchHttpStatus()` (`media_source.ts`) asks `api/link-embed/status` (`getHttpStatus()`), which
+  reads the status without the body, since a media element reports none. In a video embed the
+  error box takes the player's shape (`LinkEmbed.css`). The server tells a file from a
+  page in the same fetch: `fetchPage()` reads only the first 64 KB of a media type
+  (`prefixLength`) and `probeMedia()` (`services/media_probe.ts`) reads the container header. The
+  client falls back on the extension (`getMediaFileTypeOfUrl()`) when the server answers
+  unresolved. A video file that `createMediaEmbed()` makes without an `image` gets a thumbnail:
+  after the change the plugin calls `contentEmbed.captureVideoThumbnail()` and writes `image`, and
+  `aspectRatio` when unset, in the batch that inserted the embed, so one undo removes both.
+  `services/media_thumbnail.ts` reads the frame from the host with `crossOrigin`, else through
+  the Node-only `api/link-embed/media-proxy` token route, and stores it through
+  `api/link-embed/thumbnail`. A caption is saved in the captioned figure (above). The video toolbar also
+  shows while the caret is in the caption (`findRelatedMedia()`), and its Copy address (URL) and Display
+  act on the video through `ChangeLinkDisplayCommand._getTarget()`: the selected preview, else,
+  unless the caret is on a link, the video of the caption (`getCaptionedEmbed()`).
+  `getSelectedLinkWidget()` itself reads only the selected element, as the link balloon shares
+  the command and Ctrl+K in a caption must edit the caption's own link. `rebuildLinkWidget()`
+  copies the caption into a preview that keeps its shape; a Card, Icon & text or Text link has no
+  caption, so `keepCaptionText()` moves its content into a paragraph after the video.
+  The shape is the link preview field `aspectRatio` (`data-aspect-ratio="9/16"`), which the
+  server reads from oEmbed for the video's `/shorts/` address (the watch address of a Short
+  answers 16:9). `getVideoAspectRatio()` validates it; every box that draws a player (the
+  editing figure, `applyMediaEmbeds()`, `renderLinkEmbedHtml()`, the share renderer's
+  `setMediaBox()`) writes it as `--video-aspect-ratio`, which the player's `aspect-ratio` and the
+  70vh cap of Full read. Only Full is capped; Medium keeps its saved width. `setMediaBox()` also
+  writes `data-box-size` on the shared section, Full for a video saved before box sizes. A
+  preview without one is 16:9. A new link preview field goes into `LINK_PREVIEW_DATA_ATTRIBUTES`
+  and `readLinkPreviewData()`, both `LinkEmbedMetadata` types (commons and the editor's
+  `augmentation.ts`) and the client's `fetchMetadata()`; `META_KEYS`, the schemas and the
+  converters follow the map. It renders through `contentEmbed.loadMedia()` (`loadMediaEmbed()`, whose title row
+  opens the embed menu only in the editor) and has a toolbar of its own (`mediaEmbed` in
+  `content_embed_toolbar.ts`): Copy address (URL), the link preview's Display dropdown and ⋮. The caption
+  is toggled from ⋮ only. Its ⋮ menu
+  (`getMediaItems()`, picked by the `url` of `ContentEmbedState`) puts _Open externally_
+  (`openUrlExternally()` in `services/open.ts`) above the embed's commands and _Delete_ below.
+  Its _Edit..._ (and Ctrl+K on the selected embed) opens the link dialog in its media form
+  (`EditLinkOpts.isMedia`, from `LinkAtSelection.isMedia`: address and title only), which applies
+  through `insertLinkEmbed`: another address keeps the embed until `getMediaAttributes()` accepts
+  the fetched metadata, then `createChangedMediaEmbed()` replaces it, keeping its attributes and
+  caption; an address that plays nothing rejects, and `getEditLinkOpts()` shows the error toast.
+  A right click on the content opens the same menu at the pointer (`MENU_CONTENT_TYPES` in
+  `ContentEmbed.tsx`), with the `.include-note` as the origin's target: `getMenuEmbed()` reads the
+  embed only from the title row or the embed element itself. A loaded YouTube frame keeps its
+  right clicks; its facade does not.
+  `ReadOnlyText`'s `applyMediaEmbeds()` swaps the section for the same box.
+  The box has no backdrop (`DIRECT_CONTENT_TYPES`), so one click plays and selects. The
+  facade takes the focus on click and `playVideo()` hands it to the player once loaded:
+  Chromium blurs the editor when a focused element is removed. A click into a frame fires no
+  focus event in the page, so `fireFrameFocusEvents()` in `content_embed.ts` fires `focus` at a
+  frame in an embed that a window `blur` leaves focused, and `blur` on the next window `focus`;
+  the embed's own `focus` listener and `FocusTracker` do the rest. A click from one frame into
+  another fires no window event either, so after a window `blur` one shared interval
+  (`watchFrameFocus()`, 200 ms, for every editor's check in `frameFocusChecks`) reads
+  `document.activeElement` until no frame has the focus or the window has it back. These
+  synthetic events neither bubble nor fire `focusin`/`focusout`, so the box's
+  `useFocusWithin()`, which draws the `.include-note-body.active` outline, also listens to
+  `focus`/`blur` in the capture phase.
+  `createLinkPreview()` in `link_embed_commands.ts` is the one place that picks `linkMention`,
+  `linkEmbed` or a media embed for a display mode. The Insert media prompt (`insert_media.ts`)
+  inserts the player only once `fetchMetadata()` has returned, with no link meanwhile: its
+  `onInsert()` rejects on unresolved metadata or an address that plays nothing, and the host's prompt keeps Insert disabled while
+  it waits and shows an error toast when it rejects.
 - **Legacy blocks** — a `<pre>` without `data-box-size` predates the embed (the old Mermaid
   plugin). `getModeOfSavedView()` loads it editable, in the view of its
   `data-trilium-display-mode` or split, at Medium. A saved embed keeps exactly what it has.
@@ -99,7 +205,10 @@ All three carry `boxSize`, `hideTitle`, `editable`, `displayMode` (`data-box-siz
 1. **Editor plugin** (`packages/ckeditor5/src/plugins/content_embed/`). `content_embed.ts` owns the
    model, the converters, the commands (`contentEmbedBoxSize`, `toggleContentEmbedTitle`,
    `toggleContentEmbedCaption`, `toggleContentEmbedEditable`, `contentEmbedDisplayMode`,
-   `convertEmbedToLink`), the box-size rules and observables such as `isSelectedEmbedInline`.
+   `convertEmbedToLink`, `deleteContentEmbed`), the box-size rules and observables such as
+   `isSelectedEmbedInline`. `deleteContentEmbed` serves any kind: `getDeleteEmbedGroup()` in
+   `menus/link_context_menu.ts` ends the ⋮ menu of a note, an attachment, a video and an extended
+   code block with it. Other inline sources (Mermaid) do not offer it.
    `content_embed_toolbar.ts` lists the toolbar items; `content_embed_tools.ts` turns the
    content's tools into buttons; `content_embed_box_size_dropdown.ts` the size menu. The editing
    view renders an `.include-note-wrapper` and asks the **host** to fill it.
@@ -135,6 +244,9 @@ embeds receive `SourceEmbedProps` (`content`, `editor`) whichever storage the so
   `getTools()`, `execute(id)`, `subscribe()`, plus
   - `hasEditableFlag` — shows the Editable toggle; the embed carries `data-editable="true"`.
   - `hasDisplayModes` — shows Source/Split/Preview; the embed carries `data-display-mode`.
+  - `hasPositions` — gives an inline source the Position submenu of the ⋮ menu and the toolbar's
+    position dropdown; the embed carries `data-position`. A note, attachment or video embed has
+    the submenu without it (`hasEmbedPositions()`), and the dropdown only with it.
   - `hiddenToolbarItems` — moves box size, title, convert-to-link or Editable from the toolbar to
     the ⋮ menu (an extended code block hides box size and Editable).
   - `boxSizeIcon` — an SVG the box size dropdown shows in place of the size name, which moves to
@@ -240,9 +352,10 @@ editors of one note in several tabs reload each other's saves and mix up the res
    give the layout, the divider, the error card, the stale badge and a source pane that stays
    mounted behind the preview and shares the note's undo history. Delay re-rendering with `useDebouncedValue()`. Give the root
    the `include-note-box-height` class for the 10/20/50em heights per box size and full height in
-   fullscreen (content with a height of its own can fit it at Full instead, as
-   `MarkdownEmbed.css` sets `height: auto` down to the split's columns), and round it with `--_include-note-content-*-radius` (edge to edge) or
-   `--_include-note-framed-*-radius` (inside the 2px frame), all in `style.css`.
+   fullscreen, and round it with `--_include-note-content-*-radius` (edge to edge) or
+   `--_include-note-framed-*-radius` (inside the 2px frame), all in `style.css`. Content that
+   draws the frame as padding of the content box sets `--_include-note-frame-height` there
+   (`MermaidDiagram.css`), which `.include-note-box-height` subtracts.
 4. An insert command: `INSERT_INLINE_EMBED_COMMAND` with `{ language, source }` (see
    `mermaid_ui.ts` and `slash_commands.ts`). New embeds are editable, untitled and Medium.
 5. Read-only rendering needs nothing more: `applySourceEmbeds()` in `ReadOnlyText.tsx` picks up any
@@ -334,6 +447,22 @@ in-place drawings replaced the code blocks the boxes need.
 - **CKEditor hides a toolbar separator that is `:first-child`.** The leading separator of the
   content tools needs an override in `packages/ckeditor5/src/theme/content_embed_tools.css`.
   `CONTENT_EMBED_DISPLAY_MODE_SEPARATOR` separates Editable from the view buttons.
+- **Toggling Editable keeps the size of the box**, at every box size but Full. Measure both
+  modes in a browser (happy-dom has no layout), and sample every frame of the switch, not only
+  the result: four causes were found so far.
+  - An editor that loads its content after it mounts (`TextEmbedEditor`) collapses a box sized
+    by its content until then. `EditableEmbedContent` keeps the preview in place and loads the
+    editor out of sight until the editor calls `EmbedEditorShownContext` (`EditableText`'s
+    `onContentShown`), the way `CanvasDrawing` keeps the picture until Excalidraw draws.
+  - A frame drawn as padding adds to a root of the box height unless it sets
+    `--_include-note-frame-height` (above); a resized content box also needs `height: auto`
+    then, or it keeps the resized height and adds the frame.
+  - Content whose preview fits its text and whose editor takes the box height (Markdown) gives
+    the content box itself the box height while it can be edited, in both modes: the
+    `fills-box` rules in `MarkdownEmbed.css`, the way a resized box behaves.
+  - The editor themes give the last block of an editable root a bottom margin the preview does
+    not have; `style.css` zeroes the last block of `.ck-content` in an embed for both. CKEditor
+    still adds room above a leading widget for its selection handle, on purpose.
 - **Keep the Editable flag and the view separate.** Switching the view never touches `editable`
   (`contentEmbedDisplayMode` command), and a mode left unset resolves from Editable (split while
   editable, preview otherwise).
