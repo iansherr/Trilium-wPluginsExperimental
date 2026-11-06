@@ -74,6 +74,10 @@ The source of the diagram stays in the note as a Mermaid code block, so the diag
 
 Diagrams created in earlier versions keep the view they were saved with, and open editable.
 
+## Audio/video embed
+
+Choose <span class="tn-icon bx bx-movie-play"></span> _Audio/video embed_ to insert a YouTube video, or an audio or video file from its web address, that can be played inside the note. Paste the address, then press _Insert media_ or <kbd>Enter</kbd>. The media is inserted as a link preview in the _Embed_ display mode, described in <a class="reference-link" href="Link%20Previews.md">Link Previews</a>. The same action is available as _Audio/video embed_ in the <a class="reference-link" href="Slash%20Commands.md">Slash Commands</a>.
+
 ## Horizontal ruler
 
 This feature will display a horizontal line, generally useful to separate different sections of the text. To do so, press the <span class="tn-icon cke cke-horizontal-line"></span> button in the <a class="reference-link" href="Formatting%20toolbar.md">Formatting toolbar</a>.

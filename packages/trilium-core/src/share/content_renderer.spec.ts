@@ -228,7 +228,7 @@ describe("content_renderer", () => {
             const nested = getContent(note, { embedsAsReferenceLinks: true }).content as string;
 
             expect(content.match(/Top/g)).toHaveLength(2);
-            expect(nested).toContain(`href="./blkSelf"`);
+            expect(nested).toContain(`href="./blkSelf?block=top"`);
             expect(nested).not.toContain("include-note");
         });
 
@@ -855,6 +855,47 @@ describe("content_renderer", () => {
                 expect(content).toStrictEqual("<p>Foo</p>");
             });
 
+            it("shows a link to a heading of the note it is in as the text of the heading", () => {
+                const note = buildShareNote({
+                    id: "headingLink1",
+                    content: `<h2 data-trilium-block-id="h">Lists &amp;\n  <em>more</em>`
+                        + `<a class="reference-link" href="#root/headingLink1?block=h">Intro</a></h2>`
+                        + `<p><a class="reference-link" href="#root/headingLink1?block=h">a</a>`
+                        + `<a class="reference-link" href="#root/headingLink1?block=p">b</a>`
+                        + `<a class="reference-link" href="#root/headingLink1?block=gone">c</a>`
+                        + `<a class="reference-link" href="#root/headingLink1">d</a></p>`
+                        + `<p data-trilium-block-id="p">Text</p>`
+                });
+
+                const content = getContent(note).content as string;
+
+                expect(content).toContain(`<a class="reference-link type-text"`
+                    + ` href="./headingLink1?block=h"><span>Lists &amp; more</span></a>`);
+                // A link to another block, to one that is gone or to the whole note shows the note.
+                expect(content.match(/<span class="tn-icon bx bx-note"><\/span>/g)).toHaveLength(3);
+            });
+
+            it("names a heading without text, inside an included note too", () => {
+                buildShareNote({
+                    id: "includedHead",
+                    title: "Included",
+                    content: `<h2 data-trilium-block-id="i">Inner heading</h2>`
+                        + `<p><a class="reference-link" href="#root/includedHead?block=i">x</a></p>`
+                });
+                const note = buildShareNote({
+                    id: "emptyHeading",
+                    content: `<h2 data-trilium-block-id="e"> </h2>`
+                        + `<p><a class="reference-link" href="#root/emptyHeading?block=e">x</a></p>`
+                        + `<section class="include-note" data-note-id="includedHead"></section>`
+                });
+
+                const links = parse(String(getContent(note).content)).querySelectorAll("a");
+                expect(links.map((link) => link.innerHTML)).toStrictEqual([
+                    `<span>${t("content_renderer.untitled-block")}</span>`,
+                    "<span>Inner heading</span>"
+                ]);
+            });
+
             it("does not treat an external URL's query string as a note ID", () => {
                 const target = buildShareNote({ id: "extIdTarget1", title: "Target" });
                 const href = `https://example.com/${target.noteId}?x=1`;
@@ -923,6 +964,35 @@ describe("content_renderer", () => {
                 expect(externalLink.getAttribute("target")).toBe("_blank");
                 expect(externalLink.getAttribute("rel")).toBe("noopener noreferrer");
                 expect(externalLink.text).toBe("Ext");
+            });
+
+            it("keeps the blocks that a link points at, inside an included note too", () => {
+                buildShareNote({ id: "blockTarget1", title: "Target" });
+                buildShareNote({
+                    id: "extBlocks001",
+                    title: "Ext",
+                    "#shareExternalLink": "https://example.com/page"
+                });
+                buildShareNote({
+                    id: "includedNote",
+                    content: "<p><a class=\"reference-link\" href=\"#root/blockTarget1?block=c\">"
+                        + "Old</a></p>"
+                });
+                const note = buildShareNote({
+                    id: "note",
+                    content: "<p><a href=\"#root/x/blockTarget1?block=a:b%20c\">range</a>"
+                        + "<a href=\"#root/extBlocks001?block=a\">ext</a>"
+                        + "<a href=\"#root/blockTarget1?viewMode=source\">plain</a></p>"
+                        + "<section class=\"include-note\" data-note-id=\"includedNote\"></section>"
+                });
+
+                const links = parse(String(getContent(note).content)).querySelectorAll("a");
+                expect(links.map((link) => [ link.getAttribute("href"), link.text ])).toEqual([
+                    [ "./blockTarget1?block=a:b%20c", "range" ],
+                    [ "https://example.com/page", "ext" ],
+                    [ "./blockTarget1", "plain" ],
+                    [ "./blockTarget1?block=c", "Target" ]
+                ]);
             });
 
             it("links a note with either external link label out, as the navigation does", () => {
@@ -1004,6 +1074,73 @@ describe("content_renderer", () => {
             expect(content).not.toContain("youtube-nocookie.com");
             expect(content).toContain(`<button type="button" class="link-embed-video-facade" data-video-id="dQw4w9WgXcQ"`);
             expect(content).toContain(`<img class="link-embed-video-thumbnail" src="data:image/jpeg;base64,BBB"`);
+        });
+
+        it("renders a video or audio file as a facade that loads nothing, in its box", () => {
+            const note = buildShareNote({
+                content: `<section class="link-embed" data-url="https://example.com/clip.mp4"`
+                    + ` data-embed-type="video" data-aspect-ratio="4/3" data-box-size="medium"></section>`
+                    + `<section class="link-embed" data-url="https://example.com/song.mp3"`
+                    + ` data-embed-type="audio"></section>`
+            });
+
+            const content = String(getContent(note).content);
+            expect(content).not.toMatch(/<(video|audio)\b/);
+            expect(content).toContain(`<button type="button" class="link-embed-video-facade"`
+                + ` data-media-url="https://example.com/clip.mp4"`);
+            expect(content).toContain(`<button type="button" class="link-embed-audio-facade"`
+                + ` data-media-url="https://example.com/song.mp3"`);
+            const sections = parse(content).querySelectorAll("section");
+            expect(sections.map((section) => [ section.getAttribute("data-box-size"), section.getAttribute("style") ]))
+                .toEqual([ [ "medium", `--video-aspect-ratio:${4 / 3}` ], [ "small", undefined ] ]);
+        });
+
+        it("gives a video the box size and the shape that the app draws it with", () => {
+            const video = `<section class="link-embed" data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"`
+                + ` data-embed-type="youtube"`;
+            const note = buildShareNote({
+                content: `<p>Videos</p>`
+                    + `${video} data-aspect-ratio="9/16" data-box-size="medium" style="--include-note-width:11.3em;"></section>`
+                    + `${video}></section>`
+                    + `${video} data-aspect-ratio="9/16"></section>`
+            });
+
+            const sections = parse(String(getContent(note).content)).querySelectorAll("section");
+            expect(sections.map((section) => [ section.getAttribute("data-box-size"), section.getAttribute("style") ]))
+                .toEqual([
+                    [ "medium", "--include-note-width:11.3em;--video-aspect-ratio:0.5625" ],
+                    [ "full", undefined ],
+                    [ "full", "--video-aspect-ratio:0.5625" ]
+                ]);
+        });
+
+        it("places a video saved with a caption by the figure that holds both", () => {
+            const video = `<section class="link-embed"`
+                + ` data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"`
+                + ` data-embed-type="youtube"`;
+            const captioned = (section: string) => `<figure class="captioned-content-embed">`
+                + `${section}&nbsp;</section><figcaption>A caption</figcaption></figure>`;
+            const note = buildShareNote({
+                content: captioned(`${video} style="--include-note-width:30em;"`
+                    + ` data-box-size="medium" data-position="wrap-right">`)
+                    + captioned(`${video}>`)
+            });
+
+            const figures = parse(String(getContent(note).content)).querySelectorAll("figure");
+            const box = (element: ReturnType<typeof parse> | null | undefined) => [
+                "style", "data-box-size", "data-position"
+            ].map((name) => element?.getAttribute(name));
+            expect(figures.map((figure) => [
+                box(figure), box(figure.querySelector("section.link-embed"))
+            ])).toEqual([
+                [
+                    [ "--include-note-width:30em;", "medium", "wrap-right" ],
+                    [ undefined, undefined, undefined ]
+                ],
+                [ [ undefined, "full", undefined ], [ undefined, undefined, undefined ] ]
+            ]);
+            expect(figures[0]?.querySelector(".link-embed-video-facade")).not.toBeNull();
+            expect(figures[0]?.querySelector("figcaption")?.textContent).toBe("A caption");
         });
 
         it("neuters a hostile scheme in the stored URL, on a page served to anyone", () => {

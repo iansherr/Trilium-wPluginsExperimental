@@ -7,6 +7,7 @@ import type { NotePresetId } from "../services/note_presets.js";
 import { onSystemBack } from "../services/system_back.js";
 import utils from "../services/utils.js";
 import { suspendModalFocusTraps } from "../widgets/react/modal_focustrap";
+import { registerOpenPopup } from "../widgets/react/Popup";
 
 /**
  * Where the menu opens: beside a point, towards the right unless `orientation` says otherwise, or
@@ -99,6 +100,11 @@ export interface MenuCommandItem<T> {
      */
     uiIconBadge?: string;
     /**
+     * An SVG icon in place of {@link uiIcon}, for an icon that a font cannot draw, such as one of
+     * more than one color. Drawn in a row of actions only.
+     */
+    uiIconSvg?: string;
+    /**
      * What the row shows as a tooltip on hover, in place of its title: for a short title that
      * needs a word of explanation, whether the row is a menu row or one of a row of actions.
      */
@@ -128,6 +134,11 @@ export interface MenuCommandItem<T> {
      * edge when the item has a {@link uiIcon} of its own, and in place of the icon when it has none.
      */
     checked?: boolean;
+    /**
+     * Draws the item as a switch, as in the note menu, on while {@link checked} is set. Its title
+     * is text, not HTML.
+     */
+    isSwitch?: boolean;
     /** Classes put on the item itself, for a menu styling one of its entries differently. */
     className?: string;
     /** Plain text at the trailing edge of the item, where a shortcut would go, such as a note's path. */
@@ -166,6 +177,8 @@ class ContextMenu {
     private stopFollowingLayout?: () => void;
     /** Stops closing the menu on the system back gesture. */
     private stopAnsweringBack?: () => void;
+    /** Stops closing the menu for `closeOpenPopups()`. */
+    private unregisterOpenPopup?: () => void;
 
     constructor() {
         this.cover = utils.isMobile() ? document.getElementById("context-menu-cover") : null;
@@ -200,7 +213,9 @@ class ContextMenu {
         const request = ++this.lastShowRequest;
         // Loaded here rather than imported: the core services that import this module would
         // otherwise reach the widget tree through the rows `Menu` draws, in a cycle.
-        const { default: Menu } = await import("../widgets/react/Menu");
+        // `closeOpenPopups()` during the import cancels this menu before it opens.
+        const cancelPending = registerOpenPopup(() => this.lastShowRequest++);
+        const { default: Menu } = await import("../widgets/react/Menu").finally(cancelPending);
         // A later `show()` made during the import replaces this one.
         if (request !== this.lastShowRequest) return;
 
@@ -224,6 +239,7 @@ class ContextMenu {
             void this.hide();
             return true;
         });
+        this.unregisterOpenPopup = registerOpenPopup(() => void this.hide());
         // A mobile menu is a sheet or placed at the press depending on the layout, decided here,
         // so it closes when a tablet turns past that width.
         if (utils.isMobile() && !options.forcePositionOnMobile) {
@@ -278,6 +294,8 @@ class ContextMenu {
         this.stopFollowingLayout = undefined;
         this.stopAnsweringBack?.();
         this.stopAnsweringBack = undefined;
+        this.unregisterOpenPopup?.();
+        this.unregisterOpenPopup = undefined;
         this.cover?.classList.remove("show");
         document.body.classList.remove("context-menu-shown");
 

@@ -14,6 +14,7 @@ import InternalLinkPlugin from "./plugins/internallink.js";
 import InsertDateTimePlugin from "./plugins/insert_date_time.js";
 import ReferenceLink from "./plugins/referencelink.js";
 import NoPoweredByBadge from "./plugins/no_powered_by_badge.js";
+import InlineFillerSpellcheck from "./plugins/inline_filler_spellcheck.js";
 import RemoveFormatLinksPlugin from "./plugins/remove_format_links.js";
 import IndentBlockShortcutPlugin from "./plugins/indent_block_shortcut.js";
 import MarkdownImportPlugin from "./plugins/markdownimport.js";
@@ -26,6 +27,7 @@ import ContentEmbed from "./plugins/content_embed/content_embed.js";
 import BlockReference from "./plugins/block_reference/block_reference.js";
 import InlineIcon from "./plugins/inline_icon/inline_icon.js";
 import LinkEmbed from "./plugins/link_embed/link_embed.js";
+import InsertMediaPlugin from "./plugins/insert_media.js";
 import Uploadfileplugin from "./plugins/file_upload/uploadfileplugin.js";
 import FindInLinkWidgets from "./plugins/find_in_link_widgets.js";
 import SyntaxHighlighting from "./plugins/syntax_highlighting/index.js";
@@ -56,6 +58,7 @@ import CodeBlockLanguageDropdown from "./plugins/code_block_language_dropdown.js
 import CodeBlockInsertParagraph from "./plugins/code_block_insert_paragraph.js";
 import CodeBlockHljsClass from "./plugins/code_block_hljs_class.js";
 import MoveBlockUpDownPlugin from "./plugins/move_block_updown.js";
+import DeleteBlocks from "./plugins/delete_blocks.js";
 import ScrollOnUndoRedoPlugin from "./plugins/scroll_on_undo_redo.js"
 import InlineCodeNoSpellcheck from "./plugins/inline_code_no_spellcheck.js";
 import InlineCodeToolbar from "./plugins/inline_code_toolbar.js";
@@ -63,10 +66,13 @@ import AdmonitionTypeDropdown from "./plugins/admonition/admonition_type_dropdow
 import AdmonitionToolbar from "./plugins/admonition/admonition_toolbar.js";
 import ContentEmbedBoxSizeDropdown
     from "./plugins/content_embed/content_embed_box_size_dropdown.js";
+import ContentEmbedPositionDropdown
+    from "./plugins/content_embed/content_embed_position_dropdown.js";
 import ContentEmbedToolbar from "./plugins/content_embed/content_embed_toolbar.js";
 import ContentEmbedCaret from "./plugins/content_embed/content_embed_caret.js";
 import ExtendedCodeBlock from "./plugins/content_embed/extended_code_block.js";
 import LinkEmbedToolbar from "./plugins/link_embed/link_embed_toolbar.js";
+import LinkMenu from "./plugins/link_menu.js";
 import NoteLinkToolbar from "./plugins/note_link_toolbar.js";
 import TodoListMultistate from "./plugins/todo_list_multistate/todo_list_multistate.js";
 import TodoListUncheckOnEnter from "./plugins/todo_list_uncheck_on_enter.js";
@@ -111,6 +117,7 @@ const TRILIUM_PLUGINS: typeof Plugin[] = [
     BlockReference,
     InlineIcon,
     LinkEmbed,
+    InsertMediaPlugin,
     Uploadfileplugin,
     SyntaxHighlighting,
     CodeBlockLanguageDropdown,
@@ -118,17 +125,20 @@ const TRILIUM_PLUGINS: typeof Plugin[] = [
     CodeBlockInsertParagraph,
     CodeBlockHljsClass,
     MoveBlockUpDownPlugin,
+    DeleteBlocks,
     ScrollOnUndoRedoPlugin,
     InlineCodeNoSpellcheck,
     InlineCodeToolbar,
     AdmonitionTypeDropdown,
     AdmonitionToolbar,
     ContentEmbedBoxSizeDropdown,
+    ContentEmbedPositionDropdown,
     ContentEmbedToolbar,
     ContentEmbedCaret,
     ExtendedCodeBlock,
     LinkEmbedToolbar,
     NoteLinkToolbar,
+    LinkMenu,
     TodoListMultistate,
     CollapsibleListItems,
     ListItemAlignment,
@@ -198,7 +208,8 @@ export const CORE_PLUGINS: typeof Plugin[] = [
     TriliumMentionUI,
     MentionCustomization,
     ReferenceLink,
-    NoPoweredByBadge
+    NoPoweredByBadge,
+    InlineFillerSpellcheck
 ];
 
 /**

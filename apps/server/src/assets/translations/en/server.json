@@ -357,7 +357,9 @@
     "included-note-requires-credentials": "This included note is password-protected and cannot be displayed here.",
     "content-not-available": "This content is not available.",
     "broken-block-reference": "Broken reference",
-    "play-video": "Play video"
+    "untitled-block": "Block",
+    "play-video": "Play video",
+    "play-audio": "Play audio"
   },
   "onenote_import": {
     "root-title": "OneNote import",
@@ -412,6 +414,10 @@
   },
   "import": {
     "invalid_file_grant": "The file selection has expired or is invalid. Please choose the file again."
+  },
+  "open_custom": {
+    "choose_application": "Choose an application to open the file with.",
+    "applications_filter": "Applications"
   },
   "restore": {
     "pick_backup_title": "Choose a backup to restore",

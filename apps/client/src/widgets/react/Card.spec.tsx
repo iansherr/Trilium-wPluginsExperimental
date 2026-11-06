@@ -1,4 +1,4 @@
-import { ComponentChild } from "preact";
+import { ComponentChild, render } from "preact";
 import { act } from "preact/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
@@ -101,6 +101,29 @@ describe("OptionCardSection", () => {
         expect(label?.querySelector(".tn-card-option-description")?.textContent).toBe("Wraps long lines.");
     });
 
+    it("shows an error after the control, outside the label, keeping the control mounted", () => {
+        const row = (error?: string) => (
+            <OptionCardSection
+                name="address" label="Address" description="Where it lives." error={error}
+            >
+                <input />
+            </OptionCardSection>
+        );
+        const container = renderInto(row());
+        const input = container.querySelector("input");
+        expect(container.querySelector(".form-field-error")).toBeNull();
+
+        act(() => render(row("Not an address."), container));
+        const error = container.querySelector(".tn-card-option > .form-field-error");
+        expect(error?.textContent).toBe("Not an address.");
+        expect(error?.getAttribute("role")).toBe("alert");
+        expect(error?.previousElementSibling).toBe(input);
+        expect(container.querySelector("input")).toBe(input);
+        expect(container.querySelector("label")?.getAttribute("for")).toBe(input?.id);
+        expect(container.querySelector(".tn-card-option-description")?.textContent)
+            .toBe("Where it lives.");
+    });
+
     it("holds a name made of several things together, rather than stacking its parts", () => {
         const container = renderInto(
             <OptionCardSection
@@ -186,6 +209,73 @@ describe("ChoiceCardSection", () => {
         ));
         expect(prevented).toStrictEqual([ true, true, false ]);
         expect(onCheck).toHaveBeenCalledTimes(3);
+        expect(container.querySelector(".tn-card-choice-expander")).toBeNull();
+    });
+
+    it("nests choices under an expander, which toggles them without checking the choice", () => {
+        const onCheck = vi.fn();
+        const onExpandedChange = vi.fn();
+        const tree = (isExpanded: boolean) => renderInto(
+            <Card>
+                <ChoiceCardSection
+                    isChecked={false} onCheck={onCheck}
+                    isExpanded={isExpanded} onExpandedChange={onExpandedChange}
+                    subSections={[
+                        <ChoiceCardSection
+                            key="leaf" isChecked={false} onCheck={onCheck}
+                            onExpandedChange={onExpandedChange} subSections={[]}
+                        >
+                            leaf
+                        </ChoiceCardSection>
+                    ]}
+                >
+                    parent
+                </ChoiceCardSection>
+            </Card>
+        );
+
+        const expanded = tree(true);
+        const [ parent, leaf ] = [ ...expanded.querySelectorAll<HTMLElement>(".tn-card-choice") ];
+        expect([ parent, leaf ].map((section) => [
+            section?.className.includes("tn-card-section-nested"),
+            section?.getAttribute("style") ?? "",
+            section?.querySelector(".tn-card-choice-expander")?.className
+        ])).toStrictEqual([
+            [ false, "", "bx bx-chevron-down tn-card-choice-expander tn-icon" ],
+            [
+                true, "--tn-card-section-nesting-level: 1;",
+                "bx bx-chevron-down tn-card-choice-expander tn-card-choice-expander-empty tn-icon"
+            ]
+        ]);
+
+        parent?.querySelector<HTMLElement>(".tn-card-choice-expander")?.click();
+        expect(onExpandedChange).toHaveBeenCalledExactlyOnceWith(false);
+        expect(onCheck).not.toHaveBeenCalled();
+        // The hidden expander of a leaf is part of its choice.
+        leaf?.querySelector<HTMLElement>(".tn-card-choice-expander")?.click();
+        expect(onExpandedChange).toHaveBeenCalledOnce();
+        expect(onCheck).toHaveBeenCalledOnce();
+
+        const collapsed = tree(false);
+        expect([ ...collapsed.querySelectorAll(".tn-card-choice") ].map((row) => row.textContent))
+            .toStrictEqual([ "parent" ]);
+        expect(collapsed.querySelector(".tn-card-choice-expander.bx-chevron-right")).not.toBeNull();
+        collapsed.querySelector<HTMLElement>(".tn-card-choice-expander")?.click();
+        expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+
+        // The arrow that the expander points to expands the choice, and the other collapses it.
+        onExpandedChange.mockClear();
+        const press = (section: Element | null | undefined, key: string) => !section?.dispatchEvent(
+            new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+        const collapsedParent = collapsed.querySelector(".tn-card-choice");
+        expect([ collapsedParent, parent, leaf ].map((section) =>
+            section?.getAttribute("aria-expanded"))).toStrictEqual([ "false", "true", null ]);
+        expect([
+            press(collapsedParent, "ArrowLeft"), press(collapsedParent, "ArrowRight"),
+            press(parent, "ArrowRight"), press(parent, "ArrowLeft"), press(leaf, "ArrowLeft")
+        ]).toStrictEqual([ false, true, false, true, false ]);
+        expect(onExpandedChange.mock.calls).toStrictEqual([ [ true ], [ false ] ]);
+        expect(onCheck).toHaveBeenCalledOnce();
     });
 });
 

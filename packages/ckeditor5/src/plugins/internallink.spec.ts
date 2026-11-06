@@ -1,14 +1,15 @@
 import {
-    _getModelData as getModelData, _setModelData as setModelData, Bold, Bookmark, ButtonView,
-    ClassicEditor, CodeBlock, ContextualBalloon, Essentials, keyCodes, type KeystrokeHandler,
-    Link, LinkEditing, LinkUI, Paragraph
+    _getModelData as getModelData, _setModelData as setModelData, BlockQuote, Bold, Bookmark,
+    ButtonView, ClassicEditor, CodeBlock, ContextualBalloon, Essentials, Heading, keyCodes,
+    type KeystrokeHandler, Link, LinkEditing, LinkUI, Paragraph
 } from "ckeditor5";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestEditor } from "../../test/editor-kit.js";
 import { createLinkEmbedHost } from "../../test/link-embed-kit.js";
+import BlockReferenceEditing from "./block_reference/block_reference_editing.js";
 import InternalLinkPlugin, {
-    COMMAND_NAME, getAnchorNames, getLinkAtSelection, type LinkDialogRequest,
+    COMMAND_NAME, getAnchorNames, getHeadings, getLinkAtSelection, type LinkDialogRequest,
     replaceLinkAtSelection
 } from "./internallink.js";
 import LinkEmbedEditing from "./link_embed/link_embed_editing.js";
@@ -198,6 +199,44 @@ describe("the anchors of the document", () => {
     });
 });
 
+describe("the headings of the document", () => {
+    it("lists the headings with text in order, with their level, text and block id", async () => {
+        const editor = await createTestEditor([
+            Essentials, Paragraph, Bold, Heading, BlockQuote, BlockReferenceEditing,
+            InternalLinkPlugin
+        ]);
+        setModelData(editor.model, "<heading1>Intro[]</heading1><paragraph>text</paragraph>"
+            + "<blockQuote><heading2 blockId=\"a\"> Nested <$text bold=\"true\">part</$text>"
+            + "</heading2></blockQuote><heading3> </heading3>"
+            + "<heading3>Deep<softBreak></softBreak>down</heading3>");
+        const root = editor.model.document.getRoot();
+        const quote = root?.getChild(2);
+
+        expect(getHeadings(editor)).toStrictEqual([
+            { element: root?.getChild(0), level: 1, text: "Intro", blockId: undefined },
+            {
+                element: quote?.is("element") && quote.getChild(0),
+                level: 2, text: "Nested part", blockId: "a"
+            },
+            { element: root?.getChild(4), level: 3, text: "Deep down", blockId: undefined }
+        ]);
+    });
+
+    it("reads a reference link in a heading as its title", async () => {
+        const editor = await createTestEditor([ Essentials, Paragraph, Heading, InternalLinkPlugin ], {
+            referenceLink: {
+                getTitle: async () => "Target",
+                getTitleSync: (href, storedTitle) => storedTitle ?? `Title of ${href}`
+            }
+        });
+        setModelData(editor.model, "<heading1>See <reference href=\"#root/a\"></reference>.</heading1>"
+            + "<heading2>[]<reference href=\"#root/b\" storedTitle=\"Stored\"></reference></heading2>");
+
+        expect(getHeadings(editor).map((heading) => heading.text))
+            .toStrictEqual([ "See Title of #root/a.", "Stored" ]);
+    });
+});
+
 describe("the link at the selection", () => {
     let editor: ClassicEditor;
     let getTitle: ReturnType<typeof vi.fn>;
@@ -216,7 +255,7 @@ describe("the link at the selection", () => {
     it("reads the address and whole text of the link around the caret, and none outside", () => {
         setModelData(editor.model, LINKED);
         expect(getLinkAtSelection(editor))
-            .toStrictEqual({ href: "https://a.example", text: "foo", display: "plain" });
+            .toStrictEqual({ href: "https://a.example", text: "foo", display: "textLink" });
 
         setModelData(editor.model,
             "<paragraph>a[] <$text linkHref=\"https://a.example\">foo</$text></paragraph>");
@@ -233,7 +272,7 @@ describe("the link at the selection", () => {
             + "<reference href=\"#root/abc\" linkHref=\"https://a.example\"></reference>"
             + "<$text linkHref=\"https://a.example\">c</$text></paragraph>");
         expect(getLinkAtSelection(editor))
-            .toStrictEqual({ href: "https://a.example", text: "abc", display: "plain" });
+            .toStrictEqual({ href: "https://a.example", text: "abc", display: "textLink" });
     });
 
     it("reads a selected reference link, and replaces it with a link or a reference", async () => {
@@ -241,7 +280,7 @@ describe("the link at the selection", () => {
         const SELECTED = "<paragraph>a [<reference href=\"#root/abc\"></reference>] b</paragraph>";
         setModelData(editor.model, SELECTED);
         expect(getLinkAtSelection(editor)).toStrictEqual(
-            { href: "#root/abc", text: "Target", display: "plain", isReference: true }
+            { href: "#root/abc", text: "Target", display: "textLink", isReference: true }
         );
 
         await replaceLinkAtSelection(editor, "#root/def", "See there");
@@ -261,13 +300,24 @@ describe("the link at the selection", () => {
         setModelData(editor.model, "<paragraph>a [<linkMention url=\"https://a.example\""
             + " title=\"A\" description=\"About A\"></linkMention>]</paragraph>");
         expect(getLinkAtSelection(editor)).toStrictEqual(
-            { href: "https://a.example", text: "A", description: "About A", display: "inline" }
+            {
+                href: "https://a.example", text: "A", description: "About A",
+                display: "iconAndTextLink", isMedia: false
+            }
         );
 
         setModelData(editor.model,
             "[<linkEmbed url=\"https://a.example\" embedType=\"opengraph\"></linkEmbed>]");
+        expect(getLinkAtSelection(editor)).toStrictEqual({
+            href: "https://a.example", text: "", description: "", display: "cardLink",
+            isMedia: false
+        });
+
+        const videoUrl = "https://youtube.com/watch?v=abc12345678";
+        setModelData(editor.model, `[<contentEmbed url="${videoUrl}" embedType="youtube"`
+            + " title=\"V\"></contentEmbed>]");
         expect(getLinkAtSelection(editor)).toStrictEqual(
-            { href: "https://a.example", text: "", description: "", display: "card" }
+            { href: videoUrl, text: "V", description: "", display: "embedLink", isMedia: true }
         );
     });
 

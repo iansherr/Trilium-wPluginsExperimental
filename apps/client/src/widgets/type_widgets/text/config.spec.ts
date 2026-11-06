@@ -2,6 +2,7 @@ import type { EditorConfig, InlineEmbedSource } from "@triliumnext/ckeditor5";
 import { DISPLAYABLE_LOCALE_IDS, IMAGE_MIMES, LOCALES, SANITIZER_DEFAULT_ALLOWED_TAGS } from "@triliumnext/commons";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import linkContextMenu from "../../../menus/link_context_menu.js";
 import imageService from "../../../services/image.js";
 import linkService from "../../../services/link.js";
 import { ensureMimeTypesForHighlighting } from "../../../services/syntax_highlight.js";
@@ -121,6 +122,11 @@ vi.mock("../../../services/server.js", async (importOriginal) => {
         }
     };
 });
+const { openInCurrentNoteContext } = vi.hoisted(() => ({ openInCurrentNoteContext: vi.fn() }));
+vi.mock("../../../components/note_context.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../components/note_context.js")>()),
+    openInCurrentNoteContext
+}));
 vi.mock("../../../services/link_embed.js", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../../../services/link_embed.js")>()),
     fetchMetadata: vi.fn(async (url: string, ownerNoteId: string) => ({ url, embedType: "opengraph", title: ownerNoteId }))
@@ -419,7 +425,6 @@ describe("CK config - tables", () => {
 
         const callbacks = [
             [ config.markdownImport?.open, "pasteMarkdownIntoText" ],
-            [ config.contentEmbed?.pickNote, "addIncludeNoteToText" ],
             [ config.cutToNote?.cut, "cutIntoNote" ],
             [ config.cutToNote?.saveNow, "saveNoteDetailNow" ]
         ] as const;
@@ -455,6 +460,50 @@ describe("CK config - tables", () => {
         // The note suggestions of the dialog render in the page's body.
         expect((await buildConfig(baseOpts())).hostedBalloon)
             .toStrictEqual({ keepOpenSelector: FLOATING_LAYER_SELECTOR });
+    });
+
+    it("shows the Include note dialog the editor asks for, and none without a host", async () => {
+        const release = vi.fn();
+        const showContentEmbedDialog = vi.fn(() => release);
+        const request = { container: document.createElement("div"), close: vi.fn() };
+
+        const config = await buildConfig(baseOpts({ showContentEmbedDialog }));
+        expect(config.contentEmbed?.pickNote?.(request)).toBe(release);
+        expect(showContentEmbedDialog).toHaveBeenCalledWith(request);
+        expect((await buildConfig(baseOpts())).contentEmbed?.pickNote?.(request)).toBeNull();
+    });
+
+    it("hands the menu of a link the path and the view scope of the note it links to", async () => {
+        const getEntries = vi.spyOn(linkContextMenu, "getLinkToolbarEntries")
+            .mockResolvedValue({ target: [], actions: [], afterUnlink: [] });
+        const download = vi.spyOn(linkContextMenu, "downloadLinkedAttachment")
+            .mockResolvedValue();
+        onTestFinished(() => {
+            getEntries.mockRestore();
+            download.mockRestore();
+        });
+        const host = (await buildConfig(baseOpts())).linkMenu;
+        const element = document.createElement("a");
+        const run = vi.fn();
+        const notePath = "root/parent1/note1";
+        const href = `#${notePath}?viewMode=attachments&attachmentId=a1`;
+        const viewScope = expect.objectContaining({ viewMode: "attachments", attachmentId: "a1" });
+
+        await host?.describeNoteLink(href, element, run);
+        host?.openNote(href, element);
+        host?.downloadAttachment(href);
+        expect(getEntries).toHaveBeenCalledExactlyOnceWith(notePath, viewScope, element, run);
+        expect(openInCurrentNoteContext)
+            .toHaveBeenCalledExactlyOnceWith({ target: element }, notePath, viewScope);
+        expect(download).toHaveBeenCalledExactlyOnceWith(notePath, viewScope);
+
+        // An address that names no note.
+        await host?.describeNoteLink("https://example.com", element, run);
+        host?.openNote("https://example.com", element);
+        host?.downloadAttachment("https://example.com");
+        expect(getEntries).toHaveBeenLastCalledWith("", {}, element, run);
+        expect(openInCurrentNoteContext).toHaveBeenCalledOnce();
+        expect(download).toHaveBeenLastCalledWith("", {});
     });
 
     it("copies block and tab references from the reference source, and none without one", async () => {
@@ -495,6 +544,7 @@ describe("CK config - tables", () => {
             loadInline: vi.fn(),
             flushInline: vi.fn(),
             loadUnknown: vi.fn(),
+            loadMedia: vi.fn(),
             focusAttachment: vi.fn(),
             getAttachmentHref: vi.fn(async () => "#root/n1?viewMode=attachments&attachmentId=a1"),
             openMenu: vi.fn(),
@@ -506,6 +556,7 @@ describe("CK config - tables", () => {
         const embed = document.createElement("figure");
         const wrapper = document.createElement("div");
         const source = {} as InlineEmbedSource;
+        const video = { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", embedType: "youtube" };
         const onBlockChange = vi.fn();
         const host = (await buildConfig(baseOpts({ getContentEmbedHandlers: () => handlers })))
             .contentEmbed;
@@ -517,6 +568,7 @@ describe("CK config - tables", () => {
         host?.loadInline?.(source, wrapper, "full", { isFocused: true });
         host?.flushInline?.();
         host?.loadUnknown?.(wrapper, "small");
+        host?.loadMedia?.(video, wrapper);
         host?.focusAttachment?.("a1");
         host?.openMenu?.(embed, wrapper);
 
@@ -526,6 +578,7 @@ describe("CK config - tables", () => {
         expect(first.loadInline).toHaveBeenCalledWith(source, wrapper, "full", { isFocused: true });
         expect(first.flushInline).toHaveBeenCalledOnce();
         expect(first.loadUnknown).toHaveBeenCalledWith(wrapper, "small");
+        expect(first.loadMedia).toHaveBeenCalledWith(video, wrapper);
         expect(first.focusAttachment).toHaveBeenCalledWith("a1");
         expect(first.openMenu).toHaveBeenCalledWith(embed, wrapper);
         expect(await host?.getAttachmentHref?.("a1")).toBe("#root/n1?viewMode=attachments&attachmentId=a1");
@@ -543,20 +596,35 @@ describe("CK config - tables", () => {
 
     it("titles reference links through the link service, in the note open at the time", async () => {
         const loadTitle = vi.spyOn(linkService, "loadReferenceLinkTitle").mockResolvedValue();
-        onTestFinished(() => loadTitle.mockRestore());
+        const getTitleSync = vi.spyOn(linkService, "getReferenceLinkTitleSync")
+            .mockReturnValue("Title");
+        onTestFinished(() => {
+            loadTitle.mockRestore();
+            getTitleSync.mockRestore();
+        });
         let noteId = "n1";
-        const referenceLink = (await buildConfig(baseOpts({ getNoteId: () => noteId }))).referenceLink;
+        let isExcerpt = false;
+        const referenceLink = (await buildConfig(baseOpts({
+            getNoteId: () => noteId, isExcerpt: () => isExcerpt
+        }))).referenceLink;
         const element = document.createElement("span");
+        const content = document.createElement("div");
 
-        referenceLink?.renderTitle?.(element, "#root/n2", "Stored");
+        referenceLink?.renderTitle?.(element, "#root/n2", "Stored", content);
+        expect(referenceLink?.getTitleSync?.("#root/n2", "Stored", content)).toBe("Title");
         noteId = "n3";
+        isExcerpt = true;
         referenceLink?.renderTitle?.(element, "#root/n2");
+        referenceLink?.getTitleSync?.("#root/n2");
 
         expect(referenceLink?.getTitle).toBe(linkService.getReferenceLinkTitle);
-        expect(referenceLink?.getTitleSync).toBe(linkService.getReferenceLinkTitleSync);
         expect(loadTitle.mock.calls.map(([ $el, ...rest ]) => [ $el[0], ...rest ])).toEqual([
-            [ element, "#root/n2", "n1", "Stored" ],
-            [ element, "#root/n2", "n3", undefined ]
+            [ element, "#root/n2", "n1", "Stored", content, false ],
+            [ element, "#root/n2", "n3", undefined, undefined, true ]
+        ]);
+        expect(getTitleSync.mock.calls).toEqual([
+            [ "#root/n2", "Stored", content, false ],
+            [ "#root/n2", undefined, undefined, true ]
         ]);
     });
 
