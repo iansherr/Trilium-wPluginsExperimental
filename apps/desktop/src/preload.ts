@@ -235,6 +235,18 @@ contextBridge.exposeInMainWorld("electronApi", {
             const paths = files.map((file) => webUtils.getPathForFile(file)).filter((path) => !!path);
             return ipcRenderer.invoke("import-grant-dropped", paths);
         },
+        getSelectedDirectoryPath(files: File[]) {
+            const roots = files.map((file) => {
+                const filePath = webUtils.getPathForFile(file).replaceAll("\\", "/");
+                const relativeParts = file.webkitRelativePath.replaceAll("\\", "/").split("/").filter(Boolean);
+                const relativeFilePath = relativeParts.slice(1).join("/");
+                const suffix = relativeFilePath ? `/${relativeFilePath}` : "";
+                if (!filePath || relativeParts.length < 2 || !suffix || !filePath.endsWith(suffix)) return null;
+                return filePath.slice(0, -suffix.length);
+            });
+            if (!roots.length || roots.some((root) => !root) || roots.some((root) => root !== roots[0])) return null;
+            return roots[0];
+        },
         importFromToken(opts: { token: string; parentNoteId: string; taskId: string; options: NativeImportOptions; last: boolean; format?: string }) {
             return ipcRenderer.invoke("import-from-token", opts);
         }

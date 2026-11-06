@@ -40,6 +40,8 @@ const CONFIG_BACKUP_VERSION_LABEL = "packageBackupVersion";
 const CONFIG_BACKUP_CREATED_AT_LABEL = "packageBackupCreatedAt";
 const CONFIG_BACKUP_RETENTION = 5;
 const CONFIG_BACKUP_SCHEMA_VERSION = 1;
+const LOCAL_FOLDER_PICK_EVENT = "trilium:communityPackagesLocalFolder";
+const LOCAL_FOLDER_FILES_KEY = "__triliumCommunityPackagesPendingLocalFolder";
 const MIGRATION_LABELS = [
     MIGRATION_TRANSACTION_LABEL,
     MIGRATION_FROM_OWNER_LABEL,
@@ -119,6 +121,7 @@ async function endPackageOperation() {
 
 export default function CommunityPackages() {
     const [sources, setSources] = useState([]);
+    const [settingsNoteId, setSettingsNoteId] = useState("");
     const [allowNetworkPackages, setAllowNetworkPackages] = useState(false);
     const [allowedSourceHosts, setAllowedSourceHosts] = useState("");
     const [checkForUpdates, setCheckForUpdates] = useState(false);
@@ -147,6 +150,19 @@ export default function CommunityPackages() {
     }, []);
 
     useEffect(() => {
+        function consumePendingLocalFolder() {
+            const pendingFolder = window[LOCAL_FOLDER_FILES_KEY];
+            if (!pendingFolder?.files?.length) return;
+            delete window[LOCAL_FOLDER_FILES_KEY];
+            void importLocalDirectory(pendingFolder.files, pendingFolder.sourcePath);
+        }
+
+        window.addEventListener(LOCAL_FOLDER_PICK_EVENT, consumePendingLocalFolder);
+        consumePendingLocalFolder();
+        return () => window.removeEventListener(LOCAL_FOLDER_PICK_EVENT, consumePendingLocalFolder);
+    }, []);
+
+    useEffect(() => {
         if (!checkForUpdates || !sources.length) return;
         const intervalHours = Math.max(1, Number(updateCheckIntervalHours) || 24);
         const timer = window.setInterval(() => void refresh(sources), intervalHours * 60 * 60 * 1000);
@@ -155,6 +171,7 @@ export default function CommunityPackages() {
 
     async function initialize() {
         const settings = await readSettings();
+        setSettingsNoteId(settings.noteId || "");
         setSources(settings.sources);
         setAllowNetworkPackages(settings.allowNetworkPackages);
         setAllowedSourceHosts(normalizeSourceHosts(settings.allowedSourceHosts));
@@ -162,6 +179,23 @@ export default function CommunityPackages() {
         setUpdateCheckIntervalHours(settings.updateCheckIntervalHours);
         setIncludeDeprecatedPackages(settings.includeDeprecatedPackages);
         await refresh(settings.sources);
+    }
+
+    async function rememberLocalSource(sourcePath) {
+        let settingsNote = settingsNoteId ? await api.getNote(settingsNoteId) : (await searchPackageNotes(`#${SETTINGS_LABEL}`))[0];
+        if (!settingsNote) return;
+        await api.reloadNotes([settingsNote.noteId]);
+        settingsNote = await api.getNote(settingsNote.noteId) || settingsNote;
+        const nextSources = normalizePluginSources([...parseConfiguredSources(settingsNote), sourcePath]);
+        await replaceAttribute(settingsNote, "label", SOURCES_LABEL, JSON.stringify(nextSources));
+        const legacySources = nextSources.filter((source) => !isLocalPluginSource(source));
+        const legacyJson = JSON.stringify(legacySources);
+        await replaceAttribute(settingsNote, "label", LEGACY_REGISTRY_URL_LABEL, legacySources[0] || "");
+        await replaceAttribute(settingsNote, "label", LEGACY_REGISTRY_URLS_LABEL, legacyJson);
+        await replaceAttribute(settingsNote, "label", LEGACY_DIRECT_MANIFEST_URLS_LABEL, legacyJson);
+        await api.reloadNotes([settingsNote.noteId]);
+        setSettingsNoteId(settingsNote.noteId);
+        setSources(nextSources);
     }
 
     async function refresh(configuredSources = sources) {
@@ -172,7 +206,7 @@ export default function CommunityPackages() {
             setInstalled(installedPackages);
             setInterruptedTransactions(await readInterruptedTransactions());
             setStorageSummary(await readPackageStorageSummary());
-            const sourceUrls = [...new Set(configuredSources.filter(Boolean))];
+            const sourceUrls = [...new Set(configuredSources.filter((source) => source && !isLocalPluginSource(source)))];
             if (!sourceUrls.length) {
                 setPackages([]);
                 return;
@@ -205,16 +239,19 @@ export default function CommunityPackages() {
         }
     }
 
-    async function importLocalDirectory(files) {
+    async function importLocalDirectory(files, selectedSourcePath = "") {
         if (!files?.length) return;
         setError("");
         setBusyPackage("local-import");
         try {
+            const sourcePath = selectedSourcePath || window.electronApi?.nativeImport.getSelectedDirectoryPath(files) || "";
+            if (sourcePath) await rememberLocalSource(sourcePath);
             const localPackage = await readLocalPackageDirectory(files);
             const problems = manifestProblems(localPackage.manifest);
             if (problems.length) throw new Error(`The local plugin manifest is invalid: ${problems.join("; ")}`);
             const manifest = localPackage.manifest;
             Object.defineProperty(manifest, "_localPackageFiles", { value: localPackage.files, enumerable: false });
+            if (sourcePath) Object.defineProperty(manifest, "_localSourcePath", { value: sourcePath, enumerable: false });
             setLocalPackages((current) => [...current.filter((entry) => entry.id !== manifest.id), manifest]);
             showMessage(`${manifest.name} is ready to install from the selected folder.`);
         } catch (cause) {
@@ -453,6 +490,8 @@ export default function CommunityPackages() {
         .filter((manifest) => !manifest.deprecated || includeDeprecatedPackages)
         .filter(matchesPackage);
     const hasConfiguredSources = sources.length > 0;
+    const disconnectedLocalSource = sources.some((source) => isLocalPluginSource(source)
+        && !localPackages.some((manifest) => manifest._localSourcePath === source));
 
     function openPluginSettings() {
         triggerCommand("closePopupEditor");
@@ -510,6 +549,27 @@ export default function CommunityPackages() {
                     flex-wrap: wrap;
                     justify-content: flex-end;
                     gap: 0.4em;
+                }
+                .community-packages-local-folder-picker {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 0.75rem 1rem;
+                    margin-top: 0.75rem;
+                    padding: 0.75rem;
+                    border: 1px solid color-mix(in srgb, var(--main-border-color) 75%, transparent);
+                    border-radius: var(--bs-border-radius, 0.5rem);
+                    background: color-mix(in srgb, var(--input-background-color) 55%, transparent);
+                }
+                .community-packages-local-folder-copy {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.2rem;
+                    min-width: 0;
+                }
+                .community-packages-local-folder-copy small {
+                    color: var(--muted-text-color);
+                    line-height: 1.35;
                 }
                 /* .option-row and friends normally come from OptionsRow.css, which
                    only loads for the real Options dialog widget. This note renders
@@ -580,6 +640,9 @@ export default function CommunityPackages() {
                     }
                 }
                 @container community-packages (max-width: 600px) {
+                    .community-packages-local-folder-picker {
+                        grid-template-columns: minmax(0, 1fr);
+                    }
                     .community-packages-shell .option-row:has(.community-packages-actions) {
                         flex-direction: column;
                         align-items: stretch;
@@ -619,6 +682,7 @@ export default function CommunityPackages() {
                 <h1 className="community-packages-title">Plugin Catalog</h1>
             </div>
             <p>Search and install community extensions. Already-installed plugins are marked here; manage their settings and lifecycle from Settings → Plugins.</p>
+            {disconnectedLocalSource && <p className="option-row-description">Local folder paths are saved in Plugin sources, but Trilium needs you to choose the folder again before reading it.</p>}
 
             {error && <Admonition type="warning">{error}</Admonition>}
             <section className="options-section">
@@ -639,7 +703,7 @@ export default function CommunityPackages() {
                         aria-label="Search plugins"
                         onInput={(event) => setSearchQuery(event.currentTarget.value)}
                     />
-                    <div style={{ marginTop: "0.65em" }}>
+                    <div className="community-packages-local-folder-picker">
                         <input
                             ref={(input) => {
                                 localDirectoryInput.current = input;
@@ -649,20 +713,23 @@ export default function CommunityPackages() {
                             type="file"
                             multiple
                             hidden
-                            aria-label="Select local plugin folder"
+                            aria-label="Choose local plugin folder"
                             onChange={(event) => {
                                 void importLocalDirectory(Array.from(event.currentTarget.files || []));
                                 event.currentTarget.value = "";
                             }}
                         />
+                        <div className="community-packages-local-folder-copy">
+                            <strong>Install from local folder</strong>
+                            <small>Choose a folder with one plugin manifest and its artifact files. In the desktop app, its path is saved in Plugin sources; choose it again after restarting Trilium.</small>
+                        </div>
                         <Button
-                            text={busyPackage === "local-import" ? "Reading local plugin…" : "Install from local folder"}
+                            text={busyPackage === "local-import" ? "Reading local plugin…" : "Choose folder"}
                             icon="bx-folder-open"
                             size="small"
                             disabled={Boolean(busyPackage)}
                             onClick={() => localDirectoryInput.current?.click()}
                         />
-                        <small style={{ marginInlineStart: "0.6em" }}>Choose a folder with one plugin manifest and its artifact files.</small>
                     </div>
                 </div>
             </section>
@@ -675,7 +742,9 @@ export default function CommunityPackages() {
                 <div className="options-section-card">
                     {loading && <LoadingSpinner />}
                     {!loading && !hasConfiguredSources && !localPackages.length && <p>Configure a plugin source in Settings → Plugins.</p>}
-                    {!loading && hasConfiguredSources && !catalog.length && <p>{search ? `No packages match “${searchQuery}”.` : "No packages found in the configured sources."}</p>}
+                    {!loading && hasConfiguredSources && !catalog.length && (search
+                        ? <p>No packages match “{searchQuery}”.</p>
+                        : !disconnectedLocalSource && <p>No packages found in the configured sources.</p>)}
                     {catalog.map((manifest) => {
                         if (isBundleEntry(manifest)) {
                             const componentManifests = bundleComponents(manifest, packages);
@@ -902,6 +971,7 @@ async function readSettings() {
         note = await api.getNote(note.noteId);
     }
     return {
+        noteId: note?.noteId || "",
         sources: parseConfiguredSources(note),
         allowNetworkPackages: note?.getOwnedLabelValue("packageAllowNetwork") === "true",
         checkForUpdates: note?.getOwnedLabelValue(CHECK_UPDATES_LABEL) === "true",
@@ -929,13 +999,40 @@ function parseConfiguredSources(note) {
         note?.getOwnedLabelValue(LEGACY_REGISTRY_URLS_LABEL),
         note?.getOwnedLabelValue(LEGACY_DIRECT_MANIFEST_URLS_LABEL)
     ].flatMap(parseRegistryUrls);
-    return [...new Set(values.map((value) => {
+    return normalizePluginSources(values.map((value) => {
+        if (isLocalPluginSource(value)) return value;
         try {
             return normalizePluginSourceUrl(value);
         } catch {
             return value;
         }
-    }))];
+    }));
+}
+
+function normalizePluginSources(sources) {
+    const normalized = [];
+    const seen = new Set();
+    for (const source of sources) {
+        const value = String(source || "").trim();
+        if (!value) continue;
+        let identity = value;
+        if (!isLocalPluginSource(value)) {
+            try {
+                identity = normalizePluginSourceUrl(value);
+            } catch {
+                // Keep invalid entries visible so the user can correct them.
+            }
+        }
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        normalized.push(value);
+    }
+    return normalized;
+}
+
+function isLocalPluginSource(source) {
+    const value = String(source || "").trim();
+    return value.startsWith("file://") || value.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(value);
 }
 
 function normalizeSourceHosts(value) {
@@ -1435,11 +1532,10 @@ async function loadCatalogSource(sourceUrl) {
     }
 }
 
-// Keep these helpers in the Render Note source: script-deployer copies and
-// transpiles this file as a standalone note instead of bundling relative imports.
-async function readLocalPackageDirectory(files: FileList | File[]): Promise<{ manifestPath: string; manifest: any; files: Map<string, File> }> {
+// Keep these helpers self-contained: hidden-subtree seeding stores this source verbatim.
+async function readLocalPackageDirectory(files) {
     if (files.length > 5000) throw new Error("The selected folder contains more than 5000 files.");
-    const localFiles = new Map<string, File>();
+    const localFiles = new Map();
     for (const file of Array.from(files)) {
         const selectedPath = file.webkitRelativePath || file.name;
         const pathParts = selectedPath.replaceAll("\\", "/").split("/");
@@ -1455,7 +1551,7 @@ async function readLocalPackageDirectory(files: FileList | File[]): Promise<{ ma
     const manifestCandidates = preferredManifest
         ? [preferredManifest]
         : [...localFiles.keys()].filter((path) => path.toLowerCase().endsWith(".json"));
-    const validCandidates: Array<{ path: string; manifest: any }> = [];
+    const validCandidates = [];
     for (const path of manifestCandidates) {
         const file = localFiles.get(path);
         if (!file) continue;
@@ -1464,7 +1560,7 @@ async function readLocalPackageDirectory(files: FileList | File[]): Promise<{ ma
             continue;
         }
         try {
-            const parsed: unknown = JSON.parse(await file.text());
+            const parsed = JSON.parse(await file.text());
             if (parsed && typeof parsed === "object" && "artifacts" in parsed) validCandidates.push({ path, manifest: parsed });
         } catch {
             if (path === preferredManifest) throw new Error(`${path} is not valid JSON.`);
@@ -1476,14 +1572,14 @@ async function readLocalPackageDirectory(files: FileList | File[]): Promise<{ ma
     return { manifestPath: validCandidates[0].path, manifest: validCandidates[0].manifest, files: localFiles };
 }
 
-function resolveLocalPackageArtifact(source: string, files: Map<string, File>): File {
+function resolveLocalPackageArtifact(source, files) {
     const path = normalizeLocalPackagePath(source);
     const file = files.get(path);
     if (!file) throw new Error(`The selected folder does not contain artifact file ${path}.`);
     return file;
 }
 
-function normalizeLocalPackagePath(value: string): string {
+function normalizeLocalPackagePath(value) {
     const path = value.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "");
     if (!path || path.startsWith("/") || /^[a-zA-Z]:/.test(path) || path.includes(":") || path.includes("?") || path.includes("#")) {
         throw new Error("Package artifact paths must be relative files inside the selected folder.");
@@ -1497,6 +1593,7 @@ function normalizeLocalPackagePath(value: string): string {
 
 function normalizePluginSourceUrl(source) {
     const trimmedSource = String(source || "").trim();
+    if (isLocalPluginSource(trimmedSource)) return trimmedSource;
     const normalizedInput = /^(?:www\.)?github\.com\//i.test(trimmedSource)
         ? `https://${trimmedSource}`
         : /^(?:www\.)?raw\.githubusercontent\.com\//i.test(trimmedSource)

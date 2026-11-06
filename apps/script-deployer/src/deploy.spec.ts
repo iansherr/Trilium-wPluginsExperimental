@@ -148,9 +148,22 @@ describe("transpile", () => {
         const deployed = transpile(source, "community-packages.tsx");
 
         expect(deployed).toContain("Install from local folder");
+        expect(deployed).toContain('input?.setAttribute("webkitdirectory", "")');
         expect(deployed).toContain("function readLocalPackageDirectory(files)");
         expect(deployed).toContain("resolveLocalPackageArtifact(artifact.source, manifest._localPackageFiles)");
+        expect(deployed).toContain('window.addEventListener(LOCAL_FOLDER_PICK_EVENT, consumePendingLocalFolder)');
+        expect(deployed).toContain("void importLocalDirectory(pendingFolder.files, pendingFolder.sourcePath)");
         expect(deployed).not.toContain("./local_package_files.js");
+    });
+
+    it("keeps the embedded local folder helpers parseable as raw Render Note JavaScript", async () => {
+        const source = await readFile(new URL("../../client/src/widgets/type_widgets/options/community_packages.tsx", import.meta.url), "utf8");
+        const helperStart = source.indexOf("async function readLocalPackageDirectory");
+        const helperEnd = source.indexOf("function normalizePluginSourceUrl", helperStart);
+
+        expect(helperStart).toBeGreaterThanOrEqual(0);
+        expect(helperEnd).toBeGreaterThan(helperStart);
+        expect(() => new Function(source.slice(helperStart, helperEnd))).not.toThrow();
     });
 });
 

@@ -114,6 +114,8 @@ function cleanup() {
         container.remove();
         container = undefined;
     }
+    delete (window as Window & { __triliumCommunityPackagesPendingLocalFolder?: { files: File[]; sourcePath?: string } }).__triliumCommunityPackagesPendingLocalFolder;
+    delete (window as Window & { electronApi?: unknown }).electronApi;
 }
 
 function settle() {
@@ -178,7 +180,7 @@ describe("PluginsSettings UI & Lifecycle Procedural Combination Testing", () => 
             addSourceBtn?.click();
             await settle();
 
-            const input = container?.querySelector<HTMLInputElement>('.plugin-list-editor-row.is-editing input[type="url"]');
+            const input = container?.querySelector<HTMLInputElement>('.plugin-list-editor-row.is-editing input[type="text"]');
             expect(input).not.toBeNull();
 
             input!.value = "github.com/testuser/my-trilium-plugin";
@@ -192,6 +194,49 @@ describe("PluginsSettings UI & Lifecycle Procedural Combination Testing", () => 
 
             const values = Array.from(container?.querySelectorAll(".plugin-list-editor-value") || []).map((el) => el.textContent);
             expect(values).toContain("github.com/testuser/my-trilium-plugin");
+        });
+
+        it("offers a local folder chooser beside URL sources and opens the catalog with the selected files", async () => {
+            const managerNote = createTestNote("_sd_community_packages_manager_render", "Community Packages", {}, "render");
+            const settingsNote = createTestNote("settings-note", "Settings", {
+                packageSources: '["https://example.com/registry.json"]'
+            });
+            mocks.searchForNotesIncludingHidden.mockImplementation(async (query: string) => {
+                if (query === "Community Packages") return [managerNote];
+                if (query === "#packageManagerSettings") return [settingsNote];
+                return [];
+            });
+            mocks.getNote.mockResolvedValue(managerNote);
+            (window as Window & { electronApi?: unknown }).electronApi = {
+                nativeImport: { getSelectedDirectoryPath: () => "/Users/test/plugins/sample" }
+            } as never;
+
+            renderInto(<PluginsSettings />);
+            await settle();
+
+            const input = container?.querySelector<HTMLInputElement>('input[type="file"][webkitdirectory]');
+            const button = Array.from(container?.querySelectorAll("button") || []).find((candidate) => candidate.textContent?.includes("plugins.choose_local_folder"));
+            expect(input).not.toBeNull();
+            expect(button).toBeDefined();
+
+            const inputClick = vi.spyOn(input!, "click");
+            button!.click();
+            expect(inputClick).toHaveBeenCalledOnce();
+
+            const manifest = new File(['{"id":"sample","artifacts":[]}'], "trilium-package.json", { type: "application/json" });
+            Object.defineProperty(input, "files", { configurable: true, value: [manifest] });
+            input!.dispatchEvent(new Event("change", { bubbles: true }));
+            await settle();
+
+            expect(mocks.openContextWithNote).toHaveBeenCalledWith(managerNote.noteId, { activate: true, hoistedNoteId: "root" });
+            expect(mocks.setLabel).toHaveBeenCalledWith("settings-note", "packageSources", JSON.stringify([
+                "https://example.com/registry.json",
+                "/Users/test/plugins/sample"
+            ]));
+            expect((window as Window & { __triliumCommunityPackagesPendingLocalFolder?: { files: File[]; sourcePath?: string } }).__triliumCommunityPackagesPendingLocalFolder).toMatchObject({
+                files: [manifest],
+                sourcePath: "/Users/test/plugins/sample"
+            });
         });
 
         it("handles allowed source hosts multiline/comma input and normalization", async () => {

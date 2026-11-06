@@ -2,23 +2,75 @@
 
 This is the working checklist for the Trilium plugin ecosystem work. It records local commits and follow-up work; it does not mean that a commit has been pushed or that a PR has been updated.
 
-## Existing Trilium PR work
+## Fork strategy and current disposition
 
-Local review branches are assembled but not pushed:
+The `iansherr/Trilium-wPluginsExperimental` fork is a separate personal product
+line. Its `main` branch may carry plugin ecosystem features that are useful in
+the author's own build, and it should periodically incorporate `upstream/main`
+without treating those features as accepted Trilium standards. Keep the fork's
+integrated build usable for personal use while tracking each upstream candidate
+in a separate topic branch and PR. Submit a candidate only when its scope and
+interfaces fit a standard the Trilium maintainers are willing to adopt; until
+then, retain it as fork-only work. Never use the personal integration branch as
+the head of an upstream PR.
 
-- `integration/plugins` → `7b838d1830` for the Settings UI plus hidden-package discovery work (candidate for PR #10824).
-- `fix/plugins-offline-metadata` → `8ef9eecece` for cached metadata, refresh-loop protection, and legacy-cache compatibility.
-- `fix/plugins-package-id-display` → `193c0d7589` for the independent package-ID display fix.
+PR #10824 (`TriliumNext/Trilium`) was closed on 2026-10-17 without merging.
+On 2026-11-05, fork `main` was synced with the then-current `upstream/main`
+(`7f12054768`, Text editor improvements #12480) by merge commit
+`39782c0aa0`; it was pushed only to `iansherr/Trilium-wPluginsExperimental`.
+The local-source picker/path follow-up is tracked by [fork PR
+#8](https://github.com/iansherr/Trilium-wPluginsExperimental/pull/8), based on
+fork `main`. Keep all plugin feature PRs on the fork unless a separate upstream
+candidate is explicitly approved for submission. Never open or update an
+upstream PR from the fork-only branch.
 
-- [ ] PR #10824: update the description so it accurately explains the proposed plugin ecosystem manager and the new Plugins settings surface. Avoid describing the pre-existing Community Packages note or an existing Trilium add-on system as though either was already present.
-- [ ] PR #10824: include the explicit installed-plugin **Settings** action and the settings sub-card UI (`cf098e7e55`, locally carried into `711ef8fe2e`).
-- [ ] PR #10824: include the hidden-package discovery fix in the same feature PR (`searchForNotesIncludingHidden` plus regression coverage). This is required because the package tree is intentionally hidden from the normal note tree.
-- [ ] Offline package metadata PR: include the cached-manifest behavior, the user-facing “offline, using local plugin data” wording, and the refresh-loop guard (`61787a814e`, `5304d0f485`).
-- [x] Offline package metadata PR: add the cached-manifest compatibility fix found during the disposable offline UI test; older cached manifests omit `repository`, so the parser must still recognize their saved metadata (`c6605ea3ed`, local only).
-- [ ] Keep the hidden-package discovery fix out of the offline PR; it is a settings/package-location integration issue, not an offline-cache change.
-- [ ] Package ID display PR: keep the HTML entity decoding fix separate and focused (`193c0d7589`).
-- [x] Before updating any PR, rerun the relevant focused tests, client suite, typecheck, lint, and desktop build; locally verified: focused plugin/search tests 17 passed, full client suite 2,951 passed across 242 files, typecheck clean, targeted ESLint clean, and desktop packaging exit 0. Record these results in the PR description when remote updates are eventually approved.
-- [ ] Do not push or open/update a PR until the draft language and commit grouping have been reviewed.
+### Security review follow-up
+
+Fork issue [#7](https://github.com/iansherr/Trilium-wPluginsExperimental/issues/7) is open to track the audit and remediation work below. GitHub Issues was disabled on the fork; it was enabled to file this requested issue.
+
+The closed PR's security review identified a real boundary mismatch. Manifest
+permissions and the network setting are checked by catalog lifecycle code before
+install, update, repair, and bundle installation. The source-host allowlist is
+checked for artifact downloads. These checks do not sandbox plugin scripts or
+restrict their runtime network, note, or script API capabilities after enable.
+Treat enabled plugins as trusted arbitrary Trilium code until runtime capability
+enforcement exists. Integrity hashes detect bytes that differ from a declared
+digest; they do not prove a publisher or registry is trustworthy when that same
+publisher supplies both the artifact and digest.
+
+The existing lifecycle matrix test does not prove the gate is wired: it computes
+`networkBlocked` directly from fixture values and never calls install/update or
+asserts that no operation/download occurs. Replace it with tests through the
+real action boundary, including the failure state and side effects.
+
+Before presenting the plugin ecosystem as security-enforced or submitting
+security claims upstream:
+
+- [ ] Make labels and help text explicit: manifest permissions are publisher-declared disclosures; `allowNetworkPackages` is an install/update policy gate, not a runtime network sandbox; source-host allowlisting applies to artifact downloads only; review status is registry metadata, not independent verification.
+- [ ] Decide how to handle `secret` settings. Current values are persisted as ordinary note labels and may sync in plaintext. Prefer rejecting the type until protected storage exists; if compatibility requires retaining it, clearly warn existing and new users and never describe it as securely stored.
+- [ ] Inspect cache behavior when sources are removed or fail, and give users a clear way to inspect/forget cached publisher metadata or explain when it remains active.
+- [ ] Design actual runtime capability enforcement at the script/API boundary, or explicitly keep plugins as trusted arbitrary code and remove any UI implying otherwise. An install confirmation is consent, not a sandbox.
+- [ ] Add deterministic acceptance tests that call the real install/update paths and verify no operation or artifact request occurs when policy denies it; verify allowed behavior too. Add runtime tests for any capability boundary that is implemented.
+- [ ] Review partial enable/disable failure and health checks for mixed activation labels; make inconsistency recoverable and visible.
+- [ ] Document irreversibility of updates and the limits of repair before any upstream security resubmission.
+
+Keep this security work on its own topic branch, separate from local-path install/autosave and visual polish. Reassess whether the concerns are resolved before drafting a new upstream PR.
+
+## Historical upstream candidates
+
+PR #10824 is closed and unmerged; do not update or reopen it. The following
+local branches/commits are historical candidate slices, not current PR heads.
+They must be compared with current upstream and selectively rebuilt on fresh
+topic branches before any future submission:
+
+- `integration/plugins` → `7b838d1830`: native Plugins settings plus hidden-package discovery. A future PR should include the installed-plugin **Settings** action and settings sub-card (`cf098e7e55`, carried into `711ef8fe2e`) and regression coverage for hidden-aware lookup.
+- `fix/plugins-offline-metadata` → `8ef9eecece`: cached metadata, refresh-loop protection, and legacy-cache compatibility. Keep this independent from native settings/discovery. The compatibility fix for older cached manifests without `repository` is recorded at `c6605ea3ed`.
+- `fix/plugins-package-id-display` → `193c0d7589`: focused HTML entity decoding fix.
+
+- [ ] Reassess each candidate against the current upstream tree and maintainer-adopted package standards; do not assume these old branches are ready to submit.
+- [ ] Keep settings/discovery, offline metadata, package-ID display, local-path/autosave, and security work in separate reviewable topic branches/PRs where their contracts are independent.
+- [ ] Before a candidate PR, rerun focused acceptance tests, relevant client/server suites, typecheck, lint, and desktop build. Record exact results and verify against a clean current base.
+- [ ] Do not push or open/update a PR until the candidate scope and draft language have been reviewed.
 
 ## Forensic findings from disposable-vault testing
 

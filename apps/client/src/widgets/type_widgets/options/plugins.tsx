@@ -27,6 +27,8 @@ import OptionsRow, { OptionsRowWithButton, OptionsRowWithToggle } from "./compon
 import OptionsSection from "./components/OptionsSection";
 
 const COMMUNITY_PACKAGES_MANAGER_NOTE_ID = "_sd_community_packages_manager_render";
+const COMMUNITY_PACKAGES_LOCAL_FOLDER_EVENT = "trilium:communityPackagesLocalFolder";
+const COMMUNITY_PACKAGES_LOCAL_FILES_KEY = "__triliumCommunityPackagesPendingLocalFolder";
 const PACKAGE_PINNED_LABEL = "packagePinned";
 const PACKAGE_ENABLED_LABEL = "packageEnabled";
 const PACKAGE_MANIFEST_LABEL = "packageManifest";
@@ -211,6 +213,7 @@ export default function PluginsSettings() {
     const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [editingSourceIndex, setEditingSourceIndex] = useState<number | null>(null);
     const [sourceDraft, setSourceDraft] = useState("");
+    const localDirectoryInput = useRef<HTMLInputElement>(null);
     const [editingHostIndex, setEditingHostIndex] = useState<number | null>(null);
     const [hostDraft, setHostDraft] = useState("");
     const refreshPromiseRef = useRef<Promise<void> | null>(null);
@@ -350,6 +353,28 @@ export default function PluginsSettings() {
         if (state.manager) {
             await appContext.tabManager.openContextWithNote(state.manager.noteId, { activate: true, hoistedNoteId: "root" });
             closeActiveDialog();
+        }
+    }
+
+    async function openCatalogWithLocalFiles(files: File[]) {
+        if (!files.length || !state.manager) return;
+        const sourcePath = window.electronApi?.nativeImport.getSelectedDirectoryPath(files) || undefined;
+        const pluginWindow = window as Window & { __triliumCommunityPackagesPendingLocalFolder?: { files: File[]; sourcePath?: string } };
+        const pendingFolder = { files, sourcePath };
+        pluginWindow[COMMUNITY_PACKAGES_LOCAL_FILES_KEY] = pendingFolder;
+        try {
+            if (sourcePath && state.settings) {
+                const nextSources = normalizePluginSources([...state.sources, sourcePath]);
+                updateGlobalSettings((current) => ({ ...current, sources: nextSources }));
+                await savePluginSources(state.settings.noteId, nextSources);
+            }
+            window.dispatchEvent(new Event(COMMUNITY_PACKAGES_LOCAL_FOLDER_EVENT));
+            await openCatalog();
+        } catch (cause) {
+            if (pluginWindow[COMMUNITY_PACKAGES_LOCAL_FILES_KEY] === pendingFolder) {
+                delete pluginWindow[COMMUNITY_PACKAGES_LOCAL_FILES_KEY];
+            }
+            toast.showError(`Could not open the plugin catalog: ${cause instanceof Error ? cause.message : String(cause)}`);
         }
     }
 
@@ -763,55 +788,86 @@ export default function PluginsSettings() {
             >
                 {!state.loading && state.settings ? <>
                     <OptionsRow name="community-package-sources" label={t("plugins.sources_label")} description={t("plugins.sources_description")} stacked>
-                        <EditablePluginList
-                            values={state.sources}
-                            editingIndex={editingSourceIndex}
-                            draftValue={sourceDraft}
-                            inputType="url"
-                            inputPlaceholder={t("plugins.sources_placeholder")}
-                            rowLabel={(index) => t("plugins.source_row_label", { number: index + 1 })}
-                            addLabel={t("plugins.add_source")}
-                            editLabel={t("plugins.edit_source")}
-                            deleteLabel={t("plugins.delete_source")}
-                            saveLabel={t("plugins.save_source")}
-                            cancelLabel={t("plugins.cancel_source")}
-                            menuLabel={t("plugins.source_actions")}
-                            onAdd={() => {
-                                if (editingSourceIndex !== null) return;
-                                setState((current) => ({ ...current, sources: [...current.sources, ""] }));
-                                setEditingSourceIndex(state.sources.length);
-                                setSourceDraft("");
-                            }}
-                            onEdit={(index) => {
-                                setEditingSourceIndex(index);
-                                setSourceDraft(state.sources[index] || "");
-                            }}
-                            onDelete={(index) => {
-                                updateGlobalSettings((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
-                                setEditingSourceIndex(null);
-                                setSourceDraft("");
-                            }}
-                            onDraftChange={setSourceDraft}
-                            onSave={() => {
-                                if (editingSourceIndex === null) return;
-                                const index = editingSourceIndex;
-                                const value = sourceDraft.trim();
-                                if (!value) {
+                        <div>
+                            <EditablePluginList
+                                values={state.sources}
+                                editingIndex={editingSourceIndex}
+                                draftValue={sourceDraft}
+                                inputType="text"
+                                inputPlaceholder={t("plugins.sources_placeholder")}
+                                rowLabel={(index) => t("plugins.source_row_label", { number: index + 1 })}
+                                addLabel={t("plugins.add_source")}
+                                editLabel={t("plugins.edit_source")}
+                                deleteLabel={t("plugins.delete_source")}
+                                saveLabel={t("plugins.save_source")}
+                                cancelLabel={t("plugins.cancel_source")}
+                                menuLabel={t("plugins.source_actions")}
+                                onAdd={() => {
+                                    if (editingSourceIndex !== null) return;
+                                    setState((current) => ({ ...current, sources: [...current.sources, ""] }));
+                                    setEditingSourceIndex(state.sources.length);
+                                    setSourceDraft("");
+                                }}
+                                onEdit={(index) => {
+                                    setEditingSourceIndex(index);
+                                    setSourceDraft(state.sources[index] || "");
+                                }}
+                                onDelete={(index) => {
                                     updateGlobalSettings((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
-                                } else {
-                                    updateGlobalSettings((current) => ({ ...current, sources: current.sources.map((source, currentIndex) => currentIndex === index ? value : source) }));
-                                }
-                                setEditingSourceIndex(null);
-                                setSourceDraft("");
-                            }}
-                            onCancel={() => {
-                                if (editingSourceIndex !== null && !state.sources[editingSourceIndex]) {
-                                    setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== editingSourceIndex) }));
-                                }
-                                setEditingSourceIndex(null);
-                                setSourceDraft("");
-                            }}
-                        />
+                                    setEditingSourceIndex(null);
+                                    setSourceDraft("");
+                                }}
+                                onDraftChange={setSourceDraft}
+                                onSave={() => {
+                                    if (editingSourceIndex === null) return;
+                                    const index = editingSourceIndex;
+                                    const value = sourceDraft.trim();
+                                    if (!value) {
+                                        updateGlobalSettings((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== index) }));
+                                    } else {
+                                        updateGlobalSettings((current) => ({ ...current, sources: current.sources.map((source, currentIndex) => currentIndex === index ? value : source) }));
+                                    }
+                                    setEditingSourceIndex(null);
+                                    setSourceDraft("");
+                                }}
+                                onCancel={() => {
+                                    if (editingSourceIndex !== null && !state.sources[editingSourceIndex]) {
+                                        setState((current) => ({ ...current, sources: current.sources.filter((_, currentIndex) => currentIndex !== editingSourceIndex) }));
+                                    }
+                                    setEditingSourceIndex(null);
+                                    setSourceDraft("");
+                                }}
+                            />
+                            <div className="plugin-local-folder-picker">
+                                <input
+                                    ref={(input) => {
+                                        localDirectoryInput.current = input;
+                                        input?.setAttribute("webkitdirectory", "");
+                                        input?.setAttribute("directory", "");
+                                    }}
+                                    type="file"
+                                    multiple
+                                    hidden
+                                    aria-label={t("plugins.choose_local_folder")}
+                                    onChange={(event) => {
+                                        const files = Array.from(event.currentTarget.files || []);
+                                        event.currentTarget.value = "";
+                                        void openCatalogWithLocalFiles(files);
+                                    }}
+                                />
+                                <div className="plugin-local-folder-copy">
+                                    <strong>{t("plugins.install_local_folder")}</strong>
+                                    <small>{t("plugins.install_local_folder_description")}</small>
+                                </div>
+                                <Button
+                                    text={t("plugins.choose_local_folder")}
+                                    icon="bx-folder-open"
+                                    size="small"
+                                    disabled={!state.manager}
+                                    onClick={() => localDirectoryInput.current?.click()}
+                                />
+                            </div>
+                        </div>
                     </OptionsRow>
                     <OptionsRow name="community-package-source-hosts" label={t("plugins.download_hosts_label")} description={t("plugins.download_hosts_description")} stacked>
                         <EditablePluginList
@@ -1065,7 +1121,7 @@ function expectedActivationLabels(artifact: PackageArtifact) {
 }
 
 async function loadCatalog(sources: string[], packages: PackageSummary[], includeDeprecatedPackages: boolean) {
-    const configuredSources = normalizePluginSources(sources);
+    const configuredSources = normalizePluginSources(sources).filter((source) => !isLocalPluginSource(source));
     const cachedCatalog = packages
         .map((pkg) => pkg.cachedManifest)
         .filter((manifest): manifest is CatalogPackage => Boolean(manifest));
@@ -1194,7 +1250,7 @@ export function normalizePluginSources(sources: string[]) {
 }
 
 export function buildLegacyPluginSourceLabels(sources: string[]) {
-    const normalizedSources = normalizePluginSources(sources).map((source) => {
+    const normalizedSources = normalizePluginSources(sources).filter((source) => !isLocalPluginSource(source)).map((source) => {
         try {
             return normalizePluginSourceUrl(source);
         } catch {
@@ -1208,6 +1264,21 @@ export function buildLegacyPluginSourceLabels(sources: string[]) {
         packageRegistryUrls: serializedSources,
         packageDirectManifestUrls: serializedSources
     };
+}
+
+async function savePluginSources(settingsNoteId: string, sources: string[]) {
+    const normalizedSources = normalizePluginSources(sources);
+    await setLabel(settingsNoteId, PACKAGE_SOURCES_LABEL, JSON.stringify(normalizedSources));
+    const legacySources = buildLegacyPluginSourceLabels(normalizedSources);
+    await setLabel(settingsNoteId, PACKAGE_REGISTRY_URL_LABEL, legacySources.packageRegistryUrl);
+    await setLabel(settingsNoteId, PACKAGE_REGISTRY_URLS_LABEL, legacySources.packageRegistryUrls);
+    await setLabel(settingsNoteId, PACKAGE_DIRECT_MANIFEST_URLS_LABEL, legacySources.packageDirectManifestUrls);
+    await froca.reloadNotes([settingsNoteId]);
+}
+
+export function isLocalPluginSource(source: string) {
+    const trimmedSource = source.trim();
+    return trimmedSource.startsWith("file://") || trimmedSource.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(trimmedSource);
 }
 
 export function parseConfiguredPluginSources(getLabelValue: (labelName: string) => string | null | undefined) {
@@ -1228,7 +1299,7 @@ export function normalizeSourceHosts(value: string) {
 }
 
 export function shouldScheduleUpdateChecks(loading: boolean, checkForUpdates: boolean, sources: string[], directManifestUrls: string[] = []) {
-    return !loading && checkForUpdates && (Boolean(sources.length) || Boolean(directManifestUrls.length));
+    return !loading && checkForUpdates && (sources.some((source) => !isLocalPluginSource(source)) || Boolean(directManifestUrls.length));
 }
 
 function translateText(key: string, values: Record<string, unknown>) {
