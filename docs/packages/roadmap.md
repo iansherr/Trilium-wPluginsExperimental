@@ -24,7 +24,7 @@
 - Add General settings and registry update summary to the native page. **Complete.**
 - Add Available catalog browsing directly to the native page. **Complete.**
 - Render package-defined settings directly in the native page. **Complete.**
-- Show permissions before installation and in the installed package detail view. **Complete.**
+- Display manifest-declared permissions before installation and in installed package details. **Complete as disclosure only; this does not enforce runtime capabilities.**
 
 ## Phase 4 — lifecycle
 
@@ -50,3 +50,15 @@
 - Bundle manifest and registry validation. **Complete.** Bundles reference package IDs but never become artifact owners.
 - Catalog component selection and one-transaction installation. **Complete in source.** The Render Note can select optional components and stage the resulting packages independently.
 - Ikmal ownership-transfer migration from the compatibility package. **Source transaction complete.** Keep the staged Ikmal bundle out of the public registry until a cloned-vault rehearsal proves note ownership, settings, enabled state, and rollback are preserved.
+
+## Phase 7 — plugin security boundaries (not complete)
+
+- Correct the UI and docs so they distinguish publisher-declared permissions, install/update policy gates, artifact-download host restrictions, and runtime capabilities.
+- Decide the compatibility path for manifest `secret` settings: protected storage is not implemented, and current values are ordinary note labels that may sync in plaintext.
+- Make cached manifest behavior inspectable and clearable when a source is removed or unavailable.
+- Design and implement runtime capability enforcement at the actual script/API boundary, or retain an explicit trusted-code model and remove wording that implies a sandbox. Installation confirmation alone is not runtime isolation.
+- Test denied and allowed install/update flows through the real catalog actions, asserting operation state and network/download side effects. Add runtime boundary tests for each capability the host claims to restrict.
+- Verify activation consistency after interrupted enable/disable operations and make partial state recoverable.
+- Explain one-way update/repair behavior and avoid implying repair is a version rollback.
+
+Do not describe plugin permissions as enforced until this phase has acceptance evidence. Until then, enabling a plugin means trusting its code with Trilium's available script capabilities.

@@ -719,6 +719,12 @@ export interface ElectronNativeImportApi {
      */
     grantDroppedFiles(files: File[]): Promise<NativeImportPickResult>;
     /**
+     * Returns the common directory for files chosen through a directory input, if every file is backed
+     * by a real user selection. This reveals the selected folder path only; it does not grant ongoing
+     * read access to that folder.
+     */
+    getSelectedDirectoryPath(files: File[]): string | null;
+    /**
      * Imports the file behind a token, with progress/success/error reported over the WebSocket like
      * the HTTP import path.
      * @param opts The `token` to redeem, the `parentNoteId` to import under, the `taskId` that reports

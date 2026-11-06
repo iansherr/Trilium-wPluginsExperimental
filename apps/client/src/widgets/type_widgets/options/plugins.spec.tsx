@@ -13,6 +13,7 @@ import {
     formatInstalledPackageDescription,
     formatPluginUpdateError,
     isCatalogPackageEntry,
+    isLocalPluginSource,
     isNewerVersion,
     isPackageArtifact,
     isPackageCompatibility,
@@ -138,6 +139,18 @@ describe("plugin manager validation helpers", () => {
             "github.com",
             "raw.githubusercontent.com"
         ]);
+    });
+
+    it("keeps local source paths in the canonical list but out of legacy URL aliases and update checks", () => {
+        const path = "/Users/test/plugins/example";
+        expect(isLocalPluginSource(path)).toBe(true);
+        expect(normalizePluginSources([path, path])).toEqual([path]);
+        expect(buildLegacyPluginSourceLabels(["https://example.com/registry.json", path])).toMatchObject({
+            packageRegistryUrl: "https://example.com/registry.json",
+            packageRegistryUrls: '["https://example.com/registry.json"]',
+            packageDirectManifestUrls: '["https://example.com/registry.json"]'
+        });
+        expect(shouldScheduleUpdateChecks(false, true, [path])).toBe(false);
     });
 
     it("only accepts HTTPS sources, except for local development hosts", () => {

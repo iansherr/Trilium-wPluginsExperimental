@@ -691,6 +691,19 @@ describe("preload script", () => {
             await grantDroppedFiles([{ path: "/data/a.zip" }, { /* no path */ }]);
             expect(ipcRendererInvoked).toContainEqual({ channel: "import-grant-dropped", args: [["/data/a.zip"]] });
         });
+
+        it("returns the selected directory only when every file belongs to the same user-chosen folder", () => {
+            const getSelectedDirectoryPath = nativeImport().getSelectedDirectoryPath as (files: unknown[]) => string | null;
+            expect(getSelectedDirectoryPath([
+                { path: "/Users/test/plugins/sample/trilium-package.json", webkitRelativePath: "sample/trilium-package.json" },
+                { path: "/Users/test/plugins/sample/src/main.js", webkitRelativePath: "sample/src/main.js" }
+            ])).toBe("/Users/test/plugins/sample");
+            expect(getSelectedDirectoryPath([
+                { path: "/Users/test/plugins/one/manifest.json", webkitRelativePath: "one/manifest.json" },
+                { path: "/Users/test/plugins/two/manifest.json", webkitRelativePath: "two/manifest.json" }
+            ])).toBeNull();
+            expect(getSelectedDirectoryPath([{ webkitRelativePath: "sample/manifest.json" }])).toBeNull();
+        });
     });
 
     describe("dialog", () => {
